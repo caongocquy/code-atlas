@@ -31,6 +31,8 @@ Before modifying any tracked file:
 - Follow the Git workflow rules and create the appropriate task branch first.
 - Confirm the task branch is active before making changes.
 
+When a task/phase is complete, follow the documented phase completion workflow before starting the next task.
+
 Never implement normal work directly on `main` or `develop`.
 
 ## Repository safety
