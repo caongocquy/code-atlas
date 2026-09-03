@@ -1,0 +1,8 @@
+allowBuilds:
+  esbuild: true
+  onnxruntime-node: true
+  protobufjs: true
+  sharp: true
+  tree-sitter: true
+  tree-sitter-javascript: true
+  tree-sitter-typescript: true

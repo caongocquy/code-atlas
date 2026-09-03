@@ -1,0 +1,90 @@
+import { Listr, type ListrTask, type ListrTaskWrapper } from "listr2";
+
+import {
+  formatProgress,
+  formatTaskTitle,
+} from "./format.js";
+import type { ProgressKind } from "./theme.js";
+import type { ProgressReporter } from "./types.js";
+
+const UPDATE_INTERVAL_MS = 80;
+
+function createReporter(
+  title: string,
+  kind: ProgressKind,
+  task: ListrTaskWrapper<any, any, any>,
+): ProgressReporter {
+  let currentTitle = title;
+  let lastUpdate = 0;
+  let lastMessage = "";
+
+  function publish(message: string, force = false): void {
+    const now = Date.now();
+
+    if (
+      !force &&
+      (message === lastMessage || now - lastUpdate < UPDATE_INTERVAL_MS)
+    ) {
+      return;
+    }
+
+    lastMessage = message;
+    lastUpdate = now;
+    task.title = `${formatTaskTitle(currentTitle)} — ${message}`;
+  }
+
+  return {
+    setTitle(nextTitle) {
+      currentTitle = nextTitle;
+      task.title = formatTaskTitle(nextTitle);
+    },
+    update(message) {
+      publish(message);
+    },
+    setProgress(current, total) {
+      publish(formatProgress(current, total, kind), current >= total);
+    },
+  };
+}
+
+export function createProgressTask(
+  title: string,
+  work: (reporter: ProgressReporter) => void | Promise<void>,
+  kind: ProgressKind = "default",
+): ListrTask {
+  return {
+    title: formatTaskTitle(title),
+    task: async (_context, task) => {
+      await work(createReporter(title, kind, task));
+    },
+  };
+}
+
+export async function runProgressTasks(tasks: ListrTask[]): Promise<void> {
+  await new Listr(tasks, {
+    renderer: "default",
+    fallbackRenderer: "simple",
+    rendererOptions: {
+      formatOutput: "truncate",
+      clearOutput: false,
+      collapseSkips: true,
+    },
+    fallbackRendererOptions: {},
+  }).run();
+}
+
+export async function runProgressTask<T>(
+  title: string,
+  work: (reporter: ProgressReporter) => Promise<T> | T,
+  kind: ProgressKind = "default",
+): Promise<T> {
+  let result!: T;
+
+  await runProgressTasks([
+    createProgressTask(title, async (reporter) => {
+      result = await work(reporter);
+    }, kind),
+  ]);
+
+  return result;
+}
