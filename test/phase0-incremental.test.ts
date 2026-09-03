@@ -4,11 +4,11 @@ import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildFileGraphs } from "../src/graph/build-file-updates.js";
-import { buildCodeGraph } from "../src/graph/build-graph.js";
-import { GraphStore } from "../src/graph/store.js";
-import { createFileHash } from "../src/utils/file-hash.js";
-import { getRepoId, scanRepo } from "../src/utils/repo.js";
+import { buildFileGraphs } from "../src/core/graph/build-file-updates.js";
+import { buildCodeGraph } from "../src/core/graph/build-graph.js";
+import { GraphStore } from "../src/storage/graph/graph.store.js";
+import { createFileHash } from "../src/core/repository/file-hash.js";
+import { getRepoId, scanRepo } from "../src/core/repository/repository-files.js";
 
 async function withRepo(callback: (repoPath: string) => Promise<void>): Promise<void> {
   const repoPath = await mkdtemp(path.join(tmpdir(), "code-atlas-phase-0-incremental-"));

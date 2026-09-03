@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import {
   graphRefreshMode,
   vectorRefreshMode,
-} from "../src/utils/index-version.js";
+} from "../src/core/repository/index-version.js";
 
 test("graph version mismatch selects a full rebuild without changing the version", () => {
   assert.equal(graphRefreshMode("before", "current"), "full-rebuild");

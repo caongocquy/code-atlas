@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { runCopyOnWriteGeneration } from "../src/utils/copy-on-write.js";
+import { runCopyOnWriteGeneration } from "../src/core/semantic/copy-on-write.js";
 
 test("vector copy-on-write keeps the old generation when staging fails", async () => {
   let activeGeneration = "old";

@@ -5,9 +5,9 @@ import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { GraphStore } from "../src/graph/store.js";
-import { indexGraph } from "../src/services/graph-index.js";
-import { silentProgressRunner } from "../src/services/progress.js";
+import { GraphStore } from "../src/storage/graph/graph.store.js";
+import { indexGraph } from "../src/core/graph/graph-index.service.js";
+import { silentProgressRunner } from "../src/core/progress/silent-progress-runner.js";
 
 async function source(relativePath: string): Promise<string> {
   return readFile(new URL(`../${relativePath}`, import.meta.url), "utf8");
@@ -45,13 +45,13 @@ test("graph service keeps deterministic incremental behavior with silent progres
 });
 
 test("Phase 1 entrypoints delegate orchestration and services keep CLI/process boundaries", async () => {
-  const graphAdapter = await source("src/index-graph.ts");
-  const semanticAdapter = await source("src/embed-repo.ts");
-  const askAdapter = await source("src/ask-rag.ts");
-  const graphService = await source("src/services/graph-index.ts");
-  const semanticService = await source("src/services/semantic-index.ts");
-  const progressService = await source("src/services/progress.ts");
-  const inspectorService = await source("src/services/retrieval-inspector.ts");
+  const graphAdapter = await source("src/adapters/cli/index-graph.command.ts");
+  const semanticAdapter = await source("src/adapters/cli/embed-repo.command.ts");
+  const askAdapter = await source("src/adapters/cli/ask-rag.command.ts");
+  const graphService = await source("src/core/graph/graph-index.service.ts");
+  const semanticService = await source("src/core/semantic/semantic-index.service.ts");
+  const progressService = await source("src/core/progress/silent-progress-runner.ts");
+  const inspectorService = await source("src/core/retrieval/retrieval-inspector.service.ts");
 
   assert.match(graphAdapter, /indexGraph/);
   assert.doesNotMatch(graphAdapter, /GraphStore|buildFileGraphs|scanRepo|createFileHash/);
@@ -63,8 +63,8 @@ test("Phase 1 entrypoints delegate orchestration and services keep CLI/process b
   assert.match(askAdapter, /answerCodebase/);
   assert.doesNotMatch(askAdapter, /chatStream/);
 
-  assert.match(semanticService, /\.\.\/lib\/embedding\.js/);
-  assert.match(semanticService, /\.\.\/lib\/qdrant\.js/);
+  assert.match(semanticService, /infrastructure\/embedding\/transformers-embedding\.client\.js/);
+  assert.match(semanticService, /infrastructure\/vector\/qdrant\.client\.js/);
   assert.match(semanticService, /runCopyOnWriteGeneration/);
   assert.match(inspectorService, /export async function inspectRetrieval/);
   assert.match(inspectorService, /export async function answerCodebase/);
@@ -75,7 +75,7 @@ test("Phase 1 entrypoints delegate orchestration and services keep CLI/process b
     progressService,
     inspectorService,
   ]) {
-    assert.doesNotMatch(serviceSource, /listr2|chalk|figures|ora|node:child_process/);
+    assert.doesNotMatch(serviceSource, /["'](?:listr2|chalk|figures|ora)["']|node:child_process/);
     assert.doesNotMatch(serviceSource, /\b(?:spawn|execFile)\s*\(/);
   }
 });

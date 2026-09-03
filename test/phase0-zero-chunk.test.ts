@@ -3,9 +3,9 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { parseCodeSymbols } from "../src/parsers/code-parser.js";
-import { collectIndexedFileStates } from "../src/utils/indexed-file-state.js";
-import { splitLargeSymbol } from "../src/utils/split-symbol.js";
+import { parseCodeSymbols } from "../src/core/graph/parsers/code-parser.js";
+import { collectIndexedFileStates } from "../src/core/repository/indexed-file-state.js";
+import { splitLargeSymbol } from "../src/core/semantic/split-symbol.js";
 
 test("zero-chunk fixture exposes the current stale-state ceiling", async () => {
   const filePath = fileURLToPath(new URL("./fixtures/phase-0-zero-chunk/empty.ts", import.meta.url));

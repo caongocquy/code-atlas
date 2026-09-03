@@ -5,8 +5,8 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildCodeGraph } from "../src/graph/build-graph.js";
-import type { CodeGraph, GraphNode } from "../src/graph/types.js";
+import { buildCodeGraph } from "../src/core/graph/build-graph.js";
+import type { CodeGraph, GraphNode } from "../src/core/graph/types.js";
 
 const fixturePath = fileURLToPath(new URL("./fixtures/phase-0-graph", import.meta.url));
 

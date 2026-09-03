@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import type { SearchResult } from "../src/services/code-search.js";
-import { buildCodebaseMessages } from "../src/utils/prompt.js";
-import { buildContext } from "../src/utils/context.js";
+import type { SearchResult } from "../src/core/retrieval/code-search.service.js";
+import { buildCodebaseMessages } from "../src/core/retrieval/prompt.js";
+import { buildContext } from "../src/core/retrieval/context.js";
 
 test("inspector prompt uses the exact context representation sent to the model", () => {
   const chunks: SearchResult[] = [

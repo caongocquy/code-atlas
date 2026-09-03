@@ -4,8 +4,8 @@ import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { GraphStore } from "../src/graph/store.js";
-import type { CodeGraph } from "../src/graph/types.js";
+import { GraphStore } from "../src/storage/graph/graph.store.js";
+import type { CodeGraph } from "../src/core/graph/types.js";
 
 function canonicalGraph(graph: CodeGraph): string {
   return JSON.stringify({

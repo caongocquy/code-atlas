@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { expandGraphContextDetailed } from "../src/graph/expand.js";
-import type { InspectorChunk, RetrievalInspection } from "../src/services/retrieval-inspector.js";
-import { buildContext } from "../src/utils/context.js";
-import { buildCodebaseMessages } from "../src/utils/prompt.js";
+import { expandGraphContextDetailed } from "../src/core/graph/expand.js";
+import type { InspectorChunk, RetrievalInspection } from "../src/core/retrieval/retrieval-inspector.service.js";
+import { buildContext } from "../src/core/retrieval/context.js";
+import { buildCodebaseMessages } from "../src/core/retrieval/prompt.js";
 
 function chunk(file: string, symbolName: string, source: InspectorChunk["source"]): InspectorChunk {
   return {

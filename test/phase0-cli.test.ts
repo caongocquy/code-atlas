@@ -8,8 +8,8 @@ import {
   formatProgress,
   formatSummary,
   formatTaskTitle,
-} from "../src/cli/format.js";
-import { createProgressTask } from "../src/cli/progress.js";
+} from "../src/adapters/cli/cli-output.js";
+import { createProgressTask } from "../src/adapters/cli/cli-progress-reporter.js";
 
 test("CLI format contracts cover running, success, error, summaries, and progress", () => {
   assert.match(formatTaskTitle("Running"), /Running/);
@@ -34,7 +34,7 @@ test("CLI format helpers emit no ANSI escape sequences with NO_COLOR", () => {
       "tsx/esm",
       "--input-type=module",
       "-e",
-      'import { formatNotice, formatProgress } from "./src/cli/format.ts"; console.log(formatNotice("Failed", "boom", "error")); console.log(formatProgress(1, 2, "graph"));',
+      'import { formatNotice, formatProgress } from "./src/adapters/cli/cli-output.ts"; console.log(formatNotice("Failed", "boom", "error")); console.log(formatProgress(1, 2, "graph"));',
     ],
     {
       cwd: process.cwd(),

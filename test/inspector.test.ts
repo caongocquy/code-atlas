@@ -6,9 +6,9 @@ import {
   getIndexedGraphFiles,
   getGraphNeighborhood,
   searchGraphNodes,
-} from "../src/graph/explorer.js";
-import type { CodeGraph } from "../src/graph/types.js";
-import { resolveRepoSourcePath } from "../src/utils/source-path.js";
+} from "../src/core/graph/explorer.js";
+import type { CodeGraph } from "../src/core/graph/types.js";
+import { resolveRepoSourcePath } from "../src/adapters/http/repository-source-path.js";
 
 const graph: CodeGraph = {
   nodes: [

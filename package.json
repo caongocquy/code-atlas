@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "tsx watch src/adapters/http/http-server.ts",
     "dev:ui": "vite --config web/vite.config.ts",
     "build": "tsc && vite build --config web/vite.config.ts",
     "lint": "eslint .",

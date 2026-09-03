@@ -5,7 +5,7 @@ import {
   formatIncrementalSync,
   formatProgress,
   formatSummary,
-} from "../src/cli/format.js";
+} from "../src/adapters/cli/cli-output.js";
 
 test("CLI formatters keep counts readable without relying on color", () => {
   assert.match(formatProgress(5, 10, "graph"), /50%\s+5\/10/);
