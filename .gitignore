@@ -9,6 +9,7 @@
 
 # Internal architecture / migration docs
 docs/plan.md
+docs/git-workflow.md
 
 # Node / package managers
 node_modules/
