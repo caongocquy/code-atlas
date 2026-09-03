@@ -22,12 +22,13 @@ import {
   getIndexedFileStates,
   type IndexedFileState,
 } from "../repository/index-state.service.js";
-import { IndexMetadataStore } from "../../storage/metadata/index-metadata.store.js";
+import { AtlasStore } from "../../storage/atlas/atlas.store.js";
 import { silentProgressRunner } from "../progress/silent-progress-runner.js";
 import { buildEmbeddingText } from "./embedding-text.js";
 import { createFileHash } from "../repository/file-hash.js";
 import { createPointId } from "./point-id.js";
-import { getRepoId, scanRepo } from "../repository/repository-files.js";
+import { getRepositoryIdentity } from "../repository/repository-identity.js";
+import { scanRepo } from "../repository/repository-files.js";
 import { splitLargeSymbol } from "./split-symbol.js";
 import { runCopyOnWriteGeneration } from "./copy-on-write.js";
 import { vectorRefreshMode } from "../repository/index-version.js";
@@ -122,17 +123,17 @@ export async function syncSemantic(
 ): Promise<SemanticIndexResult> {
   const repoPath = path.resolve(inputPath);
   const progress = options.progress ?? silentProgressRunner;
-  const repoId = getRepoId(repoPath);
   const startedAt = performance.now();
 
   await ensureCollection();
 
-  const metadataStore = new IndexMetadataStore(
-    path.join(repoPath, ".code-rag", "index-metadata.db"),
-  );
+  const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
+  const repository = store.ensureRepository(getRepositoryIdentity(repoPath));
+  const repoId = repository.id;
+  let preparedFiles: PreparedFile[] = [];
 
   try {
-    const storedIndexVersion = metadataStore.getVersion(repoId, "vector");
+    const storedIndexVersion = store.getVersion(repoId, "semantic");
     const forceFullReindex =
       vectorRefreshMode(storedIndexVersion, VECTOR_INDEX_VERSION) === "semantic-reindex";
 
@@ -148,7 +149,6 @@ export async function syncSemantic(
 
     let indexedStates = new Map<string, IndexedFileState>();
     const currentFiles = new Set<string>();
-    const preparedFiles: PreparedFile[] = [];
     let addedFiles = 0;
     let updatedFiles = 0;
     let skippedFiles = 0;
@@ -161,6 +161,7 @@ export async function syncSemantic(
       "Parsing source",
       async (reporter) => {
         indexedStates = await getIndexedFileStates(repoId);
+        const capabilityStates = store.getFileCapabilityStates(repoId, "semantic");
 
         for (let index = 0; index < files.length; index += 1) {
           const filePath = files[index];
@@ -174,9 +175,14 @@ export async function syncSemantic(
 
           const content = await fs.readFile(filePath, "utf8");
           const fileHash = createFileHash(content);
-          const previousState = indexedStates.get(relativePath);
+          const previousState = capabilityStates.get(relativePath);
+          const previousPointState = indexedStates.get(relativePath);
 
-          if (!forceFullReindex && previousState?.fileHash === fileHash) {
+          if (
+            !forceFullReindex &&
+            previousState?.state === "ready" &&
+            previousState.fileHash === fileHash
+          ) {
             skippedFiles += 1;
             reporter.setProgress(index + 1, files.length);
             continue;
@@ -191,7 +197,7 @@ export async function syncSemantic(
             fileHash,
             generationId,
             chunks,
-            previousPointIds: previousState?.pointIds ?? [],
+            previousPointIds: previousPointState?.pointIds ?? [],
           });
 
           if (previousState) {
@@ -206,7 +212,8 @@ export async function syncSemantic(
       "vector",
     );
 
-    const deletedFileNames = Array.from(indexedStates.keys()).filter(
+    const capabilityStates = store.getFileCapabilityStates(repoId, "semantic");
+    const deletedFileNames = Array.from(capabilityStates.keys()).filter(
       (indexedFile) => !currentFiles.has(indexedFile),
     );
 
@@ -222,6 +229,7 @@ export async function syncSemantic(
             }
 
             await deleteIndexedFile(repoId, indexedFile);
+            store.deleteFileCapabilityState(repoId, indexedFile, "semantic");
             deletedFiles += 1;
             reporter.setProgress(index + 1, deletedFileNames.length);
           }
@@ -249,10 +257,28 @@ export async function syncSemantic(
     );
 
     if (preparedChunks.length === 0) {
+      for (const preparedFile of preparedFiles) {
+        if (preparedFile.previousPointIds.length === 0) {
+          continue;
+        }
+
+        await deletePointIds(preparedFile.previousPointIds);
+        cleanedOldPoints += preparedFile.previousPointIds.length;
+      }
+
       await progress.run(
         "Nothing to index",
         () => {
-          metadataStore.setVersion(repoId, "vector", VECTOR_INDEX_VERSION);
+          for (const preparedFile of preparedFiles) {
+            store.setFileCapabilityState(repoId, preparedFile.relativePath, "semantic", {
+              fileHash: preparedFile.fileHash,
+              version: VECTOR_INDEX_VERSION,
+              state: "ready",
+              generation: preparedFile.generationId,
+              itemCount: 0,
+            });
+          }
+          store.setVersion(repoId, "semantic", VECTOR_INDEX_VERSION);
         },
         "vector",
       );
@@ -406,7 +432,20 @@ export async function syncSemantic(
         );
       },
       activate: async () => {
-        metadataStore.setVersion(repoId, "vector", VECTOR_INDEX_VERSION);
+        for (const fileEntry of fileEntries) {
+          const preparedFile = preparedFileMap.get(fileEntry.relativePath);
+          if (!preparedFile) {
+            continue;
+          }
+          store.setFileCapabilityState(repoId, fileEntry.relativePath, "semantic", {
+            fileHash: preparedFile.fileHash,
+            version: VECTOR_INDEX_VERSION,
+            state: "ready",
+            generation: fileEntry.generationId,
+            itemCount: fileEntry.points.length,
+          });
+        }
+        store.setVersion(repoId, "semantic", VECTOR_INDEX_VERSION);
       },
     });
 
@@ -430,8 +469,20 @@ export async function syncSemantic(
       deletedFiles,
       totalMs: performance.now() - startedAt,
     };
+  } catch (error) {
+    for (const preparedFile of preparedFiles) {
+      store.setFileCapabilityState(repoId, preparedFile.relativePath, "semantic", {
+        fileHash: preparedFile.fileHash,
+        version: VECTOR_INDEX_VERSION,
+        state: "error",
+        generation: preparedFile.generationId,
+        itemCount: 0,
+        lastError: error instanceof Error ? error.message : String(error),
+      });
+    }
+    throw error;
   } finally {
-    metadataStore.close();
+    store.close();
   }
 }
 

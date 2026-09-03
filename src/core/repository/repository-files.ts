@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+export { getRepoId } from "./repository-identity.js";
+
 const allowedExtensions = new Set([
   ".ts",
   ".tsx",
@@ -57,8 +59,4 @@ async function scanDirectory(directory: string): Promise<string[]> {
 
 export async function scanRepo(repoPath: string): Promise<string[]> {
   return scanDirectory(path.resolve(repoPath));
-}
-
-export function getRepoId(repoPath: string): string {
-  return path.basename(path.resolve(repoPath));
 }

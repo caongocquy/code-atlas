@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { GraphStore } from "../src/storage/graph/graph.store.js";
+import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
 import { indexGraph } from "../src/core/graph/graph-index.service.js";
 import { silentProgressRunner } from "../src/core/progress/silent-progress-runner.js";
 
@@ -27,7 +27,7 @@ test("graph service keeps deterministic incremental behavior with silent progres
     assert.equal(first.fullRebuild, true);
     assert.equal(first.files, 1);
 
-    const store = new GraphStore(path.join(repoPath, ".code-rag", "graph.db"));
+    const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
 
     try {
       const initialGraph = store.loadGraph(first.repoId);

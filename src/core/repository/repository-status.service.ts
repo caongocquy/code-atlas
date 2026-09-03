@@ -7,11 +7,11 @@ import {
   VECTOR_INDEX_VERSION,
 } from "../../config/constants.js";
 import { qdrant } from "../../infrastructure/vector/qdrant.client.js";
-import { GraphStore } from "../../storage/graph/graph.store.js";
-import { getIndexedFileStates } from "./index-state.service.js";
-import { IndexMetadataStore, type IndexMetadata } from "../../storage/metadata/index-metadata.store.js";
+import { AtlasStore } from "../../storage/atlas/atlas.store.js";
+import type { IndexMetadata } from "../../storage/atlas/atlas.types.js";
 import { createFileHash } from "./file-hash.js";
-import { getRepoId, scanRepo } from "./repository-files.js";
+import { getRepositoryIdentity } from "./repository-identity.js";
+import { scanRepo } from "./repository-files.js";
 
 export type RepositoryStatus = {
   repository: {
@@ -52,15 +52,6 @@ export type RepositoryStatus = {
   };
 };
 
-async function exists(filePath: string): Promise<boolean> {
-  try {
-    await fs.access(filePath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 async function currentHashes(
   repoPath: string,
   files: string[],
@@ -92,32 +83,30 @@ function hasChanges(
   return false;
 }
 
-function metadataFor(
-  metadataStore: IndexMetadataStore | undefined,
-  repoId: string,
-  type: "vector" | "graph",
-): IndexMetadata | undefined {
-  return metadataStore?.getMetadata(repoId, type);
-}
-
 export async function getRepositoryStatus(
   inputPath = process.cwd(),
 ): Promise<RepositoryStatus> {
   const repoPath = path.resolve(inputPath);
-  const repoId = getRepoId(repoPath);
   const files = await scanRepo(repoPath);
   const hashes = await currentHashes(repoPath, files);
-  const metadataPath = path.join(repoPath, ".code-rag", "index-metadata.db");
-  const graphPath = path.join(repoPath, ".code-rag", "graph.db");
-  const metadataStore = (await exists(metadataPath))
-    ? new IndexMetadataStore(metadataPath)
-    : undefined;
+  const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
+  const repository = store.ensureRepository(getRepositoryIdentity(repoPath));
+  const repoId = repository.id;
 
   try {
-    const vectorMetadata = metadataFor(metadataStore, repoId, "vector");
-    const graphMetadata = metadataFor(metadataStore, repoId, "graph");
-    const vector = await getVectorStatus(repoId, hashes, vectorMetadata);
-    const graph = await getGraphStatus(repoId, graphPath, hashes, graphMetadata);
+    const vector = await getVectorStatus(
+      repoId,
+      hashes,
+      store.getMetadata(repoId, "semantic"),
+      store.getFileCapabilityStates(repoId, "semantic"),
+    );
+    const graph = await getGraphStatus(
+      repoId,
+      path.join(repoPath, ".codeatlas", "atlas.db"),
+      hashes,
+      store.getMetadata(repoId, "graph"),
+      store,
+    );
 
     return {
       repository: {
@@ -129,7 +118,7 @@ export async function getRepositoryStatus(
       graph,
     };
   } finally {
-    metadataStore?.close();
+    store.close();
   }
 }
 
@@ -137,6 +126,7 @@ async function getVectorStatus(
   repoId: string,
   hashes: Map<string, string>,
   metadata: IndexMetadata | undefined,
+  capabilityStates: Map<string, { fileHash?: string; state: string }>,
 ): Promise<RepositoryStatus["vector"]> {
   const base = {
     currentVersion: VECTOR_INDEX_VERSION,
@@ -164,7 +154,12 @@ async function getVectorStatus(
       };
     }
 
-    const states = await getIndexedFileStates(repoId);
+    const readyStates = new Map(
+      Array.from(capabilityStates.entries())
+        .filter(([, state]) => state.state === "ready")
+        .filter(([, state]) => state.fileHash !== undefined)
+        .map(([file, state]) => [file, { fileHash: state.fileHash! }]),
+    );
     const count = await qdrant.count(REPO_CODE_COLLECTION, {
       exact: true,
       filter: {
@@ -178,11 +173,11 @@ async function getVectorStatus(
         ],
       },
     });
-    const needsSync = base.needsSync || hasChanges(hashes, states);
+    const needsSync = base.needsSync || hasChanges(hashes, readyStates);
 
     return {
       ...base,
-      indexedFiles: states.size,
+      indexedFiles: capabilityStates.size,
       points: count.count,
       chunks: count.count,
       reachable: true,
@@ -200,9 +195,10 @@ async function getVectorStatus(
 
 async function getGraphStatus(
   repoId: string,
-  graphPath: string,
+  databasePath: string,
   hashes: Map<string, string>,
   metadata: IndexMetadata | undefined,
+  store: AtlasStore,
 ): Promise<RepositoryStatus["graph"]> {
   const base = {
     currentVersion: GRAPH_INDEX_VERSION,
@@ -216,43 +212,38 @@ async function getGraphStatus(
       extends: 0,
       contains: 0,
     },
-    sqlitePath: graphPath,
+    sqlitePath: databasePath,
     reachable: false,
     needsRebuild: metadata?.version !== GRAPH_INDEX_VERSION,
     updatedAt: metadata?.updatedAt,
   };
 
-  if (!(await exists(graphPath))) {
+  const states = store.getFileStates(repoId);
+
+  if (states.size === 0) {
     return {
       ...base,
       status: "not-indexed",
     };
   }
 
-  const store = new GraphStore(graphPath);
-
-  try {
-    const states = store.getFileStates(repoId);
-    const graph = store.loadGraph(repoId);
-    const edgeBreakdown = {
+  const graph = store.loadGraph(repoId);
+  const edgeBreakdown = {
       calls: graph.edges.filter((edge) => edge.type === "calls").length,
       imports: graph.edges.filter((edge) => edge.type === "imports").length,
       extends: graph.edges.filter((edge) => edge.type === "extends").length,
       contains: graph.edges.filter((edge) => edge.type === "contains").length,
-    };
-    const needsRebuild = base.needsRebuild || hasChanges(hashes, states);
+  };
+  const needsRebuild = base.needsRebuild || hasChanges(hashes, states);
 
-    return {
-      ...base,
-      indexedFiles: states.size,
-      nodes: graph.nodes.length,
-      edges: graph.edges.length,
-      edgeBreakdown,
-      reachable: true,
-      needsRebuild,
-      status: needsRebuild ? "stale" : "ready",
-    };
-  } finally {
-    store.close();
-  }
+  return {
+    ...base,
+    indexedFiles: states.size,
+    nodes: graph.nodes.length,
+    edges: graph.edges.length,
+    edgeBreakdown,
+    reachable: true,
+    needsRebuild,
+    status: needsRebuild ? "stale" : "ready",
+  };
 }

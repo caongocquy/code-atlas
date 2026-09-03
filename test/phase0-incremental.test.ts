@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 
 import { buildFileGraphs } from "../src/core/graph/build-file-updates.js";
 import { buildCodeGraph } from "../src/core/graph/build-graph.js";
-import { GraphStore } from "../src/storage/graph/graph.store.js";
+import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
 import { createFileHash } from "../src/core/repository/file-hash.js";
 import { getRepoId, scanRepo } from "../src/core/repository/repository-files.js";
 
@@ -54,8 +54,8 @@ function canonicalGraph(graph: Awaited<ReturnType<typeof buildCodeGraph>>): stri
 test("incremental sync handles unchanged, one changed importer impact, deletion, and deterministic output", async () => {
   await withRepo(async (repoPath) => {
     const repoId = getRepoId(repoPath);
-    const dbPath = path.join(repoPath, ".code-rag", "graph.db");
-    const store = new GraphStore(dbPath);
+    const dbPath = path.join(repoPath, "atlas.db");
+    const store = new AtlasStore(dbPath);
 
     try {
       const allFiles = new Set(

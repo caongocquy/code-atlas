@@ -8,16 +8,13 @@ import type {
 import { GRAPH_INDEX_VERSION } from "../../config/constants.js";
 import { buildFileGraphs } from "./build-file-updates.js";
 import { buildCodeGraph } from "./build-graph.js";
-import {
-  GraphStore,
-  type GraphFileState,
-  type GraphFileUpdate,
-} from "../../storage/graph/graph.store.js";
+import { AtlasStore } from "../../storage/atlas/atlas.store.js";
+import type { GraphFileState, GraphFileUpdate } from "../../storage/atlas/atlas.types.js";
 import type { CodeGraph } from "./types.js";
-import { IndexMetadataStore } from "../../storage/metadata/index-metadata.store.js";
 import { silentProgressRunner } from "../progress/silent-progress-runner.js";
 import { createFileHash } from "../repository/file-hash.js";
-import { getRepoId, scanRepo } from "../repository/repository-files.js";
+import { getRepositoryIdentity } from "../repository/repository-identity.js";
+import { scanRepo } from "../repository/repository-files.js";
 import { graphRefreshMode } from "../repository/index-version.js";
 
 export type GraphIndexOptions = {
@@ -118,7 +115,6 @@ export async function indexGraph(
 ): Promise<GraphIndexResult> {
   const repoPath = path.resolve(inputPath);
   const progress = options.progress ?? silentProgressRunner;
-  const repoId = getRepoId(repoPath);
   const startedAt = performance.now();
 
   const files = await progress.run(
@@ -138,10 +134,9 @@ export async function indexGraph(
     "graph",
   );
 
-  const store = new GraphStore(path.join(repoPath, ".code-rag", "graph.db"));
-  const metadataStore = new IndexMetadataStore(
-    path.join(repoPath, ".code-rag", "index-metadata.db"),
-  );
+  const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
+  const repository = store.ensureRepository(getRepositoryIdentity(repoPath));
+  const repoId = repository.id;
 
   try {
     let storedIndexVersion: string | undefined;
@@ -157,7 +152,7 @@ export async function indexGraph(
     await progress.run(
       "Loading graph state",
       async (reporter) => {
-        storedIndexVersion = metadataStore.getVersion(repoId, "graph");
+        storedIndexVersion = store.getVersion(repoId, "graph");
         forceFullRebuild =
           graphRefreshMode(storedIndexVersion, GRAPH_INDEX_VERSION) === "full-rebuild";
 
@@ -217,7 +212,7 @@ export async function indexGraph(
           title: "Building CodeGraph",
           kind: "graph",
           work: async (reporter) => {
-            graph = await buildCodeGraph(repoPath, reporter);
+            graph = await buildCodeGraph(repoPath, reporter, repoId);
             assertUniqueNodeIds(graph);
           },
         },
@@ -229,8 +224,7 @@ export async function indexGraph(
               throw new Error("Graph build produced no graph");
             }
 
-            store.replaceGraph(repoId, graph, currentHashes);
-            metadataStore.setVersion(repoId, "graph", GRAPH_INDEX_VERSION);
+            store.replaceGraph(repoId, graph, currentHashes, GRAPH_INDEX_VERSION);
           },
         },
       ]);
@@ -313,7 +307,7 @@ export async function indexGraph(
             };
           });
 
-          store.applyFileUpdates(repoId, updates, deletedFiles);
+          store.applyFileUpdates(repoId, updates, deletedFiles, GRAPH_INDEX_VERSION);
         },
       },
     ]);
@@ -339,7 +333,6 @@ export async function indexGraph(
       totalMs: performance.now() - startedAt,
     };
   } finally {
-    metadataStore.close();
     store.close();
   }
 }
