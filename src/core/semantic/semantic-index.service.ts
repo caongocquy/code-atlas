@@ -27,8 +27,14 @@ import { silentProgressRunner } from "../progress/silent-progress-runner.js";
 import { buildEmbeddingText } from "./embedding-text.js";
 import { createFileHash } from "../repository/file-hash.js";
 import { createPointId } from "./point-id.js";
-import { getRepositoryIdentity } from "../repository/repository-identity.js";
-import { scanRepo } from "../repository/repository-files.js";
+import {
+  canonicalRepositoryPath,
+  getRepositoryIdentity,
+} from "../repository/repository-identity.js";
+import {
+  repositoryRelativePath,
+  scanRepo,
+} from "../repository/repository-files.js";
 import { splitLargeSymbol } from "./split-symbol.js";
 import { runCopyOnWriteGeneration } from "./copy-on-write.js";
 import { vectorRefreshMode } from "../repository/index-version.js";
@@ -61,6 +67,11 @@ type PreparedFilePoints = {
 
 export type SemanticIndexOptions = {
   progress?: ProgressRunner;
+  files?: string[];
+  candidateFiles?: string[];
+  deletedFiles?: string[];
+  fileHashes?: Map<string, string>;
+  forceFullReindex?: boolean;
 };
 
 export type SemanticIndexResult = {
@@ -121,7 +132,7 @@ export async function syncSemantic(
   inputPath: string,
   options: SemanticIndexOptions = {},
 ): Promise<SemanticIndexResult> {
-  const repoPath = path.resolve(inputPath);
+  const repoPath = canonicalRepositoryPath(path.resolve(inputPath));
   const progress = options.progress ?? silentProgressRunner;
   const startedAt = performance.now();
 
@@ -134,10 +145,10 @@ export async function syncSemantic(
 
   try {
     const storedIndexVersion = store.getVersion(repoId, "semantic");
-    const forceFullReindex =
+    const forceFullReindex = options.forceFullReindex === true ||
       vectorRefreshMode(storedIndexVersion, VECTOR_INDEX_VERSION) === "semantic-reindex";
 
-    const files = await progress.run(
+    const files = options.files ?? await progress.run(
       "Scanning repository",
       async (reporter) => {
         const scannedFiles = await scanRepo(repoPath);
@@ -146,6 +157,9 @@ export async function syncSemantic(
       },
       "vector",
     );
+    const candidateFiles = options.candidateFiles
+      ? new Set(options.candidateFiles)
+      : undefined;
 
     let indexedStates = new Map<string, IndexedFileState>();
     const currentFiles = new Set<string>();
@@ -170,11 +184,19 @@ export async function syncSemantic(
             continue;
           }
 
-          const relativePath = path.relative(repoPath, filePath);
+          const relativePath = repositoryRelativePath(repoPath, filePath);
           currentFiles.add(relativePath);
 
+          const shouldConsider = forceFullReindex || !candidateFiles || candidateFiles.has(relativePath);
+
+          if (!shouldConsider) {
+            skippedFiles += 1;
+            reporter.setProgress(index + 1, files.length);
+            continue;
+          }
+
           const content = await fs.readFile(filePath, "utf8");
-          const fileHash = createFileHash(content);
+          const fileHash = options.fileHashes?.get(relativePath) ?? createFileHash(content);
           const previousState = capabilityStates.get(relativePath);
           const previousPointState = indexedStates.get(relativePath);
 

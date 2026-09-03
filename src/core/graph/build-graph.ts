@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { parseCodeSymbols } from "./parsers/code-parser.js";
 import { getRepoId, scanRepo } from "../repository/repository-files.js";
+import { canonicalRepositoryPath } from "../repository/repository-identity.js";
 import {
   extractImports,
   isRelativeImport,
@@ -120,12 +121,13 @@ export async function buildCodeGraph(
   repoPath: string,
   reporter?: ProgressReporter,
   repositoryId?: string,
+  sourceFiles?: string[],
 ): Promise<CodeGraph> {
-  const absoluteRepoPath = path.resolve(repoPath);
+  const absoluteRepoPath = canonicalRepositoryPath(path.resolve(repoPath));
 
   const repoId = repositoryId ?? getRepoId(absoluteRepoPath);
 
-  const files = await scanRepo(absoluteRepoPath);
+  const files = sourceFiles ?? await scanRepo(absoluteRepoPath);
 
   const relativeFiles = files.map((filePath) =>
     path.relative(absoluteRepoPath, filePath),

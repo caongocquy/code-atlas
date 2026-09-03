@@ -13,12 +13,22 @@ import type { GraphFileState, GraphFileUpdate } from "../../storage/atlas/atlas.
 import type { CodeGraph } from "./types.js";
 import { silentProgressRunner } from "../progress/silent-progress-runner.js";
 import { createFileHash } from "../repository/file-hash.js";
-import { getRepositoryIdentity } from "../repository/repository-identity.js";
-import { scanRepo } from "../repository/repository-files.js";
+import {
+  canonicalRepositoryPath,
+  getRepositoryIdentity,
+} from "../repository/repository-identity.js";
+import {
+  repositoryRelativePath,
+  scanRepo,
+} from "../repository/repository-files.js";
 import { graphRefreshMode } from "../repository/index-version.js";
 
 export type GraphIndexOptions = {
   progress?: ProgressRunner;
+  files?: string[];
+  candidateFiles?: string[];
+  fileHashes?: Map<string, string>;
+  forceFullRebuild?: boolean;
 };
 
 export type GraphIndexResult = {
@@ -88,9 +98,11 @@ function assertUniqueNodeIds(graph: CodeGraph): void {
 async function createFileHashes(
   repoPath: string,
   files: string[],
+  candidateFiles: Set<string> | undefined,
+  knownHashes: Map<string, string> | undefined,
   reporter?: ProgressReporter,
 ): Promise<Map<string, string>> {
-  const hashes = new Map<string, string>();
+  const hashes = new Map(knownHashes);
 
   for (let index = 0; index < files.length; index += 1) {
     const absoluteFile = files[index];
@@ -99,10 +111,18 @@ async function createFileHashes(
       continue;
     }
 
-    const relativeFile = path.relative(repoPath, absoluteFile);
-    const content = await fs.readFile(absoluteFile, "utf8");
+    const relativeFile = repositoryRelativePath(repoPath, absoluteFile);
 
-    hashes.set(relativeFile, createFileHash(content));
+    if (candidateFiles && !candidateFiles.has(relativeFile)) {
+      reporter?.setProgress(index + 1, files.length);
+      continue;
+    }
+
+    if (!hashes.has(relativeFile)) {
+      const content = await fs.readFile(absoluteFile, "utf8");
+      hashes.set(relativeFile, createFileHash(content));
+    }
+
     reporter?.setProgress(index + 1, files.length);
   }
 
@@ -113,11 +133,11 @@ export async function indexGraph(
   inputPath: string,
   options: GraphIndexOptions = {},
 ): Promise<GraphIndexResult> {
-  const repoPath = path.resolve(inputPath);
+  const repoPath = canonicalRepositoryPath(path.resolve(inputPath));
   const progress = options.progress ?? silentProgressRunner;
   const startedAt = performance.now();
 
-  const files = await progress.run(
+  const files = options.files ?? await progress.run(
     "Scanning repository",
     async (reporter) => {
       const scannedFiles = await scanRepo(repoPath);
@@ -126,11 +146,20 @@ export async function indexGraph(
     },
     "graph",
   );
-  const relativeFiles = files.map((filePath) => path.relative(repoPath, filePath));
+  const relativeFiles = files.map((filePath) => repositoryRelativePath(repoPath, filePath));
   const currentFileSet = new Set(relativeFiles);
+  const candidateFiles = options.candidateFiles
+    ? new Set(options.candidateFiles)
+    : undefined;
   const currentHashes = await progress.run(
     "Hashing files",
-    (reporter) => createFileHashes(repoPath, files, reporter),
+    (reporter) => createFileHashes(
+      repoPath,
+      files,
+      candidateFiles,
+      options.fileHashes,
+      reporter,
+    ),
     "graph",
   );
 
@@ -153,7 +182,7 @@ export async function indexGraph(
       "Loading graph state",
       async (reporter) => {
         storedIndexVersion = store.getVersion(repoId, "graph");
-        forceFullRebuild =
+        forceFullRebuild = options.forceFullRebuild === true ||
           graphRefreshMode(storedIndexVersion, GRAPH_INDEX_VERSION) === "full-rebuild";
 
         if (!forceFullRebuild) {
@@ -162,6 +191,11 @@ export async function indexGraph(
         }
 
         for (const relativeFile of relativeFiles) {
+          if (candidateFiles && !candidateFiles.has(relativeFile)) {
+            unchangedFiles.push(relativeFile);
+            continue;
+          }
+
           const fileHash = currentHashes.get(relativeFile);
 
           if (!fileHash) {
@@ -212,7 +246,7 @@ export async function indexGraph(
           title: "Building CodeGraph",
           kind: "graph",
           work: async (reporter) => {
-            graph = await buildCodeGraph(repoPath, reporter, repoId);
+            graph = await buildCodeGraph(repoPath, reporter, repoId, files);
             assertUniqueNodeIds(graph);
           },
         },

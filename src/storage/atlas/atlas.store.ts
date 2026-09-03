@@ -217,6 +217,20 @@ export class AtlasStore {
     );
   }
 
+  getIndexedFilePaths(repoId: string): Set<string> {
+    const rows = this.database
+      .prepare(
+        `SELECT path AS file FROM files WHERE repository_id = ?
+         UNION
+         SELECT file_path AS file
+         FROM file_capability_state
+         WHERE repository_id = ?`,
+      )
+      .all(repoId, repoId) as Array<{ file: string }>;
+
+    return new Set(rows.map((row) => row.file));
+  }
+
   replaceGraph(
     repoId: string,
     graph: CodeGraph,

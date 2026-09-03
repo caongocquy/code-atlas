@@ -8,68 +8,74 @@ import {
   type SummaryRow,
 } from "./cli-output.js";
 import { GRAPH_INDEX_VERSION } from "../../config/constants.js";
-import { indexGraph } from "../../core/graph/graph-index.service.js";
+import { syncRepository } from "../../core/indexing/index-pipeline.service.js";
 
 async function main(): Promise<void> {
-  const repoPath = path.resolve(process.argv[2] ?? ".");
-  const result = await indexGraph(repoPath, { progress: cliProgressRunner });
+  const args = process.argv.slice(2);
+  const repoArgument = args.find((argument) => argument !== "--skip-git") ?? ".";
+  const repoPath = path.resolve(repoArgument);
+  const result = await syncRepository(repoPath, {
+    progress: cliProgressRunner,
+    skipGit: args.includes("--skip-git"),
+  });
+  const graph = result.graph;
 
-  if (result.versionChanged) {
+  if (graph.versionChanged) {
     console.log(
       formatNotice(
         "Graph index version changed",
-        `${result.storedVersion ?? "none"} → ${GRAPH_INDEX_VERSION}`,
+        `${graph.storedVersion ?? "none"} → ${GRAPH_INDEX_VERSION}`,
         "warning",
       ),
     );
     console.log(formatNotice("Full rebuild required", undefined, "warning"));
   }
 
-  if (result.status === "current") {
+  if (graph.status === "current") {
     console.log(
       formatSummary("Graph already up to date", [
-        { label: "Files", value: result.files },
-        { label: "Unchanged", value: result.unchangedFiles },
-        { label: "Version", value: result.version },
-        { label: "Time", value: `${result.totalMs.toFixed(1)} ms` },
+        { label: "Files", value: graph.files },
+        { label: "Unchanged", value: graph.unchangedFiles },
+        { label: "Version", value: graph.version },
+        { label: "Time", value: `${graph.totalMs.toFixed(1)} ms` },
       ], "graph"),
     );
 
     return;
   }
 
-  if (!result.fullRebuild) {
+  if (!graph.fullRebuild) {
     console.log(
       formatNotice(
         "Incremental sync",
         formatIncrementalSync(
-          result.addedFiles,
-          result.changedFiles,
-          result.deletedFiles,
+          graph.addedFiles,
+          graph.changedFiles,
+          graph.deletedFiles,
         ),
       ),
     );
   }
 
   const summaryRows: SummaryRow[] = [
-    { label: "Files", value: result.files },
-    { label: "Added", value: result.addedFiles, tone: "warning" },
-    { label: "Changed", value: result.changedFiles, tone: "warning" },
-    { label: "Impacted", value: result.impactedFiles, tone: "warning" },
-    { label: "Unchanged", value: result.unchangedFiles },
-    { label: "Deleted", value: result.deletedFiles, tone: "warning" },
+    { label: "Files", value: graph.files },
+    { label: "Added", value: graph.addedFiles, tone: "warning" },
+    { label: "Changed", value: graph.changedFiles, tone: "warning" },
+    { label: "Impacted", value: graph.impactedFiles, tone: "warning" },
+    { label: "Unchanged", value: graph.unchangedFiles },
+    { label: "Deleted", value: graph.deletedFiles, tone: "warning" },
   ];
 
-  if (result.fullRebuild) {
+  if (graph.fullRebuild) {
     summaryRows.push(
-      { label: "Nodes", value: result.nodes },
-      { label: "Edges", value: result.edges },
+      { label: "Nodes", value: graph.nodes },
+      { label: "Edges", value: graph.edges },
     );
   }
 
   summaryRows.push(
-    { label: "Version", value: result.version },
-    { label: "Time", value: `${result.totalMs.toFixed(1)} ms` },
+    { label: "Version", value: graph.version },
+    { label: "Time", value: `${graph.totalMs.toFixed(1)} ms` },
   );
 
   console.log(formatSummary("Graph indexed", summaryRows, "graph"));

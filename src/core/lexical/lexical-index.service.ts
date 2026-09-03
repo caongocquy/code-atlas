@@ -9,12 +9,25 @@ import type { LexicalDocument, LexicalFileUpdate } from "../../storage/atlas/atl
 import { parseCodeSymbols } from "../graph/parsers/code-parser.js";
 import type { CodeChunk } from "../graph/parsers/types.js";
 import { createFileHash } from "../repository/file-hash.js";
-import { getRepositoryIdentity } from "../repository/repository-identity.js";
-import { scanRepo } from "../repository/repository-files.js";
+import {
+  canonicalRepositoryPath,
+  getRepositoryIdentity,
+} from "../repository/repository-identity.js";
+import {
+  repositoryRelativePath,
+  scanRepo,
+} from "../repository/repository-files.js";
 import { splitLargeSymbol } from "../semantic/split-symbol.js";
 import { silentProgressRunner } from "../progress/silent-progress-runner.js";
 
-export type LexicalIndexOptions = { progress?: ProgressRunner };
+export type LexicalIndexOptions = {
+  progress?: ProgressRunner;
+  files?: string[];
+  candidateFiles?: string[];
+  deletedFiles?: string[];
+  fileHashes?: Map<string, string>;
+  forceFullRebuild?: boolean;
+};
 
 export type LexicalIndexResult = {
   repoPath: string;
@@ -75,7 +88,7 @@ async function createUpdates(
     const file = files[index];
     if (!file) continue;
 
-    const relativePath = path.relative(repoPath, file);
+    const relativePath = repositoryRelativePath(repoPath, file);
     const content = await fs.readFile(file, "utf8");
     const chunks = parseCodeSymbols(content, relativePath).flatMap(splitLargeSymbol);
     updates.push({
@@ -93,7 +106,7 @@ export async function indexLexical(
   inputPath: string,
   options: LexicalIndexOptions = {},
 ): Promise<LexicalIndexResult> {
-  const repoPath = path.resolve(inputPath);
+  const repoPath = canonicalRepositoryPath(path.resolve(inputPath));
   const progress = options.progress ?? silentProgressRunner;
   const startedAt = performance.now();
   const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
@@ -102,20 +115,30 @@ export async function indexLexical(
 
   try {
     const storedVersion = store.getVersion(repoId, "lexical");
-    const fullRebuild = storedVersion !== LEXICAL_INDEX_VERSION;
-    const files = await progress.run("Scanning repository", async (reporter) => {
+    const fullRebuild = options.forceFullRebuild === true || storedVersion !== LEXICAL_INDEX_VERSION;
+    const files = options.files ?? await progress.run("Scanning repository", async (reporter) => {
       const scannedFiles = await scanRepo(repoPath);
       reporter.update(`${scannedFiles.length} found`);
       return scannedFiles;
     });
     const capabilityStates = store.getFileCapabilityStates(repoId, "lexical");
-    const currentFiles = new Set(files.map((file) => path.relative(repoPath, file)));
+    const currentFiles = new Set(files.map((file) => repositoryRelativePath(repoPath, file)));
+    const candidateFiles = options.candidateFiles
+      ? new Set(options.candidateFiles)
+      : undefined;
     const filesToIndex: string[] = [];
     let skippedFiles = 0;
 
     for (const file of files) {
-      const relativePath = path.relative(repoPath, file);
-      const fileHash = createFileHash(await fs.readFile(file, "utf8"));
+      const relativePath = repositoryRelativePath(repoPath, file);
+      const shouldConsider = fullRebuild || !candidateFiles || candidateFiles.has(relativePath);
+
+      if (!shouldConsider) {
+        skippedFiles += 1;
+        continue;
+      }
+
+      const fileHash = options.fileHashes?.get(relativePath) ?? createFileHash(await fs.readFile(file, "utf8"));
       const previous = capabilityStates.get(relativePath);
       if (!fullRebuild && previous?.state === "ready" && previous.fileHash === fileHash) {
         skippedFiles += 1;
