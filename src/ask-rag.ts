@@ -1,9 +1,11 @@
 import ora from "ora";
 
 import { warmupEmbedding } from "./lib/embedding.js";
-import { chatStream } from "./lib/llama.js";
 import { warmupReranker } from "./lib/reranker.js";
-import { inspectRetrieval } from "./services/retrieval-inspector.js";
+import {
+  answerCodebase,
+  type InspectorChunk,
+} from "./services/retrieval-inspector.js";
 
 async function main(): Promise<void> {
   const question = process.argv.slice(2).join(" ");
@@ -29,76 +31,88 @@ async function main(): Promise<void> {
     `Reranker model loaded in ${((performance.now() - rerankerLoadStart) / 1000).toFixed(2)}s`,
   );
 
-  spinner = ora("Inspecting retrieval pipeline...").start();
-  const inspection = await inspectRetrieval(question);
-  spinner.succeed(
-    `Inspected ${inspection.rerankedResults.length} reranked chunks and ${inspection.graphExpansion.nodesAdded} graph nodes`,
-  );
-
-  console.log("\nTop reranked chunks:");
-
-  for (const result of inspection.rerankedResults) {
-    console.log({
-      rerankScore: result.rerankScore?.toFixed(4) ?? "-",
-      fusionScore: result.fusionScore?.toFixed(6) ?? "-",
-      vectorScore: result.vectorScore?.toFixed(4) ?? "-",
-      lexicalScore: result.lexicalScore?.toFixed(2) ?? "-",
-      file: result.file,
-      symbol: result.symbolName,
-      type: result.symbolType,
-    });
-  }
-
-  console.log(
-    `\nContext: ${inspection.finalContext.chunks.length}/${inspection.rerankedResults.length + inspection.graphExpansion.nodesAdded} chunks, ${inspection.finalContext.tokens} tokens`,
-  );
-
-  const generationSpinner = ora("Waiting for llama.cpp...").start();
+  let generationSpinner: ReturnType<typeof ora> | undefined;
   let streamStarted = false;
 
+  let result;
+
   try {
-    const result = await chatStream(inspection.messages, {
-      onToken(token) {
-        if (!streamStarted) {
-          generationSpinner.stop();
-          process.stdout.write("\n");
-          streamStarted = true;
-        }
+    result = await answerCodebase(
+      question,
+      {
+        onInspection(inspection) {
+          spinner = ora("Inspecting retrieval pipeline...").start();
+          spinner.succeed(
+            `Inspected ${inspection.rerankedResults.length} reranked chunks and ${inspection.graphExpansion.nodesAdded} graph nodes`,
+          );
 
-        process.stdout.write(token);
+          console.log("\nTop reranked chunks:");
+
+          for (const chunk of inspection.rerankedResults) {
+            printRerankedChunk(chunk);
+          }
+
+          console.log(
+            `\nContext: ${inspection.finalContext.chunks.length}/${inspection.rerankedResults.length + inspection.graphExpansion.nodesAdded} chunks, ${inspection.finalContext.tokens} tokens`,
+          );
+
+          generationSpinner = ora("Waiting for llama.cpp...").start();
+        },
       },
-    });
+      {
+        onToken(token) {
+          if (!streamStarted) {
+            generationSpinner?.stop();
+            process.stdout.write("\n");
+            streamStarted = true;
+          }
 
-    if (!streamStarted) {
-      generationSpinner.stop();
-    }
-
-    process.stdout.write("\n");
-
-    const totalDuration = performance.now() - totalStart;
-
-    console.log("\n---");
-    console.log(`Search: ${(inspection.metrics.searchMs / 1000).toFixed(2)}s`);
-    console.log(`Rerank: ${(inspection.metrics.rerankMs / 1000).toFixed(2)}s`);
-    console.log(
-      `Graph expansion: ${(inspection.metrics.graphExpansionMs / 1000).toFixed(4)}s`,
+          process.stdout.write(token);
+        },
+      },
     );
-    console.log(`Graph nodes added: ${inspection.graphExpansion.nodesAdded}`);
-    console.log(`Context build: ${(inspection.metrics.contextMs / 1000).toFixed(4)}s`);
-    console.log(
-      `Context chunks: ${inspection.finalContext.chunks.length}/${inspection.rerankedResults.length + inspection.graphExpansion.nodesAdded}`,
-    );
-    console.log(`Context tokens: ${inspection.finalContext.tokens}`);
-    console.log(
-      `TTFT: ${result.ttftMs === null ? "N/A" : `${(result.ttftMs / 1000).toFixed(2)}s`}`,
-    );
-    console.log(`Generation: ${(result.totalMs / 1000).toFixed(2)}s`);
-    console.log(`Total: ${(totalDuration / 1000).toFixed(2)}s`);
   } catch (error) {
-    generationSpinner.fail("Generation failed");
-
+    generationSpinner?.fail("Generation failed");
     throw error;
   }
+
+  if (!streamStarted) {
+    generationSpinner?.stop();
+  }
+
+  process.stdout.write("\n");
+
+  const totalDuration = performance.now() - totalStart;
+
+  console.log("\n---");
+  console.log(`Search: ${(result.metrics.searchMs / 1000).toFixed(2)}s`);
+  console.log(`Rerank: ${(result.metrics.rerankMs / 1000).toFixed(2)}s`);
+  console.log(
+    `Graph expansion: ${(result.metrics.graphExpansionMs / 1000).toFixed(4)}s`,
+  );
+  console.log(`Graph nodes added: ${result.graphExpansion.nodesAdded}`);
+  console.log(`Context build: ${(result.metrics.contextMs / 1000).toFixed(4)}s`);
+  console.log(
+    `Context chunks: ${result.finalContext.chunks.length}/${result.rerankedResults.length + result.graphExpansion.nodesAdded}`,
+  );
+  console.log(`Context tokens: ${result.finalContext.tokens}`);
+  console.log(
+    `TTFT: ${result.metrics.ttftMs === null ? "N/A" : `${(result.metrics.ttftMs / 1000).toFixed(2)}s`}`,
+  );
+  console.log(`Generation: ${(result.metrics.generationMs / 1000).toFixed(2)}s`);
+  console.log(`Total: ${(totalDuration / 1000).toFixed(2)}s`);
+}
+
+function printRerankedChunk(chunk: InspectorChunk): void {
+  console.log({
+    rerankScore: chunk.rerankScore?.toFixed(4) ?? "-",
+    fusionScore: chunk.fusionScore?.toFixed(6) ?? "-",
+    vectorScore: chunk.vectorScore?.toFixed(4) ?? "-",
+    lexicalScore: chunk.lexicalScore?.toFixed(2) ?? "-",
+    file: chunk.file,
+    symbol: chunk.symbolName,
+    type: chunk.symbolType,
+  });
 }
 
 main().catch((error) => {

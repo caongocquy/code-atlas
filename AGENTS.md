@@ -4,10 +4,10 @@ This repository is **CodeAtlas**.
 
 ## Local project guidance
 
+@docs/plan.md
+
 Before making changes:
 
-- Read `docs/plan.md` if it exists.
-- Read `docs/git-workflow.md` if it exists.
 - Follow only the currently requested migration phase.
 - Do not start a later phase unless explicitly requested.
 - Preserve existing behavior unless the current task explicitly changes it.
@@ -22,34 +22,16 @@ Before making changes:
 
 ## Git workflow
 
-- `main` is the stable/release branch.
-- `develop` is the integration branch.
-- New work starts from `develop`.
-- Use:
-  - `feature/*` for features/phases
-  - `fix/*` for bug fixes
-  - `refactor/*` for refactors
-  - `chore/*` for maintenance
-  - `docs/*` for docs
-  - `test/*` for tests
-  - `perf/*` for performance
-  - `ci/*` for CI/CD
-- Merge completed work back into `develop`.
-- Merge `develop` into `main` only at stable checkpoints/releases.
-- Do not force-push `main` or `develop`.
-- Run relevant validation before committing or merging.
+@docs/git-workflow.md
 
-Use Conventional Commits, preferably with scopes:
+Before modifying any tracked file:
 
-- `feat(graph): ...`
-- `fix(ui): ...`
-- `refactor(core): ...`
-- `test(index): ...`
-- `docs(plan): ...`
-- `build(cli): ...`
-- `perf(search): ...`
-- `ci(github): ...`
-- `chore(repo): ...`
+- Check the current Git branch.
+- If the current branch is `main` or `develop`, do not edit files yet.
+- Follow the Git workflow rules and create the appropriate task branch first.
+- Confirm the task branch is active before making changes.
+
+Never implement normal work directly on `main` or `develop`.
 
 ## Repository safety
 
@@ -76,6 +58,7 @@ Do not rewrite unrelated user changes.
 - Public/shareable configuration must live outside `.codeatlas/`.
 
 <!-- gitnexus:start -->
+
 # GitNexus — Code Intelligence
 
 This project is indexed by GitNexus as **code-atlas** (604 symbols, 1692 relationships, 47 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
@@ -100,22 +83,22 @@ This project is indexed by GitNexus as **code-atlas** (604 symbols, 1692 relatio
 
 ## Resources
 
-| Resource | Use for |
-|----------|---------|
-| `gitnexus://repo/code-atlas/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/code-atlas/clusters` | All functional areas |
-| `gitnexus://repo/code-atlas/processes` | All execution flows |
-| `gitnexus://repo/code-atlas/process/{name}` | Step-by-step execution trace |
+| Resource                                    | Use for                                  |
+| ------------------------------------------- | ---------------------------------------- |
+| `gitnexus://repo/code-atlas/context`        | Codebase overview, check index freshness |
+| `gitnexus://repo/code-atlas/clusters`       | All functional areas                     |
+| `gitnexus://repo/code-atlas/processes`      | All execution flows                      |
+| `gitnexus://repo/code-atlas/process/{name}` | Step-by-step execution trace             |
 
 ## CLI
 
-| Task | Read this skill file |
-|------|---------------------|
-| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
-| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
+| Task                                         | Read this skill file                                        |
+| -------------------------------------------- | ----------------------------------------------------------- |
+| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md`       |
+| Blast radius / "What breaks if I change X?"  | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
+| Trace bugs / "Why is X failing?"             | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md`       |
+| Rename / extract / split / refactor          | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md`     |
+| Tools, resources, schema reference           | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md`           |
+| Index, status, clean, wiki CLI commands      | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md`             |
 
 <!-- gitnexus:end -->

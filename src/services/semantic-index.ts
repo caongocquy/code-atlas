@@ -1,0 +1,438 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+
+import type {
+  ProgressReporter,
+  ProgressRunner,
+} from "../cli/types.js";
+import {
+  EMBEDDING_BATCH_SIZE,
+  EMBEDDING_DIMENSIONS,
+  REPO_CODE_COLLECTION,
+  UPSERT_BATCH_SIZE,
+  VECTOR_INDEX_VERSION,
+} from "../config/constants.js";
+import { embedBatch } from "../lib/embedding.js";
+import { qdrant } from "../lib/qdrant.js";
+import { parseCodeSymbols } from "../parsers/code-parser.js";
+import type { CodeChunk } from "../parsers/types.js";
+import {
+  deleteIndexedFile,
+  deletePointIds,
+  getIndexedFileStates,
+  type IndexedFileState,
+} from "./index-state.js";
+import { IndexMetadataStore } from "./index-metadata.js";
+import { silentProgressRunner } from "./progress.js";
+import { buildEmbeddingText } from "../utils/embedding-text.js";
+import { createFileHash } from "../utils/file-hash.js";
+import { createPointId } from "../utils/point-id.js";
+import { getRepoId, scanRepo } from "../utils/repo.js";
+import { splitLargeSymbol } from "../utils/split-symbol.js";
+import { runCopyOnWriteGeneration } from "../utils/copy-on-write.js";
+import { vectorRefreshMode } from "../utils/index-version.js";
+
+type PreparedFile = {
+  relativePath: string;
+  fileHash: string;
+  generationId: string;
+  chunks: CodeChunk[];
+  previousPointIds: Array<string | number>;
+};
+
+type PreparedChunk = {
+  relativePath: string;
+  fileHash: string;
+  generationId: string;
+  chunk: CodeChunk;
+};
+
+type PreparedFilePoints = {
+  relativePath: string;
+  generationId: string;
+  previousPointIds: Array<string | number>;
+  points: Array<{
+    id: string;
+    vector: number[];
+    payload: Record<string, unknown>;
+  }>;
+};
+
+export type SemanticIndexOptions = {
+  progress?: ProgressRunner;
+};
+
+export type SemanticIndexResult = {
+  repoPath: string;
+  repoId: string;
+  status: "indexed" | "nothing-to-index";
+  storedVersion?: string;
+  version: string;
+  fullReindex: boolean;
+  files: number;
+  chunks: number;
+  points: number;
+  embeddedSymbols: number;
+  cleanedOldPoints: number;
+  embeddingBatches: number;
+  qdrantBatches: number;
+  addedFiles: number;
+  updatedFiles: number;
+  skippedFiles: number;
+  deletedFiles: number;
+  totalMs: number;
+};
+
+async function ensureCollection(): Promise<void> {
+  const collections = await qdrant.getCollections();
+
+  const exists = collections.collections.some(
+    (collection) => collection.name === REPO_CODE_COLLECTION,
+  );
+
+  if (exists) {
+    return;
+  }
+
+  await qdrant.createCollection(REPO_CODE_COLLECTION, {
+    vectors: {
+      size: EMBEDDING_DIMENSIONS,
+      distance: "Cosine",
+    },
+  });
+}
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  if (size <= 0) {
+    throw new Error("Batch size must be greater than 0");
+  }
+
+  const batches: T[][] = [];
+
+  for (let index = 0; index < items.length; index += size) {
+    batches.push(items.slice(index, index + size));
+  }
+
+  return batches;
+}
+
+export async function syncSemantic(
+  inputPath: string,
+  options: SemanticIndexOptions = {},
+): Promise<SemanticIndexResult> {
+  const repoPath = path.resolve(inputPath);
+  const progress = options.progress ?? silentProgressRunner;
+  const repoId = getRepoId(repoPath);
+  const startedAt = performance.now();
+
+  await ensureCollection();
+
+  const metadataStore = new IndexMetadataStore(
+    path.join(repoPath, ".code-rag", "index-metadata.db"),
+  );
+
+  try {
+    const storedIndexVersion = metadataStore.getVersion(repoId, "vector");
+    const forceFullReindex =
+      vectorRefreshMode(storedIndexVersion, VECTOR_INDEX_VERSION) === "semantic-reindex";
+
+    const files = await progress.run(
+      "Scanning repository",
+      async (reporter) => {
+        const scannedFiles = await scanRepo(repoPath);
+        reporter.update(`${scannedFiles.length} found`);
+        return scannedFiles;
+      },
+      "vector",
+    );
+
+    let indexedStates = new Map<string, IndexedFileState>();
+    const currentFiles = new Set<string>();
+    const preparedFiles: PreparedFile[] = [];
+    let addedFiles = 0;
+    let updatedFiles = 0;
+    let skippedFiles = 0;
+    let deletedFiles = 0;
+    let embeddedSymbols = 0;
+    let writtenPoints = 0;
+    let cleanedOldPoints = 0;
+
+    await progress.run(
+      "Parsing source",
+      async (reporter) => {
+        indexedStates = await getIndexedFileStates(repoId);
+
+        for (let index = 0; index < files.length; index += 1) {
+          const filePath = files[index];
+
+          if (!filePath) {
+            continue;
+          }
+
+          const relativePath = path.relative(repoPath, filePath);
+          currentFiles.add(relativePath);
+
+          const content = await fs.readFile(filePath, "utf8");
+          const fileHash = createFileHash(content);
+          const previousState = indexedStates.get(relativePath);
+
+          if (!forceFullReindex && previousState?.fileHash === fileHash) {
+            skippedFiles += 1;
+            reporter.setProgress(index + 1, files.length);
+            continue;
+          }
+
+          const parsedChunks = parseCodeSymbols(content, relativePath);
+          const chunks = parsedChunks.flatMap(splitLargeSymbol);
+          const generationId = [`v${VECTOR_INDEX_VERSION}`, fileHash].join(":");
+
+          preparedFiles.push({
+            relativePath,
+            fileHash,
+            generationId,
+            chunks,
+            previousPointIds: previousState?.pointIds ?? [],
+          });
+
+          if (previousState) {
+            updatedFiles += 1;
+          } else {
+            addedFiles += 1;
+          }
+
+          reporter.setProgress(index + 1, files.length);
+        }
+      },
+      "vector",
+    );
+
+    const deletedFileNames = Array.from(indexedStates.keys()).filter(
+      (indexedFile) => !currentFiles.has(indexedFile),
+    );
+
+    if (deletedFileNames.length > 0) {
+      await progress.run(
+        "Cleaning deleted files",
+        async (reporter) => {
+          for (let index = 0; index < deletedFileNames.length; index += 1) {
+            const indexedFile = deletedFileNames[index];
+
+            if (!indexedFile) {
+              continue;
+            }
+
+            await deleteIndexedFile(repoId, indexedFile);
+            deletedFiles += 1;
+            reporter.setProgress(index + 1, deletedFileNames.length);
+          }
+        },
+        "vector",
+      );
+    }
+
+    let preparedChunks: PreparedChunk[] = [];
+
+    await progress.run(
+      "Preparing chunks",
+      async (reporter) => {
+        preparedChunks = preparedFiles.flatMap((preparedFile) =>
+          preparedFile.chunks.map((chunk) => ({
+            relativePath: preparedFile.relativePath,
+            fileHash: preparedFile.fileHash,
+            generationId: preparedFile.generationId,
+            chunk,
+          })),
+        );
+        reporter.update(`${preparedChunks.length} chunks`);
+      },
+      "vector",
+    );
+
+    if (preparedChunks.length === 0) {
+      await progress.run(
+        "Nothing to index",
+        () => {
+          metadataStore.setVersion(repoId, "vector", VECTOR_INDEX_VERSION);
+        },
+        "vector",
+      );
+
+      return {
+        repoPath,
+        repoId,
+        status: "nothing-to-index",
+        storedVersion: storedIndexVersion,
+        version: VECTOR_INDEX_VERSION,
+        fullReindex: forceFullReindex,
+        files: files.length,
+        chunks: 0,
+        points: 0,
+        embeddedSymbols: 0,
+        cleanedOldPoints: 0,
+        embeddingBatches: 0,
+        qdrantBatches: 0,
+        addedFiles,
+        updatedFiles,
+        skippedFiles,
+        deletedFiles,
+        totalMs: performance.now() - startedAt,
+      };
+    }
+
+    const embeddingBatches = chunkArray(preparedChunks, EMBEDDING_BATCH_SIZE);
+    const pointsByFile = new Map<string, PreparedFilePoints>();
+    const preparedFileMap = new Map(
+      preparedFiles.map((file) => [file.relativePath, file]),
+    );
+
+    const embedChunks = async (reporter: ProgressReporter): Promise<void> => {
+      for (const batch of embeddingBatches) {
+        const embeddingTexts = batch.map(({ chunk, relativePath }) =>
+          buildEmbeddingText(relativePath, chunk),
+        );
+        const vectors = await embedBatch(embeddingTexts);
+
+        if (vectors.length !== batch.length) {
+          throw new Error(
+            `Embedding batch mismatch: expected ${batch.length}, received ${vectors.length}`,
+          );
+        }
+
+        for (let index = 0; index < batch.length; index += 1) {
+          const item = batch[index];
+          const vector = vectors[index];
+
+          if (!item || !vector) {
+            throw new Error(`Missing embedding result at batch index ${index}`);
+          }
+
+          const { relativePath, fileHash, generationId, chunk } = item;
+          const pointId = createPointId(
+            repoId,
+            relativePath,
+            chunk.symbolType,
+            chunk.symbolName,
+            chunk.part ?? 1,
+            generationId,
+          );
+          const point = {
+            id: pointId,
+            vector,
+            payload: {
+              repoId,
+              file: relativePath,
+              fileHash,
+              generationId,
+              indexVersion: VECTOR_INDEX_VERSION,
+              language: chunk.language,
+              symbolName: chunk.symbolName,
+              symbolType: chunk.symbolType,
+              startLine: chunk.startLine,
+              endLine: chunk.endLine,
+              content: chunk.content,
+              part: chunk.part,
+              totalParts: chunk.totalParts,
+            },
+          };
+          const existing = pointsByFile.get(relativePath);
+
+          if (existing) {
+            existing.points.push(point);
+          } else {
+            const preparedFile = preparedFileMap.get(relativePath);
+
+            pointsByFile.set(relativePath, {
+              relativePath,
+              generationId,
+              previousPointIds: preparedFile?.previousPointIds ?? [],
+              points: [point],
+            });
+          }
+        }
+
+        embeddedSymbols += batch.length;
+        reporter.setProgress(embeddedSymbols, preparedChunks.length);
+      }
+    };
+
+    await progress.run("Embedding chunks", embedChunks, "vector");
+
+    const fileEntries = Array.from(pointsByFile.values());
+    const allPoints = fileEntries.flatMap((fileEntry) => fileEntry.points);
+    const upsertBatches = chunkArray(allPoints, UPSERT_BATCH_SIZE);
+
+    const writePoints = async (reporter: ProgressReporter): Promise<void> => {
+      for (const batch of upsertBatches) {
+        await qdrant.upsert(REPO_CODE_COLLECTION, {
+          wait: true,
+          points: batch,
+        });
+
+        writtenPoints += batch.length;
+        reporter.setProgress(writtenPoints, allPoints.length);
+      }
+    };
+
+    const cleanupTargets = fileEntries.filter(
+      (fileEntry) => fileEntry.previousPointIds.length > 0,
+    );
+
+    await runCopyOnWriteGeneration({
+      stage: async () => {
+        await progress.run("Writing Qdrant", writePoints, "vector");
+        return fileEntries;
+      },
+      cleanup: async () => {
+        if (cleanupTargets.length === 0) {
+          return;
+        }
+
+        await progress.run(
+          "Cleaning old generation",
+          async (reporter) => {
+            for (let index = 0; index < cleanupTargets.length; index += 1) {
+              const fileEntry = cleanupTargets[index];
+
+              if (!fileEntry) {
+                continue;
+              }
+
+              await deletePointIds(fileEntry.previousPointIds);
+              cleanedOldPoints += fileEntry.previousPointIds.length;
+              reporter.setProgress(index + 1, cleanupTargets.length);
+            }
+          },
+          "vector",
+        );
+      },
+      activate: async () => {
+        metadataStore.setVersion(repoId, "vector", VECTOR_INDEX_VERSION);
+      },
+    });
+
+    return {
+      repoPath,
+      repoId,
+      status: "indexed",
+      storedVersion: storedIndexVersion,
+      version: VECTOR_INDEX_VERSION,
+      fullReindex: forceFullReindex,
+      files: files.length,
+      chunks: preparedChunks.length,
+      points: writtenPoints,
+      embeddedSymbols,
+      cleanedOldPoints,
+      embeddingBatches: embeddingBatches.length,
+      qdrantBatches: upsertBatches.length,
+      addedFiles,
+      updatedFiles,
+      skippedFiles,
+      deletedFiles,
+      totalMs: performance.now() - startedAt,
+    };
+  } finally {
+    metadataStore.close();
+  }
+}
+
+export const indexSemantic = syncSemantic;

@@ -30,6 +30,10 @@ export type RetrievalInspectOptions = {
   repoPath?: string;
 };
 
+export type AnswerCodebaseOptions = RetrievalInspectOptions & {
+  onInspection?: (inspection: RetrievalInspection) => void | Promise<void>;
+};
+
 export type ChunkProvenance = {
   source: "vector" | "lexical" | "both" | "graph";
   stage: "vector" | "lexical" | "fusion" | "rerank" | "graph";
@@ -437,10 +441,12 @@ export async function inspectRetrieval(
 
 export async function answerCodebase(
   query: string,
-  options: RetrievalInspectOptions = {},
+  options: AnswerCodebaseOptions = {},
   streamOptions: StreamChatOptions = {},
 ): Promise<AnswerInspection> {
-  const inspection = await inspectRetrieval(query, options);
+  const { onInspection, ...inspectOptions } = options;
+  const inspection = await inspectRetrieval(query, inspectOptions);
+  await onInspection?.(inspection);
   const answerStart = performance.now();
   const result = await chatStream(inspection.messages, streamOptions);
   const totalMs = performance.now() - answerStart;

@@ -5,7 +5,11 @@ import {
   formatTaskTitle,
 } from "./format.js";
 import type { ProgressKind } from "./theme.js";
-import type { ProgressReporter } from "./types.js";
+import type {
+  ProgressReporter,
+  ProgressRunner,
+  ProgressTask,
+} from "./types.js";
 
 const UPDATE_INTERVAL_MS = 80;
 
@@ -88,3 +92,12 @@ export async function runProgressTask<T>(
 
   return result;
 }
+
+export const cliProgressRunner: ProgressRunner = {
+  run: runProgressTask,
+  runAll(tasks: readonly ProgressTask[]): Promise<void> {
+    return runProgressTasks(
+      tasks.map((task) => createProgressTask(task.title, task.work, task.kind)),
+    );
+  },
+};
