@@ -53,7 +53,7 @@ test("Phase 1 entrypoints delegate orchestration and services keep CLI/process b
   const progressService = await source("src/core/progress/silent-progress-runner.ts");
   const inspectorService = await source("src/core/retrieval/retrieval-inspector.service.ts");
 
-  assert.match(graphAdapter, /indexGraph/);
+  assert.match(graphAdapter, /syncRepository/);
   assert.doesNotMatch(graphAdapter, /GraphStore|buildFileGraphs|scanRepo|createFileHash/);
   assert.match(semanticAdapter, /indexSemantic/);
   assert.doesNotMatch(

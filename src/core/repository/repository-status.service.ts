@@ -10,10 +10,18 @@ import { qdrant } from "../../infrastructure/vector/qdrant.client.js";
 import { AtlasStore } from "../../storage/atlas/atlas.store.js";
 import type { IndexMetadata } from "../../storage/atlas/atlas.types.js";
 import { createFileHash } from "./file-hash.js";
-import { getRepositoryIdentity } from "./repository-identity.js";
-import { scanRepo } from "./repository-files.js";
+import {
+  canonicalRepositoryPath,
+  getRepositoryIdentity,
+} from "./repository-identity.js";
+import {
+  repositoryRelativePath,
+  scanRepo,
+} from "./repository-files.js";
+import { detectChangeDetectionMode } from "../indexing/change-detector.js";
 
 export type RepositoryStatus = {
+  changeDetection: "git" | "filesystem";
   repository: {
     path: string;
     repoId: string;
@@ -59,7 +67,7 @@ async function currentHashes(
   const hashes = new Map<string, string>();
 
   for (const filePath of files) {
-    const relativePath = path.relative(repoPath, filePath);
+    const relativePath = repositoryRelativePath(repoPath, filePath);
     hashes.set(relativePath, createFileHash(await fs.readFile(filePath, "utf8")));
   }
 
@@ -86,9 +94,10 @@ function hasChanges(
 export async function getRepositoryStatus(
   inputPath = process.cwd(),
 ): Promise<RepositoryStatus> {
-  const repoPath = path.resolve(inputPath);
+  const repoPath = canonicalRepositoryPath(path.resolve(inputPath));
   const files = await scanRepo(repoPath);
   const hashes = await currentHashes(repoPath, files);
+  const changeDetection = await detectChangeDetectionMode(repoPath);
   const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
   const repository = store.ensureRepository(getRepositoryIdentity(repoPath));
   const repoId = repository.id;
@@ -109,6 +118,7 @@ export async function getRepositoryStatus(
     );
 
     return {
+      changeDetection,
       repository: {
         path: repoPath,
         repoId,
