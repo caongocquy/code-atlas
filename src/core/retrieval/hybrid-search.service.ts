@@ -3,7 +3,7 @@ import { searchCode } from "./code-search.service.js";
 import {
   lexicalSearchCode,
   type LexicalSearchResult,
-} from "./lexical-search.service.js";
+} from "../lexical/lexical-search.service.js";
 
 const RRF_K = 60;
 
@@ -37,8 +37,9 @@ function createResultKey(result: SearchResult): string {
 export async function hybridSearchCode(
   query: string,
   limit = 20,
+  repoPath?: string,
 ): Promise<HybridSearchResult[]> {
-  const { fusedResults } = await inspectHybridSearch(query, limit);
+  const { fusedResults } = await inspectHybridSearch(query, limit, repoPath);
 
   return fusedResults;
 }
@@ -46,6 +47,7 @@ export async function hybridSearchCode(
 export async function inspectHybridSearch(
   query: string,
   limit = 20,
+  repoPath?: string,
 ): Promise<HybridSearchStages> {
   const searchStart = performance.now();
   let vectorMs = 0;
@@ -60,7 +62,7 @@ export async function inspectHybridSearch(
 
   const lexicalPromise = (async () => {
     const startedAt = performance.now();
-    const results = await lexicalSearchCode(query, limit);
+    const results = await lexicalSearchCode(query, limit, repoPath);
     lexicalMs = performance.now() - startedAt;
     return results;
   })();

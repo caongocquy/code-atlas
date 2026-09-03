@@ -12,7 +12,8 @@ import {
   getGraphNodeDetails,
   searchGraphNodes,
 } from "../../core/graph/explorer.js";
-import { GraphStore } from "../../storage/graph/graph.store.js";
+import { AtlasStore } from "../../storage/atlas/atlas.store.js";
+import { getRepositoryIdentity } from "../../core/repository/repository-identity.js";
 import { qdrant } from "../../infrastructure/vector/qdrant.client.js";
 import { getRepositoryStatus } from "../../core/repository/repository-status.service.js";
 import { resolveRepoSourcePath } from "./repository-source-path.js";
@@ -26,19 +27,14 @@ const app = Fastify({ logger: true });
 const repoPath = path.resolve(process.env.CODE_RAG_REPO_PATH ?? process.cwd());
 const uiRoot = path.resolve("dist/ui");
 
-function graphPath(): string {
-  return path.join(repoPath, ".code-rag", "graph.db");
-}
-
 async function loadGraph() {
-  const databasePath = graphPath();
-
-  await fs.access(databasePath);
-
-  const store = new GraphStore(databasePath);
+  const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
 
   try {
-    const repoId = path.basename(repoPath);
+    const repoId = store.ensureRepository(getRepositoryIdentity(repoPath)).id;
+    if (store.getFileStates(repoId).size === 0) {
+      throw new Error(`No persisted graph found for repo "${repoId}".`);
+    }
     return store.loadGraph(repoId);
   } finally {
     store.close();

@@ -5,7 +5,7 @@ import {
   expandGraphContextDetailed,
   type GraphExpansionDetail,
 } from "../graph/expand.js";
-import { GraphStore } from "../../storage/graph/graph.store.js";
+import { AtlasStore } from "../../storage/atlas/atlas.store.js";
 import type { GraphNode } from "../graph/types.js";
 import { chatStream, type StreamChatOptions } from "../../infrastructure/llm/llama.client.js";
 import { rerank } from "../../infrastructure/reranker/transformers-reranker.client.js";
@@ -18,7 +18,7 @@ import { applyContextBudgetDetailed } from "./context-budget.js";
 import type { DetailedContextBudgetResult } from "./context-budget.js";
 import { buildContext } from "./context.js";
 import { buildCodebaseMessages } from "./prompt.js";
-import { getRepoId } from "../repository/repository-files.js";
+import { getRepositoryIdentity } from "../repository/repository-identity.js";
 
 export type RetrievalInspectOptions = {
   topK?: number;
@@ -296,8 +296,8 @@ export async function inspectRetrieval(
 
   const options = normalizeOptions(inputOptions);
   const repoPath = path.resolve(inputOptions.repoPath ?? process.cwd());
-  const repoId = getRepoId(repoPath);
-  const stages = await inspectHybridSearch(trimmedQuery, options.topK);
+  let repoId = getRepositoryIdentity(repoPath).id;
+  const stages = await inspectHybridSearch(trimmedQuery, options.topK, repoPath);
   const vectorResults = stages.vectorResults.map((result, index) =>
     toInspectorChunk(result, [{ source: "vector", stage: "vector" }], {
       source: "vector",
@@ -336,7 +336,6 @@ export async function inspectRetrieval(
   });
 
   const graphStart = performance.now();
-  const graphPath = path.join(repoPath, ".code-rag", "graph.db");
   let graphExpansion: GraphExpansionInspection = {
     available: false,
     enabled: options.graphEnabled,
@@ -350,12 +349,14 @@ export async function inspectRetrieval(
   let graphChunks: InspectorChunk[] = [];
 
   try {
-    await fs.access(graphPath);
-
     if (options.graphEnabled && options.graphMaxNodes > 0) {
-      const graphStore = new GraphStore(graphPath);
+      const graphStore = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
 
       try {
+        repoId = graphStore.ensureRepository(getRepositoryIdentity(repoPath)).id;
+        if (graphStore.getFileStates(repoId).size === 0) {
+          throw new Error(`No persisted graph found for repo "${repoId}".`);
+        }
         const graph = graphStore.loadGraph(repoId);
         const expansion = expandGraphContextDetailed(
           graph,

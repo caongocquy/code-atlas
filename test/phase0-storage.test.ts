@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { GraphStore } from "../src/storage/graph/graph.store.js";
+import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
 import type { CodeGraph } from "../src/core/graph/types.js";
 
 function canonicalGraph(graph: CodeGraph): string {
@@ -16,7 +16,7 @@ function canonicalGraph(graph: CodeGraph): string {
   });
 }
 
-test("GraphStore rolls back a failing replacement without partial state", async () => {
+test("AtlasStore rolls back a failing replacement without partial state", async () => {
   const repoPath = await mkdtemp(path.join(tmpdir(), "code-atlas-phase-0-store-"));
   const dbPath = path.join(repoPath, "graph.db");
   const repoId = "phase-0-repo";
@@ -33,7 +33,7 @@ test("GraphStore rolls back a failing replacement without partial state", async 
   };
 
   try {
-    const store = new GraphStore(dbPath);
+    const store = new AtlasStore(dbPath);
 
     try {
       store.replaceGraph(repoId, committed, new Map([["a.ts", "hash-a"]]));

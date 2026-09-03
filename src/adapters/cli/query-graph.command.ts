@@ -7,9 +7,9 @@ import {
   findImports,
   type GraphQueryResult,
 } from "../../core/graph/query.js";
-import { GraphStore } from "../../storage/graph/graph.store.js";
+import { AtlasStore } from "../../storage/atlas/atlas.store.js";
 import type { GraphNode } from "../../core/graph/types.js";
-import { getRepoId } from "../../core/repository/repository-files.js";
+import { getRepositoryIdentity } from "../../core/repository/repository-identity.js";
 
 function describeNode(node: GraphNode): string {
   if (node.type === "file") {
@@ -58,9 +58,8 @@ async function main(): Promise<void> {
 
   const repoPath = path.resolve(".");
 
-  const repoId = getRepoId(repoPath);
-
-  const store = new GraphStore();
+  const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
+  const repoId = store.ensureRepository(getRepositoryIdentity(repoPath)).id;
 
   try {
     const graph = store.loadGraph(repoId);

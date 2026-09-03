@@ -119,10 +119,11 @@ export function getQualifiedSymbolName(
 export async function buildCodeGraph(
   repoPath: string,
   reporter?: ProgressReporter,
+  repositoryId?: string,
 ): Promise<CodeGraph> {
   const absoluteRepoPath = path.resolve(repoPath);
 
-  const repoId = getRepoId(absoluteRepoPath);
+  const repoId = repositoryId ?? getRepoId(absoluteRepoPath);
 
   const files = await scanRepo(absoluteRepoPath);
 
