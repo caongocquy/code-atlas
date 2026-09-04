@@ -6,7 +6,7 @@ export type CallReference = {
   calleeName: string;
   callerName?: string;
   callerQualifiedName?: string;
-  callerType?: "function" | "method";
+  callerType?: "function" | "method" | "variable";
   callerClassName?: string;
   line: number;
 };
@@ -51,15 +51,41 @@ function findContainingClassName(node: Parser.SyntaxNode): string | undefined {
   return undefined;
 }
 
+function findTopLevelVariableCaller(node: Parser.SyntaxNode): string | undefined {
+  const declarator = node.parent?.type === "variable_declarator" ? node.parent : undefined;
+  const declaration = declarator?.parent;
+
+  if (!declarator || !declaration || (declaration.type !== "lexical_declaration" && declaration.type !== "variable_declaration")) {
+    return undefined;
+  }
+
+  const declarationParent = declaration.parent;
+  if (declarationParent?.type !== "program" && declarationParent?.type !== "export_statement") {
+    return undefined;
+  }
+
+  return declarator.childForFieldName("name")?.type === "identifier"
+    ? declarator.childForFieldName("name")?.text
+    : undefined;
+}
+
 function findCaller(node: Parser.SyntaxNode): {
   name?: string;
   qualifiedName?: string;
-  type?: "function" | "method";
+  type?: "function" | "method" | "variable";
   className?: string;
 } {
   let current: Parser.SyntaxNode | null = node.parent;
 
   while (current) {
+    if (current.type === "arrow_function" || current.type === "function_expression") {
+      const name = findTopLevelVariableCaller(current);
+
+      if (name) {
+        return { name, qualifiedName: name, type: "variable" };
+      }
+    }
+
     if (current.type === "function_declaration") {
       const name = current.childForFieldName("name")?.text;
 

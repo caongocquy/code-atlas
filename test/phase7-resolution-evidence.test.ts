@@ -130,6 +130,22 @@ test("resolved results record unique candidate counts", () => {
   if (result.results[0]?.kind === "resolved") assert.equal(result.results[0].candidateCount, 1);
 });
 
+test("resolves calls inside a top-level function-valued variable", async () => {
+  await withRepo(async (repoPath) => {
+    await writeFile(path.join(repoPath, "main.ts"), [
+      "export function target() {}",
+      "export const caller = () => target();",
+    ].join("\n"));
+
+    const built = await buildCodeGraphWithResolution(repoPath);
+    const resolution = built.resolutionByFile.get("main.ts");
+    assert.ok(resolution);
+    assert.equal(resolution.coverage.resolvedCalls, 1);
+    assert.equal(resolution.coverage.unresolvedCalls, 0);
+    assert.equal(resolution.coverage.ambiguousCalls, 0);
+  });
+});
+
 test("resolution evidence and coverage survive AtlasStore reopen", async () => {
   await withRepo(async (repoPath) => {
     await writeFile(path.join(repoPath, "main.ts"), "export function helper() {}\nexport function run() { helper(); }\n");

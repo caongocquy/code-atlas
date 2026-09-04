@@ -79,7 +79,8 @@ function summarize(items: ImpactItem[], target: GraphNode): ImpactSummary {
   };
 }
 
-function riskFor(summary: ImpactSummary): "low" | "medium" | "high" {
+function riskFor(summary: ImpactSummary, mayBeIncomplete: boolean): "low" | "medium" | "high" | "unknown" {
+  if (mayBeIncomplete) return "unknown";
   if (summary.directCount >= 10 || summary.totalCount >= 50 || summary.crossDirectoryCount >= 5) return "high";
   if (summary.directCount >= 3 || summary.totalCount >= 10 || summary.crossFileCount >= 3) return "medium";
   return "low";
@@ -180,7 +181,7 @@ export function analyzeImpact(
     directImpact: items.filter((item) => item.depth === 1),
     transitiveImpact: items.filter((item) => item.depth > 1),
     summary,
-    risk: riskFor(summary),
+    risk: riskFor(summary, mayBeIncomplete),
     mayBeIncomplete,
     limits,
     truncated,
