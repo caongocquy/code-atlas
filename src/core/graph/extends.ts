@@ -71,7 +71,7 @@ export function resolveExtendsResults(
             : { kind: "unresolved", evidence: [{ evidenceKind: "EXTRACTED", source: { file, line } }], reason: "child class identity is unavailable", source: { file, line } };
         } else if (candidates.length === 1 && candidates[0]) {
           const method = "inheritance" as const;
-          result = { kind: "resolved", targetSymbolId: candidates[0].id, evidence: [{ evidenceKind: "INFERRED", resolutionMethod: method, source: { file, line } }], resolutionMethod: method, confidence: 1, source: { file, line } };
+          result = { kind: "resolved", targetSymbolId: candidates[0].id, candidateCount: candidates.length, evidence: [{ evidenceKind: "INFERRED", resolutionMethod: method, source: { file, line } }], resolutionMethod: method, confidence: 1, source: { file, line } };
           const child = childCandidates[0];
           const edge = { from: child.id, to: candidates[0].id, type: "extends" as const, resolutionMethod: method, evidenceKind: "INFERRED" as const, confidence: 1, resolutionSource: { file, line } };
           const key = [edge.from, edge.to, edge.type].join(":");

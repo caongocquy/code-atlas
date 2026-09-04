@@ -247,7 +247,7 @@ export function resolveMemberCallResults(
         : [];
       const candidates = candidateNodes.filter((node, index, all) => all.findIndex((item) => item.id === node.id) === index).sort((left, right) => left.id.localeCompare(right.id));
       if (candidates.length === 1 && candidates[0] && method) {
-        result = { kind: "resolved", targetSymbolId: candidates[0].id, evidence: [evidence(file, call.line, method)], resolutionMethod: method, confidence: 1, source: { file, line: call.line } };
+        result = { kind: "resolved", targetSymbolId: candidates[0].id, candidateCount: candidates.length, evidence: [evidence(file, call.line, method)], resolutionMethod: method, confidence: 1, source: { file, line: call.line } };
         if (caller.id !== candidates[0].id) {
           const edge = edgeFor(caller, candidates[0], result);
           const key = [edge.from, edge.to, edge.type].join(":");

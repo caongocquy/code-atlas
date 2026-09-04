@@ -115,6 +115,7 @@ export function resolveCallResults(
         result = {
           kind: "resolved",
           targetSymbolId: candidates[0].id,
+          candidateCount: candidates.length,
           evidence: [evidence(file, call.line, method)],
           resolutionMethod: method,
           confidence: 1,
