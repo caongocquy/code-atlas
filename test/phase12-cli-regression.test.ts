@@ -11,9 +11,11 @@ import test from "node:test";
 import { parse as parseToml } from "smol-toml";
 
 import { scanRepo } from "../src/core/repository/repository-files.js";
+import { indexRepository } from "../src/core/indexing/index-pipeline.service.js";
 import { isInteractiveMcpSession, MCP_INTERACTIVE_NOTICE } from "../src/adapters/mcp/mcp-server.js";
 import { isEphemeralCodeAtlasPath, resolveCodeAtlasMcpLaunch } from "../src/infrastructure/integration/codex.adapter.js";
 import { createAgentIntegrationService } from "../src/infrastructure/integration/default-integrations.js";
+import { installGuidance } from "../src/infrastructure/integration/strict-guidance.js";
 
 const execFile = promisify(execFileCallback);
 const cliPath = path.resolve("src/cli.ts");
@@ -103,7 +105,28 @@ test("connect configures Codex and default CodeAtlas guidance", async () => {
     const result = await runCli(repoPath, "connect", "codex");
     assert.match(result.stdout, /Connecting CodeAtlas to Codex/);
     assert.match(result.stdout, /Codex is ready to use CodeAtlas/);
-    assert.match(await readFile(path.join(repoPath, "AGENTS.md"), "utf8"), /code-atlas:start/);
+    const guidance = await readFile(path.join(repoPath, "AGENTS.md"), "utf8");
+    assert.match(guidance, /code-atlas:start/);
+    assert.doesNotMatch(guidance, /code-atlas:final-newline/);
+  } finally {
+    await rm(repoPath, { recursive: true, force: true });
+  }
+});
+
+test("generated guidance advertises ready graph tools without making them mandatory", async () => {
+  const repoPath = await fixture("guidance-graph");
+  try {
+    await writeFile(path.join(repoPath, "source.ts"), "export function source() { return true; }\n");
+    await indexRepository(repoPath, { skipGit: true });
+    await installGuidance(repoPath);
+    const guidance = await readFile(path.join(repoPath, "AGENTS.md"), "utf8");
+    assert.doesNotMatch(guidance, /code-atlas:final-newline/);
+    assert.match(guidance, /find_callers/);
+    assert.match(guidance, /find_callees/);
+    assert.match(guidance, /find_imports/);
+    assert.match(guidance, /impact/);
+    assert.match(guidance, /trace/);
+    assert.match(guidance, /not required for every edit/);
   } finally {
     await rm(repoPath, { recursive: true, force: true });
   }

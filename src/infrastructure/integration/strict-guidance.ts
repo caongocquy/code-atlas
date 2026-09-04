@@ -51,6 +51,12 @@ export async function uninstallStrictGuidance(repoPath: string): Promise<boolean
 
 async function guidanceBody(repoPath: string, strict: boolean): Promise<string> {
   const capabilities = await capabilitySummary(repoPath);
+  const graphGuidance = capabilities.graphReady
+    ? [
+      "- when graph is ready, use `find_callers`, `find_callees`, `find_imports`, `find_imported_by`, `impact`, or `trace` for relationship and blast-radius questions",
+      "- choose graph tools when the change touches shared or structural code; they are not required for every edit",
+    ]
+    : [];
   return [
     `## CodeAtlas guidance${strict ? " (strict, opt-in)" : ""}`,
     "",
@@ -66,21 +72,25 @@ async function guidanceBody(repoPath: string, strict: boolean): Promise<string> 
         "- use `repository_status` to check indexed capabilities",
         "- use `search_code` and `get_symbol` for precise navigation",
       ]),
-    `- indexed capabilities: ${capabilities}`,
+    ...graphGuidance,
+    `- indexed capabilities: ${capabilities.summary}`,
     "- if results report `mayBeIncomplete`, verify the relevant source files directly",
     "- fall back to direct source inspection whenever CodeAtlas is unavailable or stale",
   ].join("\n");
 }
 
-async function capabilitySummary(repoPath: string): Promise<string> {
+async function capabilitySummary(repoPath: string): Promise<{ summary: string; graphReady: boolean }> {
   try {
     await fs.access(path.join(repoPath, ".codeatlas", "atlas.db"));
     const status = await getRepositoryStatus(repoPath);
     const values = Object.entries(status.capabilities)
       .filter(([, capability]) => capability.state !== "not_configured")
       .map(([name, capability]) => `${name}=${capability.state}`);
-    return values.length > 0 ? values.join(", ") : "none reported; confirm with repository_status";
+    return {
+      summary: values.length > 0 ? values.join(", ") : "none reported; confirm with repository_status",
+      graphReady: status.capabilities.graph.state === "ready",
+    };
   } catch {
-    return "not initialized; confirm with repository_status";
+    return { summary: "not initialized; confirm with repository_status", graphReady: false };
   }
 }

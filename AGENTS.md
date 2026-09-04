@@ -106,7 +106,6 @@ This project is indexed by GitNexus as **code-atlas** (604 symbols, 1692 relatio
 <!-- gitnexus:end -->
 
 <!-- code-atlas:start -->
-<!-- code-atlas:final-newline=1 -->
 ## CodeAtlas guidance
 
 CodeAtlas provides local code intelligence through MCP when available:
