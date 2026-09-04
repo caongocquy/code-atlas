@@ -28,6 +28,7 @@ export type ResolutionResult =
   | {
       kind: "resolved";
       targetSymbolId: string;
+      candidateCount: number;
       evidence: ResolutionEvidence[];
       resolutionMethod: ResolutionMethod;
       confidence: number;

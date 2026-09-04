@@ -259,7 +259,7 @@ export async function buildFileGraphs(
       extendsResults.coverage,
     );
     coverage.parserErrors = hasParserErrors(local.source, relativePath) ? 1 : 0;
-    coverage.mayBeIncomplete = coverage.parserErrors > 0 || coverage.unsupportedDynamic > 0;
+    coverage.mayBeIncomplete = coverage.parserErrors > 0 || coverage.unsupportedDynamic > 0 || coverage.unresolvedCalls > 0 || coverage.ambiguousCalls > 0 || coverage.unresolvedExtends > 0 || coverage.ambiguousExtends > 0;
     local.resolution = {
       coverage,
       diagnostics: [...callResults.results, ...memberResults.results, ...extendsResults.results]
