@@ -16,6 +16,11 @@ import type {
   LexicalFileUpdate,
   LexicalSearchRow,
 } from "./atlas.types.js";
+import type {
+  GraphResolutionFile,
+  ResolutionCoverage,
+  ResolutionDiagnostic,
+} from "../../core/graph/resolution.types.js";
 import type { CodeGraph, GraphEdge, GraphEdgeType, GraphNode, GraphNodeType } from "../../core/graph/types.js";
 import type { RepositoryIdentity } from "../../core/repository/repository-identity.js";
 import type { IndexedFileState } from "../../core/repository/indexed-file-state.js";
@@ -49,6 +54,20 @@ type CapabilityStateRow = {
   item_count: number;
   last_error: string | null;
   updated_at: string;
+};
+
+type GraphResolutionFileRow = {
+  calls: number;
+  resolved_calls: number;
+  unresolved_calls: number;
+  ambiguous_calls: number;
+  extends_count: number;
+  resolved_extends: number;
+  unresolved_extends: number;
+  ambiguous_extends: number;
+  parser_errors: number;
+  unsupported_dynamic: number;
+  may_be_incomplete: number;
 };
 
 function ensureDatabaseDirectory(databasePath: string): void {
@@ -239,6 +258,7 @@ export class AtlasStore {
     graph: CodeGraph,
     fileHashes: Map<string, string>,
     graphVersion?: string,
+    resolutionByFile?: Map<string, GraphResolutionFile>,
   ): void {
     this.ensureRepositoryId(repoId);
 
@@ -254,6 +274,7 @@ export class AtlasStore {
     try {
       this.database.prepare("DELETE FROM edges WHERE repository_id = ?").run(repoId);
       this.database.prepare("DELETE FROM symbols WHERE repository_id = ?").run(repoId);
+      this.database.prepare("DELETE FROM graph_resolution_files WHERE repository_id = ?").run(repoId);
       this.deleteCapabilityStates(repoId, "graph");
 
       const insertNode = this.createInsertNodeStatement();
@@ -281,6 +302,8 @@ export class AtlasStore {
           itemCount: nodesByFile.get(file) ?? 0,
           fileHash,
         });
+        const resolution = resolutionByFile?.get(file);
+        if (resolution) this.upsertGraphResolutionFile(repoId, file, resolution);
       }
 
       this.deleteOrphanFiles(repoId);
@@ -317,12 +340,14 @@ export class AtlasStore {
         deleteOwnedEdges.run(repoId, file);
         deleteNodes.run(repoId, file);
         this.deleteCapabilityState(repoId, file, "graph");
+        this.deleteGraphResolutionFile(repoId, file);
       }
 
       for (const update of updates) {
         deleteOwnedEdges.run(repoId, update.file);
         deleteNodes.run(repoId, update.file);
         this.deleteCapabilityState(repoId, update.file, "graph");
+        this.deleteGraphResolutionFile(repoId, update.file);
         this.upsertFile(update.file, repoId, update.fileHash);
 
         const insertNode = this.createInsertNodeStatement();
@@ -349,6 +374,7 @@ export class AtlasStore {
           itemCount: update.nodes.length,
           fileHash: update.fileHash,
         });
+        if (update.resolution) this.upsertGraphResolutionFile(repoId, update.file, update.resolution);
       }
 
       for (const file of deletedFiles) {
@@ -383,13 +409,20 @@ export class AtlasStore {
     }>;
     const edgeRows = this.database
       .prepare(
-        `SELECT from_symbol_id, to_symbol_id, type
+        `SELECT from_symbol_id, to_symbol_id, type,
+                resolution_method, evidence_kind, confidence,
+                resolution_file, resolution_line
          FROM edges WHERE repository_id = ?`,
       )
       .all(repoId) as Array<{
       from_symbol_id: string;
       to_symbol_id: string;
       type: string;
+      resolution_method: string | null;
+      evidence_kind: "EXTRACTED" | "INFERRED" | "AMBIGUOUS" | null;
+      confidence: number | null;
+      resolution_file: string | null;
+      resolution_line: number | null;
     }>;
 
     return {
@@ -406,8 +439,58 @@ export class AtlasStore {
         from: row.from_symbol_id,
         to: row.to_symbol_id,
         type: row.type as GraphEdgeType,
+        ...(row.resolution_method ? { resolutionMethod: row.resolution_method as GraphEdge["resolutionMethod"] } : {}),
+        ...(row.evidence_kind ? { evidenceKind: row.evidence_kind } : {}),
+        ...(row.confidence !== null ? { confidence: row.confidence } : {}),
+        ...(row.resolution_file && row.resolution_line !== null
+          ? { resolutionSource: { file: row.resolution_file, line: row.resolution_line } }
+          : {}),
       })),
     };
+  }
+
+  getGraphResolutionCoverage(repoId: string): ResolutionCoverage {
+    const row = this.database
+      .prepare(
+        `SELECT COALESCE(SUM(calls), 0) calls,
+                COALESCE(SUM(resolved_calls), 0) resolved_calls,
+                COALESCE(SUM(unresolved_calls), 0) unresolved_calls,
+                COALESCE(SUM(ambiguous_calls), 0) ambiguous_calls,
+                COALESCE(SUM(extends_count), 0) extends_count,
+                COALESCE(SUM(resolved_extends), 0) resolved_extends,
+                COALESCE(SUM(unresolved_extends), 0) unresolved_extends,
+                COALESCE(SUM(ambiguous_extends), 0) ambiguous_extends,
+                COALESCE(SUM(parser_errors), 0) parser_errors,
+                COALESCE(SUM(unsupported_dynamic), 0) unsupported_dynamic,
+                MAX(may_be_incomplete) may_be_incomplete
+         FROM graph_resolution_files WHERE repository_id = ?`,
+      )
+      .get(repoId) as GraphResolutionFileRow;
+    return {
+      calls: row.calls,
+      resolvedCalls: row.resolved_calls,
+      unresolvedCalls: row.unresolved_calls,
+      ambiguousCalls: row.ambiguous_calls,
+      extends: row.extends_count,
+      resolvedExtends: row.resolved_extends,
+      unresolvedExtends: row.unresolved_extends,
+      ambiguousExtends: row.ambiguous_extends,
+      parserErrors: row.parser_errors,
+      unsupportedDynamic: row.unsupported_dynamic,
+      mayBeIncomplete: row.may_be_incomplete === 1,
+    };
+  }
+
+  getGraphResolutionDiagnostics(repoId: string): ResolutionDiagnostic[] {
+    const rows = this.database
+      .prepare(
+        `SELECT diagnostics_json
+         FROM graph_resolution_files
+         WHERE repository_id = ?
+         ORDER BY file_path ASC`,
+      )
+      .all(repoId) as Array<{ diagnostics_json: string }>;
+    return rows.flatMap((row) => JSON.parse(row.diagnostics_json) as ResolutionDiagnostic[]);
   }
 
   replaceLexicalDocuments(
@@ -965,8 +1048,10 @@ export class AtlasStore {
   private createInsertEdgeStatement() {
     return this.database.prepare(
       `INSERT INTO edges
-       (repository_id, owner_file, from_symbol_id, to_symbol_id, type)
-       VALUES (?, ?, ?, ?, ?)`,
+       (repository_id, owner_file, from_symbol_id, to_symbol_id, type,
+        resolution_method, evidence_kind, confidence, resolution_file,
+        resolution_line)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
   }
 
@@ -993,7 +1078,87 @@ export class AtlasStore {
     ownerFile: string,
     edge: GraphEdge,
   ): void {
-    statement.run(repoId, ownerFile, edge.from, edge.to, edge.type);
+    statement.run(
+      repoId,
+      ownerFile,
+      edge.from,
+      edge.to,
+      edge.type,
+      edge.resolutionMethod ?? null,
+      edge.evidenceKind ?? null,
+      edge.confidence ?? null,
+      edge.resolutionSource?.file ?? null,
+      edge.resolutionSource?.line ?? null,
+    );
+  }
+
+  private upsertGraphResolutionFile(
+    repoId: string,
+    file: string,
+    resolution: GraphResolutionFile,
+  ): void {
+    const coverage = resolution.coverage;
+    const diagnostics = resolution.diagnostics.map((diagnostic) =>
+      diagnostic.kind === "ambiguous"
+        ? {
+            kind: diagnostic.kind,
+            candidates: [...diagnostic.candidates].sort(),
+            ambiguityReason: diagnostic.ambiguityReason,
+            source: diagnostic.source,
+          }
+        : {
+            kind: diagnostic.kind,
+            reason: diagnostic.reason,
+            source: diagnostic.source,
+            unsupportedDynamic: diagnostic.unsupportedDynamic ?? false,
+          },
+    );
+    this.database
+      .prepare(
+        `INSERT INTO graph_resolution_files
+         (repository_id, file_path, calls, resolved_calls, unresolved_calls,
+          ambiguous_calls, extends_count, resolved_extends, unresolved_extends,
+          ambiguous_extends, parser_errors, unsupported_dynamic,
+          may_be_incomplete, diagnostics_json, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (repository_id, file_path)
+         DO UPDATE SET calls = excluded.calls,
+                       resolved_calls = excluded.resolved_calls,
+                       unresolved_calls = excluded.unresolved_calls,
+                       ambiguous_calls = excluded.ambiguous_calls,
+                       extends_count = excluded.extends_count,
+                       resolved_extends = excluded.resolved_extends,
+                       unresolved_extends = excluded.unresolved_extends,
+                       ambiguous_extends = excluded.ambiguous_extends,
+                       parser_errors = excluded.parser_errors,
+                       unsupported_dynamic = excluded.unsupported_dynamic,
+                       may_be_incomplete = excluded.may_be_incomplete,
+                       diagnostics_json = excluded.diagnostics_json,
+                       updated_at = excluded.updated_at`,
+      )
+      .run(
+        repoId,
+        file,
+        coverage.calls,
+        coverage.resolvedCalls,
+        coverage.unresolvedCalls,
+        coverage.ambiguousCalls,
+        coverage.extends,
+        coverage.resolvedExtends,
+        coverage.unresolvedExtends,
+        coverage.ambiguousExtends,
+        coverage.parserErrors,
+        coverage.unsupportedDynamic,
+        coverage.mayBeIncomplete ? 1 : 0,
+        JSON.stringify(diagnostics),
+        new Date().toISOString(),
+      );
+  }
+
+  private deleteGraphResolutionFile(repoId: string, file: string): void {
+    this.database
+      .prepare("DELETE FROM graph_resolution_files WHERE repository_id = ? AND file_path = ?")
+      .run(repoId, file);
   }
 
   close(): void {

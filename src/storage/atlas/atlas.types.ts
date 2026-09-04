@@ -1,4 +1,5 @@
 import type { GraphEdge, GraphNode } from "../../core/graph/types.js";
+import type { GraphResolutionFile, ResolutionCoverage } from "../../core/graph/resolution.types.js";
 import type { RepositoryIdentity } from "../../core/repository/repository-identity.js";
 
 export type AtlasIndexAxis =
@@ -79,6 +80,13 @@ export type GraphFileUpdate = {
   fileHash: string;
   nodes: GraphNode[];
   edges: GraphEdge[];
+  resolution?: GraphResolutionFile;
+};
+
+export type GraphResolutionCoverage = ResolutionCoverage & {
+  resolvedExtends: number;
+  unresolvedExtends: number;
+  ambiguousExtends: number;
 };
 
 export type IndexMetadata = {

@@ -12,10 +12,11 @@ import {
 import { createGraphNodeId } from "./node-id.js";
 import type { CodeGraph, GraphNodeType } from "./types.js";
 import { extractImportBindings } from "./import-bindings.js";
-import { extractCalls } from "./calls.js";
-import { resolveCallEdges } from "./call-resolution.js";
-import { resolveMemberCallEdges } from "./member-resolution.js";
-import { resolveExtendsEdges } from "./extends.js";
+import { extractCalls, hasParserErrors } from "./calls.js";
+import { resolveCallResults } from "./call-resolution.js";
+import { resolveMemberCallResults } from "./member-resolution.js";
+import { resolveExtendsResults } from "./extends.js";
+import { mergeResolutionCoverage, type GraphResolutionFile } from "./resolution.types.js";
 import type { ProgressReporter } from "../progress/progress.types.js";
 
 function toGraphNodeType(symbolType: string): GraphNodeType | undefined {
@@ -117,12 +118,17 @@ export function getQualifiedSymbolName(
   return buildQualifiedName(chunk, chunks, new Set());
 }
 
-export async function buildCodeGraph(
+export type GraphBuildResult = {
+  graph: CodeGraph;
+  resolutionByFile: Map<string, GraphResolutionFile>;
+};
+
+export async function buildCodeGraphWithResolution(
   repoPath: string,
   reporter?: ProgressReporter,
   repositoryId?: string,
   sourceFiles?: string[],
-): Promise<CodeGraph> {
+): Promise<GraphBuildResult> {
   const absoluteRepoPath = canonicalRepositoryPath(path.resolve(repoPath));
 
   const repoId = repositoryId ?? getRepoId(absoluteRepoPath);
@@ -139,6 +145,7 @@ export async function buildCodeGraph(
     nodes: [],
     edges: [],
   };
+  const resolutionByFile = new Map<string, GraphResolutionFile>();
 
   const fileNodeIds = new Map<string, string>();
 
@@ -286,10 +293,8 @@ export async function buildCodeGraph(
 
     const calls = extractCalls(source, relativePath);
 
-    const callEdges = resolveCallEdges(graph, relativePath, calls, bindings);
-
-    graph.edges.push(...callEdges);
-    const memberCallEdges = resolveMemberCallEdges(
+    const callResults = resolveCallResults(graph, relativePath, calls, bindings);
+    const memberResults = resolveMemberCallResults(
       graph,
       relativePath,
       source,
@@ -297,11 +302,28 @@ export async function buildCodeGraph(
       bindings,
     );
 
-    graph.edges.push(...memberCallEdges);
-
-    graph.edges.push(
-      ...resolveExtendsEdges(graph, relativePath, source, bindings),
+    const extendsResults = resolveExtendsResults(graph, relativePath, source, bindings);
+    graph.edges.push(...callResults.edges, ...memberResults.edges, ...extendsResults.edges);
+    const coverage = mergeResolutionCoverage(
+      mergeResolutionCoverage(callResults.coverage, memberResults.coverage),
+      extendsResults.coverage,
     );
+    coverage.parserErrors = hasParserErrors(source, relativePath) ? 1 : 0;
+    coverage.mayBeIncomplete = coverage.parserErrors > 0 || coverage.unsupportedDynamic > 0;
+    resolutionByFile.set(relativePath, {
+      coverage,
+      diagnostics: [...callResults.results, ...memberResults.results, ...extendsResults.results]
+        .filter((result): result is Exclude<typeof result, { kind: "resolved" }> => result.kind !== "resolved"),
+    });
   }
-  return graph;
+  return { graph, resolutionByFile };
+}
+
+export async function buildCodeGraph(
+  repoPath: string,
+  reporter?: ProgressReporter,
+  repositoryId?: string,
+  sourceFiles?: string[],
+): Promise<CodeGraph> {
+  return (await buildCodeGraphWithResolution(repoPath, reporter, repositoryId, sourceFiles)).graph;
 }
