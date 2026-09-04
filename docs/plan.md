@@ -102,7 +102,7 @@ without requiring:
 - Phase 2 — complete
 - Phase 3 — complete
 - Phase 4 — complete
-- Phase 5 — next; not started
+- Phase 5 — complete
 
 ## External design references
 
@@ -154,6 +154,11 @@ CodeAtlas does not automatically adopt:
 CodeAtlas remains centered on SQLite AtlasStore, code intelligence, the FTS5
 lexical core, an optional semantic/vector layer, a deterministic graph core,
 and shared services for CLI, HTTP, UI, and MCP.
+
+The broader command surfaces of GitNexus and Graphify may inspire coverage
+checks, but CodeAtlas will not add commands merely to match their feature
+count. Priority remains precise graph intelligence, lexical and optional
+semantic retrieval, impact, trace, observability, and MCP integration.
 
 ## Current functionality that must be preserved
 
@@ -285,6 +290,22 @@ Optional enhancements
   └─ RerankerProvider for Reranking
 ```
 
+## Shared-core adapter invariant
+
+CLI, MCP, HTTP, and UI must reuse the same core services. Adapters may parse
+inputs, construct dependencies, render results, and report errors, but they
+must not duplicate indexing, search, graph, impact, trace, or retrieval logic.
+
+```text
+Core services
+├─ CLI adapter
+├─ MCP adapter
+├─ HTTP adapter
+└─ UI adapter
+```
+
+For example, `impact` has one core implementation reused by every adapter.
+
 ## Release invariants
 
 1. Graph and lexical indexing work without Qdrant, Docker, model downloads, LLMs, or cloud services.
@@ -331,6 +352,30 @@ Environment:    CODEATLAS_*
 MCP server:     code-atlas
 UI branding:    CodeAtlas
 ```
+
+## Current-repository CLI default
+
+The repository path is optional. Commands operate on the current working
+repository by default; an explicit path is only needed when targeting another
+repository.
+
+Preferred normal usage:
+
+```bash
+code-atlas init
+code-atlas index
+code-atlas sync
+code-atlas status
+code-atlas search "AuthService"
+```
+
+Explicit targeting remains available:
+
+```bash
+code-atlas index ../other-repo
+```
+
+Normal CLI usage must not require callers to pass `.` as the repository path.
 
 The npm package name must be checked for availability before publishing. Do not hard-code a scoped package name until that check is done.
 
@@ -1318,26 +1363,58 @@ Browser never reads:
 
 Implement only after core contracts stabilize.
 
-Likely tool surface:
+MCP mirrors CodeAtlas code-intelligence capabilities, not every local
+administrative CLI command.
+
+Planned intelligence tool surface:
 
 ```text
-index_repository
-sync_repository
 repository_status
-
 search_code
 get_symbol
-
 find_callers
 find_callees
 find_imports
 find_imported_by
-
 impact
 trace
-
 inspect_retrieval
 ```
+
+Keep `index_repository` and `sync_repository` as valid MCP tools where
+available. They should use the current or registered repository context by
+default; normal host-agent usage must not require passing `"."` as a path.
+
+After the graph-intelligence phases, consider:
+
+```text
+list_communities
+get_community
+important_symbols
+architectural_bridges
+find_cycles
+```
+
+Local and administrative commands generally should not require MCP equivalents:
+
+```text
+init
+clean
+doctor
+configure
+ui
+serve
+hook install
+hook uninstall
+hook status
+export commands
+```
+
+MCP exposes structured repository intelligence and useful indexing operations,
+not local process or UI administration. Prefer `search_code`, `get_symbol`,
+`impact`, and `trace` over a generic internal `ask_codebase` tool. The host
+agent/LLM performs reasoning and answer synthesis; CodeAtlas remains the
+structured code-intelligence layer.
 
 `ask_codebase` is not a required core or MCP capability. If retained later, it
 is optional standalone AI UX over structured CodeAtlas retrieval and an
@@ -1446,33 +1523,67 @@ edit.
 
 ---
 
-# Final CLI
+# CLI contract
 
-Recommended public surface:
+The initial/core CLI capability surface is organized by user intent. These
+names define the target product contract; all commands need not exist
+immediately.
 
-```bash
-code-atlas index
-code-atlas sync
-code-atlas status
-code-atlas search
-code-atlas inspect
-code-atlas serve
-code-atlas mcp
+Repository lifecycle:
+
+```text
+init
+index
+sync
+status
+clean
+doctor
 ```
 
-Graph operations should preferably be grouped:
+Code intelligence:
 
-```bash
-code-atlas graph callers Foo
-code-atlas graph callees Foo
-code-atlas graph imports src/foo.ts
-code-atlas graph impact Foo
-code-atlas graph trace Foo Bar
+```text
+search
+symbol
+callers
+callees
+imports
+imported-by
+impact
+trace
+inspect
 ```
 
-This keeps the top-level CLI compact.
+Runtime and integration:
 
-`code-atlas config` should be added only if provider configuration needs a first-class command.
+```text
+mcp
+serve
+ui
+```
+
+Optional/local management, when implemented:
+
+```text
+configure
+hook install
+hook uninstall
+hook status
+```
+
+Graph-intelligence commands are post-Phase-9 additions and should reuse the
+shared graph-intelligence core services:
+
+```text
+communities
+community
+important
+bridges
+cycles
+```
+
+The exact grouping and spelling may evolve, but these commands must not create
+parallel graph behavior.
 
 ---
 
@@ -1507,6 +1618,11 @@ Support:
 - explicit selection
 - moved/missing repo state
 - same-basename repos safely
+
+The later CLI surface may add `repos` or `list`, repository groups (or an
+equivalent repository-set concept), and cross-repository query, trace, and
+analysis commands. Exact syntax remains flexible until the registry contract
+is finalized. Do not copy GitNexus command naming blindly.
 
 Do not make registry a prerequisite for single-repo core.
 
@@ -1834,7 +1950,11 @@ correctness authority.
 
 ## Status
 
-Next; not started.
+Complete.
+
+Phase 5 established optional `EmbeddingProvider` and `RerankerProvider`
+boundaries, kept `VectorStore` internal, and normalized capability readiness
+without adding an LLM provider or user-selectable vector backends.
 
 ## Goal
 
@@ -2441,11 +2561,10 @@ Do not add a native vector dependency without measured need.
 
 # Recommended next action
 
-Phase 4 is complete and green. The next planned implementation phase is:
+Phase 5 is complete and green. The next planned implementation phase is:
 
-**Phase 5 — Provider boundaries and capability model.**
+**Phase 6 — Optional semantic/vector indexing.**
 
-Provider boundaries remain the next implementation step. Agent integration and
-`code-atlas init` remain scheduled for Phase 11, after MCP capability contracts
-stabilize. Neither Phase 5 nor any later phase is implemented by this
-documentation update.
+The single built-in vector backend decision remains scheduled for Phase 6.
+Agent integration and `code-atlas init` remain scheduled for Phase 11, after
+MCP capability contracts stabilize. Phase 6 has not started.
