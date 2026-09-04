@@ -17,7 +17,6 @@ import { createFileHash } from "../src/core/repository/file-hash.js";
 import { getRepositoryStatus } from "../src/core/repository/repository-status.service.js";
 import { transformersEmbeddingProvider } from "../src/infrastructure/embedding/transformers-embedding.client.js";
 import { transformersRerankerProvider } from "../src/infrastructure/reranker/transformers-reranker.client.js";
-import { qdrantVectorStore } from "../src/infrastructure/vector/qdrant-vector.store.js";
 import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
 
 async function temporaryRepository(name: string): Promise<string> {
@@ -95,10 +94,8 @@ function unavailableReranker(): RerankerProvider {
 test("concrete optional integrations conform to their provider boundaries without initialization", () => {
   assert.equal(transformersEmbeddingProvider.id, "transformers");
   assert.equal(transformersRerankerProvider.id, "transformers");
-  assert.equal(qdrantVectorStore.id, "qdrant");
   assert.equal(typeof transformersEmbeddingProvider.embedBatch, "function");
   assert.equal(typeof transformersRerankerProvider.rerank, "function");
-  assert.equal(typeof qdrantVectorStore.upsert, "function");
 });
 
 test("semantic indexing uses injected providers and preserves unrelated graph state", async () => {

@@ -1,7 +1,3 @@
-export const QDRANT_URL = "http://localhost:6333";
-
-export const REPO_CODE_COLLECTION = "repo-code";
-
 export const EMBEDDING_MODEL = "Xenova/all-MiniLM-L6-v2";
 
 export const EMBEDDING_DIMENSIONS = 384;

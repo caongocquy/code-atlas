@@ -4,7 +4,6 @@ import path from "node:path";
 import {
   GRAPH_INDEX_VERSION,
   LEXICAL_INDEX_VERSION,
-  REPO_CODE_COLLECTION,
   VECTOR_INDEX_VERSION,
 } from "../../config/constants.js";
 import { AtlasStore } from "../../storage/atlas/atlas.store.js";
@@ -51,7 +50,7 @@ export type RepositoryStatus = {
     indexedFiles: number;
     points: number;
     chunks: number;
-    collection: string;
+    backend: string;
     reachable: boolean;
     status: "ready" | "not-indexed" | "stale" | "unavailable" | "not-configured";
     needsSync: boolean;
@@ -352,7 +351,7 @@ async function getVectorStatus(
     indexedFiles: 0,
     points: 0,
     chunks: 0,
-    collection: REPO_CODE_COLLECTION,
+    backend: vectorStore?.id ?? "sqlite",
     reachable: false,
     needsSync: metadata?.version !== VECTOR_INDEX_VERSION,
     updatedAt: metadata?.updatedAt,
