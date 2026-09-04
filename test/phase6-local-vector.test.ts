@@ -6,7 +6,9 @@ import test from "node:test";
 
 import { createDefaultProviders } from "../src/infrastructure/provider-defaults.js";
 import { getRepositoryIdentity } from "../src/core/repository/repository-identity.js";
+import { createFileHash } from "../src/core/repository/file-hash.js";
 import { syncSemantic } from "../src/core/semantic/semantic-index.service.js";
+import { getRepositoryStatus } from "../src/core/repository/repository-status.service.js";
 import type { VectorPoint } from "../src/core/semantic/vector-store.js";
 import { SqliteVectorStore } from "../src/storage/atlas/sqlite-vector.store.js";
 import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
@@ -208,6 +210,52 @@ test("semantic replacement keeps the previous SQLite generation until activation
       ),
       false,
     );
+  } finally {
+    vectors.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("legacy Qdrant semantic metadata is stale and cannot authorize SQLite reuse", async () => {
+  const root = await temporaryDirectory("backend-switch");
+  const databasePath = path.join(root, ".codeatlas", "atlas.db");
+  const content = "export function backendSwitch() { return true; }\n";
+  await writeFile(path.join(root, "source.ts"), content);
+  const vectors = new SqliteVectorStore(databasePath);
+  const embeddingProvider = {
+    id: "test",
+    version: "1",
+    dimensions: 2,
+    isAvailable: async () => true,
+    embedBatch: async () => [[1, 0]],
+  };
+
+  try {
+    const atlas = new AtlasStore(databasePath);
+    const repository = atlas.ensureRepository(getRepositoryIdentity(root));
+    atlas.setVersion(repository.id, "semantic", VECTOR_INDEX_VERSION);
+    atlas.setFileCapabilityState(repository.id, "source.ts", "semantic", {
+      fileHash: createFileHash(content),
+      version: VECTOR_INDEX_VERSION,
+      state: "ready",
+      providerIdentity: "test@1@2",
+      generation: `v${VECTOR_INDEX_VERSION}:${createFileHash(content)}`,
+      itemCount: 1,
+    });
+    atlas.close();
+
+    const status = await getRepositoryStatus(root, {
+      embeddingProvider,
+      vectorStore: vectors,
+    });
+    assert.equal(status.capabilities.semantic.state, "stale");
+
+    const result = await syncSemantic(root, {
+      embeddingProvider,
+      vectorStore: vectors,
+    });
+    assert.equal(result.status, "indexed");
+    assert.equal(await vectors.count(result.repoId), 1);
   } finally {
     vectors.close();
     await rm(root, { recursive: true, force: true });
