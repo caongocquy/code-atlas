@@ -5,6 +5,9 @@ import { runHookCommand } from "./adapters/cli/hook.command.js";
 import { runIndexingCommand } from "./adapters/cli/indexing.command.js";
 import { runInitCommand } from "./adapters/cli/init.command.js";
 import { runMcpServer } from "./adapters/mcp/mcp-server.js";
+import { createCliCommandReporter } from "./adapters/cli/cli-command-reporter.js";
+import { formatCommandFailure } from "./adapters/cli/cli-output.js";
+import path from "node:path";
 
 const [command, ...args] = process.argv.slice(2);
 
@@ -13,8 +16,19 @@ async function main(): Promise<void> {
     case "mcp":
       await runMcpServer();
       return;
+    case "serve": {
+      const explicitPath = args.find((arg) => !arg.startsWith("--"));
+      if (explicitPath) process.env.CODE_RAG_REPO_PATH = path.resolve(explicitPath);
+      await import("./adapters/http/http-server.js");
+      return;
+    }
     case "integration":
       await runIntegrationCommand(args);
+      return;
+    case "connect":
+    case "disconnect":
+    case "integrations":
+      await runIntegrationCommand([command, ...args]);
       return;
     case "hook":
       await runHookCommand(args);
@@ -35,13 +49,17 @@ async function main(): Promise<void> {
       process.stdout.write([
         "Usage: code-atlas <command>",
         "",
-        "  init [path] [--agent codex|opencode|claude|all] [--strict]",
+        "  init [path] [--agent codex|opencode|claude|all] [--strict] [--no-guidance]",
         "  index [path] [--skip-git]",
         "  sync [path] [--skip-git] [--quiet]",
         "  status [path]",
-        "  integration list|status|install|uninstall <agent> [--scope user|project] [--strict]",
+        "  connect <agent> [--strict] [--no-guidance]",
+        "  disconnect <agent>",
+        "  integrations",
+        "  integration list|status|install|uninstall <agent> [--scope user|project] [--strict] [--no-guidance] [--json]",
         "  hook install|uninstall|status [--post-commit] [--post-checkout]",
         "  mcp",
+        "  serve [path]",
         "",
       ].join("\n"));
       return;
@@ -51,6 +69,9 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  const json = process.argv.includes("--json");
+  const reporter = createCliCommandReporter({ json });
+  if (json) reporter.output({ error: error instanceof Error ? error.message : String(error) });
+  else reporter.failure(formatCommandFailure(command ?? "Command", error));
   process.exitCode = 1;
 });

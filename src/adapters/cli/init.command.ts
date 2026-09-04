@@ -1,5 +1,7 @@
 import path from "node:path";
 
+import { createCliCommandReporter } from "./cli-command-reporter.js";
+import { formatInitResult, formatIntegrationChange } from "./cli-output.js";
 import { initializeRepository } from "../../core/repository/repository-init.service.js";
 import type { AgentId } from "../../core/integration/integration.types.js";
 import { createAgentIntegrationService, supportedAgentIds } from "../../infrastructure/integration/default-integrations.js";
@@ -13,8 +15,12 @@ export async function runInitCommand(args: string[], repoPath = path.resolve("."
     return true;
   });
   const targetPath = explicitPath ? path.resolve(repoPath, explicitPath) : repoPath;
-  const result = await initializeRepository(targetPath);
+  const reporter = createCliCommandReporter({ json: args.includes("--json") });
+  reporter.start("CodeAtlas Init");
+  const result = await reporter.run("Initializing repository", () => initializeRepository(targetPath));
   const integrations = [];
+  const json = args.includes("--json");
+  const noGuidance = args.includes("--no-guidance");
 
   if (agent) {
     const service = createAgentIntegrationService({ cwd: targetPath });
@@ -22,12 +28,20 @@ export async function runInitCommand(args: string[], repoPath = path.resolve("."
     for (const id of ids) {
       const options = { repoPath: targetPath, strict: args.includes("--strict") };
       const status = await service.status(id, options);
-      if (agent === "all" && (status.state === "unavailable" || status.state === "invalid_config")) continue;
-      integrations.push(await service.install(id, options));
+      if (agent === "all" && (status.state === "unavailable" || status.state === "invalid_config" || status.state === "stale")) continue;
+      integrations.push(await reporter.run(
+        `Connecting CodeAtlas to ${id}`,
+        () => service.install(id, { ...options, noGuidance }),
+      ));
     }
   }
 
-  process.stdout.write(`${JSON.stringify({ ...result, integrations }, null, 2)}\n`);
+  if (json) {
+    reporter.output({ ...result, integrations });
+    return;
+  }
+  reporter.success(formatInitResult(result));
+  for (const integration of integrations) reporter.success(`\n${formatIntegrationChange(integration)}`);
 }
 
 function agentValue(args: string[]): string | undefined {

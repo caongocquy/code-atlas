@@ -8,7 +8,7 @@ import type {
 
 export type StrictGuidance = {
   status(repoPath: string): Promise<boolean>;
-  install(repoPath: string): Promise<boolean>;
+  install(repoPath: string, strict?: boolean): Promise<boolean>;
   uninstall(repoPath: string): Promise<boolean>;
 };
 
@@ -34,16 +34,20 @@ export class AgentIntegrationService {
   async install(id: AgentId, options: IntegrationOptions): Promise<IntegrationChange> {
     const integration = this.get(id);
     const result = await integration.install(options);
-    const strictGuidanceChanged = options.strict === true
-      ? await this.strictGuidance.install(options.repoPath)
+    const guidanceChanged = options.noGuidance !== true
+      ? await this.strictGuidance.install(options.repoPath, options.strict === true)
       : false;
-    return { ...result, strictGuidanceChanged };
+    return {
+      ...result,
+      status: { ...result.status, strictGuidanceConfigured: await this.strictGuidance.status(options.repoPath) },
+      strictGuidanceChanged: guidanceChanged,
+    };
   }
 
   async uninstall(id: AgentId, options: IntegrationOptions): Promise<IntegrationChange> {
     const integration = this.get(id);
     const result = await integration.uninstall(options);
-    const strictGuidanceChanged = options.strict === true
+    const strictGuidanceChanged = options.noGuidance !== true
       ? await this.strictGuidance.uninstall(options.repoPath)
       : false;
     return { ...result, strictGuidanceChanged };

@@ -496,12 +496,50 @@ export function createMcpServer(): McpServer {
 }
 
 export async function runMcpServer(): Promise<void> {
+  if (isInteractiveMcpSession()) {
+    process.stderr.write(`${MCP_INTERACTIVE_NOTICE}\n`);
+    await waitForInteractiveStop();
+    return;
+  }
+
   const server = createMcpServer();
   const transport = new StdioServerTransport();
   transport.onerror = (error) => {
     process.stderr.write(`CodeAtlas MCP transport error: ${error.message}\n`);
   };
   await server.connect(transport);
+}
+
+export function isInteractiveMcpSession(
+  stdin: { isTTY?: boolean } = process.stdin,
+  stdout: { isTTY?: boolean } = process.stdout,
+): boolean {
+  return stdin.isTTY === true && stdout.isTTY === true;
+}
+
+export const MCP_INTERACTIVE_NOTICE = [
+  "CodeAtlas MCP Server",
+  "✓ Ready",
+  "",
+  "Transport   stdio",
+  "",
+  "This command is intended to be launched by an MCP client",
+  "such as Codex, OpenCode, or Claude Code.",
+  "",
+  "For manual testing use an MCP inspector.",
+  "Press Ctrl+C to stop.",
+].join("\n");
+
+async function waitForInteractiveStop(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    const keepAlive = setInterval(() => undefined, 60_000);
+    const onSigint = () => {
+      clearInterval(keepAlive);
+      process.exitCode = 130;
+      resolve();
+    };
+    process.once("SIGINT", onSigint);
+  });
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

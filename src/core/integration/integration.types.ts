@@ -8,12 +8,14 @@ export type IntegrationState =
   | "not_installed"
   | "unavailable"
   | "unsupported"
+  | "stale"
   | "invalid_config";
 
 export type IntegrationOptions = {
   repoPath: string;
   scope?: IntegrationScope;
   strict?: boolean;
+  noGuidance?: boolean;
 };
 
 export type IntegrationStatus = {

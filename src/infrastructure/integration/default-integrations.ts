@@ -4,7 +4,7 @@ import { ClaudeIntegration } from "./claude.adapter.js";
 import { CodexIntegration } from "./codex.adapter.js";
 import { resolveIntegrationEnvironment, type IntegrationEnvironment } from "./integration-environment.js";
 import { OpenCodeIntegration } from "./opencode.adapter.js";
-import { installStrictGuidance, strictGuidanceStatus, uninstallStrictGuidance } from "./strict-guidance.js";
+import { installGuidance, strictGuidanceStatus, uninstallStrictGuidance } from "./strict-guidance.js";
 
 export function createAgentIntegrationService(
   environmentInput: IntegrationEnvironment = {},
@@ -16,7 +16,7 @@ export function createAgentIntegrationService(
     new ClaudeIntegration(environment),
   ], {
     status: strictGuidanceStatus,
-    install: installStrictGuidance,
+    install: (repoPath, strict) => installGuidance(repoPath, strict),
     uninstall: uninstallStrictGuidance,
   });
 }

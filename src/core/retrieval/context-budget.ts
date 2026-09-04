@@ -1,5 +1,4 @@
 import type { SearchResult } from "./code-search.service.js";
-import { countTokens } from "../../infrastructure/embedding/transformers-tokenizer.client.js";
 import { buildContext } from "./context.js";
 
 const MAX_CONTEXT_TOKENS = 4_000;
@@ -45,7 +44,7 @@ export async function applyContextBudgetDetailed(
 
   for (const chunk of chunks) {
     // ponytail: O(n²) render checks, candidate count is bounded by retrieval caps.
-    const tokenCount = await countTokens(buildContext([...selected, chunk]), { useModel });
+    const tokenCount = await countContextTokens(buildContext([...selected, chunk]), useModel);
 
     if (usedTokens + tokenCount > maxTokens) {
       decisions.push({
@@ -72,4 +71,11 @@ export async function applyContextBudgetDetailed(
     decisions,
     budget: maxTokens,
   };
+}
+
+async function countContextTokens(text: string, useModel: boolean): Promise<number> {
+  if (!useModel) return text.trim() ? text.trim().split(/\s+/).length : 0;
+
+  const { countTokens } = await import("../../infrastructure/embedding/transformers-tokenizer.client.js");
+  return countTokens(text, { useModel: true });
 }

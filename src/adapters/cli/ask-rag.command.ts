@@ -1,5 +1,4 @@
-import ora from "ora";
-
+import { createCliCommandReporter } from "./cli-command-reporter.js";
 import { warmupEmbedding } from "../../infrastructure/embedding/transformers-embedding.client.js";
 import { warmupReranker } from "../../infrastructure/reranker/transformers-reranker.client.js";
 import { createDefaultProviders } from "../../infrastructure/provider-defaults.js";
@@ -16,24 +15,25 @@ async function main(): Promise<void> {
   }
 
   const totalStart = performance.now();
+  const reporter = createCliCommandReporter();
   const providers = createDefaultProviders(process.cwd());
-  let spinner = ora("Loading embedding model...").start();
+  reporter.start("CodeAtlas Ask");
+  reporter.start("Loading embedding model...");
   const embeddingStart = performance.now();
 
   await warmupEmbedding();
-  spinner.succeed(
+  reporter.success(
     `Embedding model loaded in ${((performance.now() - embeddingStart) / 1000).toFixed(2)}s`,
   );
 
-  spinner = ora("Loading reranker model...").start();
+  reporter.start("Loading reranker model...");
   const rerankerLoadStart = performance.now();
 
   await warmupReranker();
-  spinner.succeed(
+  reporter.success(
     `Reranker model loaded in ${((performance.now() - rerankerLoadStart) / 1000).toFixed(2)}s`,
   );
 
-  let generationSpinner: ReturnType<typeof ora> | undefined;
   let streamStarted = false;
 
   let result;
@@ -44,28 +44,26 @@ async function main(): Promise<void> {
       {
         providers,
         onInspection(inspection) {
-          spinner = ora("Inspecting retrieval pipeline...").start();
-          spinner.succeed(
+          reporter.success(
             `Inspected ${inspection.rerankedResults.length} reranked chunks and ${inspection.graphExpansion.nodesAdded} graph nodes`,
           );
 
-          console.log("\nTop reranked chunks:");
+          reporter.detail("\nTop reranked chunks:");
 
           for (const chunk of inspection.rerankedResults) {
-            printRerankedChunk(chunk);
+            reporter.detail(formatRerankedChunk(chunk));
           }
 
-          console.log(
+          reporter.detail(
             `\nContext: ${inspection.finalContext.chunks.length}/${inspection.rerankedResults.length + inspection.graphExpansion.nodesAdded} chunks, ${inspection.finalContext.tokens} tokens`,
           );
 
-          generationSpinner = ora("Waiting for llama.cpp...").start();
+          reporter.start("Waiting for llama.cpp...");
         },
       },
       {
         onToken(token) {
           if (!streamStarted) {
-            generationSpinner?.stop();
             process.stdout.write("\n");
             streamStarted = true;
           }
@@ -75,47 +73,41 @@ async function main(): Promise<void> {
       },
     );
   } catch (error) {
-    generationSpinner?.fail("Generation failed");
+    reporter.failure("Generation failed");
     throw error;
   }
 
-  if (!streamStarted) {
-    generationSpinner?.stop();
-  }
+  if (!streamStarted) reporter.warning("Generation returned no streamed tokens");
 
   process.stdout.write("\n");
+  reporter.success("Generation complete");
 
   const totalDuration = performance.now() - totalStart;
 
-  console.log("\n---");
-  console.log(`Search: ${(result.metrics.searchMs / 1000).toFixed(2)}s`);
-  console.log(`Rerank: ${(result.metrics.rerankMs / 1000).toFixed(2)}s`);
-  console.log(
+  reporter.detail("\n---");
+  reporter.detail(`Search: ${(result.metrics.searchMs / 1000).toFixed(2)}s`);
+  reporter.detail(`Rerank: ${(result.metrics.rerankMs / 1000).toFixed(2)}s`);
+  reporter.detail(
     `Graph expansion: ${(result.metrics.graphExpansionMs / 1000).toFixed(4)}s`,
   );
-  console.log(`Graph nodes added: ${result.graphExpansion.nodesAdded}`);
-  console.log(`Context build: ${(result.metrics.contextMs / 1000).toFixed(4)}s`);
-  console.log(
+  reporter.detail(`Graph nodes added: ${result.graphExpansion.nodesAdded}`);
+  reporter.detail(`Context build: ${(result.metrics.contextMs / 1000).toFixed(4)}s`);
+  reporter.detail(
     `Context chunks: ${result.finalContext.chunks.length}/${result.rerankedResults.length + result.graphExpansion.nodesAdded}`,
   );
-  console.log(`Context tokens: ${result.finalContext.tokens}`);
-  console.log(
+  reporter.detail(`Context tokens: ${result.finalContext.tokens}`);
+  reporter.detail(
     `TTFT: ${result.metrics.ttftMs === null ? "N/A" : `${(result.metrics.ttftMs / 1000).toFixed(2)}s`}`,
   );
-  console.log(`Generation: ${(result.metrics.generationMs / 1000).toFixed(2)}s`);
-  console.log(`Total: ${(totalDuration / 1000).toFixed(2)}s`);
+  reporter.detail(`Generation: ${(result.metrics.generationMs / 1000).toFixed(2)}s`);
+  reporter.detail(`Total: ${(totalDuration / 1000).toFixed(2)}s`);
 }
 
-function printRerankedChunk(chunk: InspectorChunk): void {
-  console.log({
-    rerankScore: chunk.rerankScore?.toFixed(4) ?? "-",
-    fusionScore: chunk.fusionScore?.toFixed(6) ?? "-",
-    vectorScore: chunk.vectorScore?.toFixed(4) ?? "-",
-    lexicalScore: chunk.lexicalScore?.toFixed(2) ?? "-",
-    file: chunk.file,
-    symbol: chunk.symbolName,
-    type: chunk.symbolType,
-  });
+function formatRerankedChunk(chunk: InspectorChunk): string {
+  return [
+    `  ${chunk.file}:${chunk.startLine}-${chunk.endLine}`,
+    `    ${chunk.symbolName} (${chunk.symbolType}) · rerank ${chunk.rerankScore?.toFixed(4) ?? "-"} · fusion ${chunk.fusionScore?.toFixed(6) ?? "-"} · vector ${chunk.vectorScore?.toFixed(4) ?? "-"} · lexical ${chunk.lexicalScore?.toFixed(2) ?? "-"}`,
+  ].join("\n");
 }
 
 main().catch((error) => {

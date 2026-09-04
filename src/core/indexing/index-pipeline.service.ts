@@ -18,6 +18,7 @@ export type IndexPipelineResult = {
   graph: GraphIndexResult;
   lexical: LexicalIndexResult;
   semantic?: SemanticIndexResult;
+  totalMs: number;
 };
 
 async function runPipeline(
@@ -25,6 +26,7 @@ async function runPipeline(
   operation: IndexPipelineResult["operation"],
   options: IndexPipelineOptions,
 ): Promise<IndexPipelineResult> {
+  const startedAt = performance.now();
   const repoPath = canonicalRepositoryPath(path.resolve(inputPath));
   const progress = options.progress;
   const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
@@ -85,6 +87,7 @@ async function runPipeline(
     graph,
     lexical,
     semantic,
+    totalMs: performance.now() - startedAt,
   };
 }
 

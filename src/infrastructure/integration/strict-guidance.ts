@@ -18,9 +18,13 @@ export async function strictGuidanceStatus(repoPath: string): Promise<boolean> {
 }
 
 export async function installStrictGuidance(repoPath: string): Promise<boolean> {
+  return installGuidance(repoPath, true);
+}
+
+export async function installGuidance(repoPath: string, strict = false): Promise<boolean> {
   const filePath = path.join(repoPath, "AGENTS.md");
   const file = await readTextFile(filePath);
-  const body = await guidanceBody(repoPath);
+  const body = await guidanceBody(repoPath, strict);
   const updated = updateManagedBlock(
     file.text,
     CODE_ATLAS_GUIDANCE_START,
@@ -45,15 +49,23 @@ export async function uninstallStrictGuidance(repoPath: string): Promise<boolean
   return true;
 }
 
-async function guidanceBody(repoPath: string): Promise<string> {
+async function guidanceBody(repoPath: string, strict: boolean): Promise<string> {
   const capabilities = await capabilitySummary(repoPath);
   return [
-    "## CodeAtlas guidance (opt-in)",
+    `## CodeAtlas guidance${strict ? " (strict, opt-in)" : ""}`,
     "",
-    "Use CodeAtlas MCP before broad repository exploration when it is available:",
-    "- query `repository_status` first",
-    "- use `search_code` and `get_symbol` to locate relevant code",
-    "- use `impact` or `trace` before making structural assumptions",
+    ...(strict
+      ? [
+        "Use CodeAtlas MCP before broad repository exploration when it is available:",
+        "- query `repository_status` first",
+        "- use `search_code` and `get_symbol` to locate relevant code",
+        "- use `impact` or `trace` before making structural assumptions",
+      ]
+      : [
+        "CodeAtlas provides local code intelligence through MCP when available:",
+        "- use `repository_status` to check indexed capabilities",
+        "- use `search_code` and `get_symbol` for precise navigation",
+      ]),
     `- indexed capabilities: ${capabilities}`,
     "- if results report `mayBeIncomplete`, verify the relevant source files directly",
     "- fall back to direct source inspection whenever CodeAtlas is unavailable or stale",

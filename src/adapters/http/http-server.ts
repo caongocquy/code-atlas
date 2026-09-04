@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
@@ -24,7 +25,8 @@ import {
 
 const app = Fastify({ logger: true });
 const repoPath = path.resolve(process.env.CODE_RAG_REPO_PATH ?? process.cwd());
-const uiRoot = path.resolve("dist/ui");
+const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const uiRoot = path.join(packageRoot, "dist", "ui");
 const defaultProviders = createDefaultProviders(repoPath);
 
 async function loadGraph() {

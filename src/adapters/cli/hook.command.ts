@@ -1,22 +1,33 @@
 import path from "node:path";
 
+import { createCliCommandReporter } from "./cli-command-reporter.js";
+import { formatHookStatus } from "./cli-output.js";
 import type { HookName } from "../../core/integration/integration.types.js";
 import { GitHookService } from "../../core/integration/git-hook.service.js";
 
 export async function runHookCommand(args: string[], repoPath = path.resolve(".")): Promise<void> {
   const [action] = args.filter((arg) => !arg.startsWith("--"));
+  const reporter = createCliCommandReporter({ json: args.includes("--json") });
   const hooks = selectedHooks(args);
   const service = new GitHookService(repoPath);
   if (action === "status") {
-    process.stdout.write(`${JSON.stringify(await service.status(), null, 2)}\n`);
+    const result = await service.status();
+    if (reporter.json) reporter.output(result);
+    else reporter.success(formatHookStatus(result));
     return;
   }
   if (action === "install") {
-    process.stdout.write(`${JSON.stringify(await service.install({ hooks }), null, 2)}\n`);
+    reporter.start("Installing CodeAtlas Git hooks...");
+    const result = await reporter.run("Installing Git hooks", () => service.install({ hooks }));
+    if (reporter.json) reporter.output(result);
+    else reporter.success(formatHookStatus(result));
     return;
   }
   if (action === "uninstall") {
-    process.stdout.write(`${JSON.stringify(await service.uninstall({ hooks }), null, 2)}\n`);
+    reporter.start("Removing CodeAtlas Git hooks...");
+    const result = await reporter.run("Removing Git hooks", () => service.uninstall({ hooks }));
+    if (reporter.json) reporter.output(result);
+    else reporter.success(formatHookStatus(result));
     return;
   }
   throw new Error("Usage: code-atlas hook install|uninstall|status [--post-commit] [--post-checkout]");

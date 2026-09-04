@@ -59,7 +59,11 @@ test("Codex integration preserves unrelated TOML and is idempotent", async () =>
     const parsed = parseToml(afterFirst) as Record<string, any>;
     assert.equal(parsed.model, "test-model");
     assert.deepEqual(parsed.mcp_servers.other, { command: "other", args: ["serve"] });
-    assert.deepEqual(parsed.mcp_servers["code-atlas"], { command: "code-atlas", args: ["mcp"], enabled: true });
+    assert.deepEqual(parsed.mcp_servers["code-atlas"], {
+      command: process.execPath,
+      args: [path.resolve("dist/cli.js"), "mcp"],
+      enabled: true,
+    });
 
     const status = await integrations.status("codex", options);
     assert.equal(status.state, "installed");
