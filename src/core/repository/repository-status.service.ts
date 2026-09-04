@@ -16,7 +16,10 @@ import type {
 import type { EmbeddingProvider } from "../semantic/embedding-provider.js";
 import type { VectorStore } from "../semantic/vector-store.js";
 import type { RerankerProvider } from "../retrieval/reranker-provider.js";
-import { embeddingProviderIdentity } from "../semantic/provider-identity.js";
+import {
+  embeddingProviderIdentity,
+  hasVectorStoreGeneration,
+} from "../semantic/provider-identity.js";
 import { createFileHash } from "./file-hash.js";
 import {
   canonicalRepositoryPath,
@@ -204,7 +207,10 @@ async function getSemanticCapability(
 
   const identity = embeddingProviderIdentity(provider);
   const incompatible = Array.from(states.values()).some(
-    (state) => state.state === "ready" && state.providerIdentity !== identity,
+    (state) => state.state === "ready" && (
+      state.providerIdentity !== identity ||
+      !hasVectorStoreGeneration(state.generation, providers.vectorStore!.id)
+    ),
   );
 
   if (incompatible) {

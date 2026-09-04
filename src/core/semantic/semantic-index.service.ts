@@ -36,7 +36,10 @@ import { vectorRefreshMode } from "../repository/index-version.js";
 import type { EmbeddingProvider } from "./embedding-provider.js";
 import type { VectorStore } from "./vector-store.js";
 import type { IndexedFileState } from "../repository/indexed-file-state.js";
-import { embeddingProviderIdentity } from "./provider-identity.js";
+import {
+  embeddingProviderIdentity,
+  semanticGenerationIdentity,
+} from "./provider-identity.js";
 
 type PreparedFile = {
   relativePath: string;
@@ -128,16 +131,17 @@ function unavailableResult(
 function generationIdFor(
   fileHash: string,
   providerIdentity: string,
+  vectorStoreId: string,
   previousProviderIdentity?: string,
   hasPreviousIndex = false,
 ): string {
-  const generation = [`v${VECTOR_INDEX_VERSION}`, fileHash];
-
-  if (hasPreviousIndex && previousProviderIdentity !== providerIdentity) {
-    generation.push(providerIdentity);
-  }
-
-  return generation.join(":");
+  return semanticGenerationIdentity(
+    fileHash,
+    providerIdentity,
+    vectorStoreId,
+    previousProviderIdentity,
+    hasPreviousIndex,
+  );
 }
 
 function chunkArray<T>(items: T[], size: number): T[][] {
@@ -263,12 +267,20 @@ export async function syncSemantic(
           const fileHash = options.fileHashes?.get(relativePath) ?? createFileHash(content);
           const previousState = capabilityStates.get(relativePath);
           const previousPointState = indexedStates.get(relativePath);
+          const generationId = generationIdFor(
+            fileHash,
+            providerIdentity,
+            vectorStore.id,
+            previousState?.providerIdentity,
+            previousState !== undefined || previousPointState !== undefined,
+          );
 
           if (
             !forceFullReindex &&
             previousState?.state === "ready" &&
             previousState.fileHash === fileHash &&
-            previousState.providerIdentity === providerIdentity
+            previousState.providerIdentity === providerIdentity &&
+            previousState.generation === generationId
           ) {
             skippedFiles += 1;
             reporter.setProgress(index + 1, files.length);
@@ -277,13 +289,6 @@ export async function syncSemantic(
 
           const parsedChunks = parseCodeSymbols(content, relativePath);
           const chunks = parsedChunks.flatMap(splitLargeSymbol);
-          const generationId = generationIdFor(
-            fileHash,
-            providerIdentity,
-            previousState?.providerIdentity,
-            previousState !== undefined || previousPointState !== undefined,
-          );
-
           preparedFiles.push({
             relativePath,
             fileHash,
