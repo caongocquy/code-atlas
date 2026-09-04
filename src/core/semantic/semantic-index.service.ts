@@ -88,7 +88,7 @@ export type SemanticIndexResult = {
   embeddedSymbols: number;
   cleanedOldPoints: number;
   embeddingBatches: number;
-  qdrantBatches: number;
+  vectorBatches: number;
   addedFiles: number;
   updatedFiles: number;
   skippedFiles: number;
@@ -115,7 +115,7 @@ function unavailableResult(
     embeddedSymbols: 0,
     cleanedOldPoints: 0,
     embeddingBatches: 0,
-    qdrantBatches: 0,
+    vectorBatches: 0,
     addedFiles: 0,
     updatedFiles: 0,
     skippedFiles: 0,
@@ -178,7 +178,7 @@ export async function syncSemantic(
       embeddedSymbols: 0,
       cleanedOldPoints: 0,
       embeddingBatches: 0,
-      qdrantBatches: 0,
+      vectorBatches: 0,
       addedFiles: 0,
       updatedFiles: 0,
       skippedFiles: 0,
@@ -389,7 +389,7 @@ export async function syncSemantic(
         embeddedSymbols: 0,
         cleanedOldPoints: 0,
         embeddingBatches: 0,
-        qdrantBatches: 0,
+        vectorBatches: 0,
         addedFiles,
         updatedFiles,
         skippedFiles,
@@ -495,7 +495,7 @@ export async function syncSemantic(
 
     await runCopyOnWriteGeneration({
       stage: async () => {
-        await progress.run("Writing Qdrant", writePoints, "vector");
+        await progress.run("Writing vector index", writePoints, "vector");
         return fileEntries;
       },
       cleanup: async () => {
@@ -560,7 +560,7 @@ export async function syncSemantic(
       embeddedSymbols,
       cleanedOldPoints,
       embeddingBatches: embeddingBatches.length,
-      qdrantBatches: upsertBatches.length,
+      vectorBatches: upsertBatches.length,
       addedFiles,
       updatedFiles,
       skippedFiles,

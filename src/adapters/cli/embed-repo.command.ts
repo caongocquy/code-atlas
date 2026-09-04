@@ -7,14 +7,15 @@ import {
   UPSERT_BATCH_SIZE,
 } from "../../config/constants.js";
 import { indexSemantic } from "../../core/semantic/semantic-index.service.js";
-import { defaultProviders } from "../../infrastructure/provider-defaults.js";
+import { createDefaultProviders } from "../../infrastructure/provider-defaults.js";
 
 async function main(): Promise<void> {
   const repoPath = path.resolve(process.argv[2] ?? ".");
+  const providers = createDefaultProviders(repoPath);
   const result = await indexSemantic(repoPath, {
     progress: cliProgressRunner,
-    embeddingProvider: defaultProviders.embeddingProvider,
-    vectorStore: defaultProviders.vectorStore,
+    embeddingProvider: providers.embeddingProvider,
+    vectorStore: providers.vectorStore,
   });
 
   if (result.fullReindex) {
@@ -55,8 +56,8 @@ async function main(): Promise<void> {
       },
       { label: "Embedding batches", value: result.embeddingBatches },
       { label: "Embedding batch size", value: EMBEDDING_BATCH_SIZE },
-      { label: "Qdrant batches", value: result.qdrantBatches },
-      { label: "Qdrant batch size", value: UPSERT_BATCH_SIZE },
+      { label: "Vector batches", value: result.vectorBatches },
+      { label: "Vector batch size", value: UPSERT_BATCH_SIZE },
     );
   }
 

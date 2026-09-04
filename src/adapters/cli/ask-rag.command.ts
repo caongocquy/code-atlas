@@ -2,7 +2,7 @@ import ora from "ora";
 
 import { warmupEmbedding } from "../../infrastructure/embedding/transformers-embedding.client.js";
 import { warmupReranker } from "../../infrastructure/reranker/transformers-reranker.client.js";
-import { defaultProviders } from "../../infrastructure/provider-defaults.js";
+import { createDefaultProviders } from "../../infrastructure/provider-defaults.js";
 import {
   answerCodebase,
   type InspectorChunk,
@@ -16,6 +16,7 @@ async function main(): Promise<void> {
   }
 
   const totalStart = performance.now();
+  const providers = createDefaultProviders(process.cwd());
   let spinner = ora("Loading embedding model...").start();
   const embeddingStart = performance.now();
 
@@ -41,7 +42,7 @@ async function main(): Promise<void> {
     result = await answerCodebase(
       question,
       {
-        providers: defaultProviders,
+        providers,
         onInspection(inspection) {
           spinner = ora("Inspecting retrieval pipeline...").start();
           spinner.succeed(
