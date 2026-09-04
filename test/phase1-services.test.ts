@@ -58,7 +58,7 @@ test("Phase 1 entrypoints delegate orchestration and services keep CLI/process b
   assert.match(semanticAdapter, /indexSemantic/);
   assert.doesNotMatch(
     semanticAdapter,
-    /from ["'][^"']*(?:qdrant|embedding|code-parser|copy-on-write)/,
+    /from ["'][^"']*(?:embedding|code-parser|copy-on-write)/,
   );
   assert.match(askAdapter, /answerCodebase/);
   assert.doesNotMatch(askAdapter, /chatStream/);

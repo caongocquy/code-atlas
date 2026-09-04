@@ -52,7 +52,7 @@ Do not rewrite unrelated user changes.
 
 ## CodeAtlas architecture rules
 
-- CodeAtlas core must work without mandatory Qdrant, Docker, embedding models, or LLMs.
+- CodeAtlas core must work without mandatory external vector databases, Docker, embedding models, or LLMs.
 - CLI, HTTP, UI, and MCP should reuse shared core services.
 - Git-aware sync is an optimization; content hashes remain the correctness check.
 - Resolution v2 is precision-first / unique-or-drop.

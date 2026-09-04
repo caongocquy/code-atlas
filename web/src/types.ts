@@ -117,7 +117,7 @@ export type Status = {
     indexedFiles: number;
     points: number;
     chunks: number;
-    collection: string;
+    backend: string;
     reachable: boolean;
     status: string;
     needsSync: boolean;

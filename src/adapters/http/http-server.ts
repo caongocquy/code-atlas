@@ -4,7 +4,6 @@ import path from "node:path";
 import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
 
-import { QDRANT_URL, REPO_CODE_COLLECTION } from "../../config/constants.js";
 import {
   getGraphOverview,
   getIndexedGraphFiles,
@@ -15,7 +14,6 @@ import {
 import { AtlasStore } from "../../storage/atlas/atlas.store.js";
 import { getRepositoryIdentity } from "../../core/repository/repository-identity.js";
 import { createDefaultProviders } from "../../infrastructure/provider-defaults.js";
-import { qdrant } from "../../infrastructure/vector/qdrant.client.js";
 import { getRepositoryStatus } from "../../core/repository/repository-status.service.js";
 import { resolveRepoSourcePath } from "./repository-source-path.js";
 import {
@@ -66,17 +64,10 @@ function sourceLanguage(file: string): string {
   }[extension] ?? "plaintext";
 }
 
-app.get("/health", async () => {
-  const collections = await qdrant.getCollections();
-
-  return {
-    api: "ok",
-    qdrant: "ok",
-    collection: REPO_CODE_COLLECTION,
-    qdrantUrl: QDRANT_URL,
-    collections: collections.collections.length,
-  };
-});
+app.get("/health", async () => ({
+  api: "ok",
+  vectorStore: defaultProviders.vectorStore.id,
+}));
 
 app.get("/api/status", async (_request, reply) => {
   try {

@@ -81,7 +81,7 @@ test("SQLite vector storage is persistent, isolated, deterministic, and mutable"
   }
 });
 
-test("the default semantic backend is local SQLite and does not require Qdrant", async () => {
+test("the default semantic backend is the built-in local SQLite store", async () => {
   const root = await temporaryDirectory("default");
 
   try {
@@ -216,7 +216,7 @@ test("semantic replacement keeps the previous SQLite generation until activation
   }
 });
 
-test("legacy Qdrant semantic metadata is stale and cannot authorize SQLite reuse", async () => {
+test("legacy external vector metadata is stale and cannot authorize SQLite reuse", async () => {
   const root = await temporaryDirectory("backend-switch");
   const databasePath = path.join(root, ".codeatlas", "atlas.db");
   const content = "export function backendSwitch() { return true; }\n";

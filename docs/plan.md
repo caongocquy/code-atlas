@@ -14,7 +14,7 @@
 | Primary storage              | Per-repository `.codeatlas/atlas.db` using built-in SQLite                                           | One local source of truth; zero-config; transactional                                       | Proposed; needs schema/portability spike   |
 | Lexical search               | SQLite FTS5                                                                                          | Zero-config, local, fast enough for public default                                          | Proposed; needs ranking/tokenization spike |
 | Semantic search              | Optional feature requiring an embedding provider and one built-in local vector backend              | Core must work without model downloads or external services                                 | Decided                                    |
-| Vector storage               | Internal `VectorStore` abstraction with one built-in local backend selected in Phase 6; Qdrant remains a legacy/development backend | Keep storage replaceable without making vector databases a user choice             | Planned; Phase 6                            |
+| Vector storage               | Internal `VectorStore` abstraction with SQLite BLOB + cosine as the sole built-in backend | Keep storage replaceable without making vector databases a user choice             | Complete; Phase 6                           |
 | Graph model                  | Typed structural graph with stable identity, evidence, ambiguity/drop policy, and coverage signals   | Improves trust and makes graph reasoning inspectable                                        | Proposed                                   |
 | LLM requirement              | None in CodeAtlas core; host agents and standalone consumers may provide reasoning                   | Search, graph, inspection, impact, trace must work without generation                       | Decided                                    |
 | Reranker                     | Optional `RerankerProvider`                                                                          | Preserve current quality differentiator without making it mandatory                         | Proposed                                   |
@@ -23,7 +23,7 @@
 | MCP                          | Add only after core services and capability contracts stabilize                                      | MCP must be an adapter, not a second implementation                                         | Proposed                                   |
 | Change detection             | Git metadata narrows sync candidates when available; filesystem scan and content hashes remain authoritative | Faster incremental sync without a Git dependency or freshness blind spots                  | Complete; Phase 4                           |
 | Agent integration/init       | Capability-aware `code-atlas init` with a managed `AGENTS.md` block                          | Agents can discover real CodeAtlas capabilities without overwriting repository instructions | Planned after MCP                          |
-| Packaging                    | Compiled ESM JS with `code-atlas` bin; no runtime `tsx`, Docker, Qdrant, or LLM requirement          | Public install must work from another repository                                            | Proposed; needs clean-package spike        |
+| Packaging                    | Compiled ESM JS with `code-atlas` bin; no runtime `tsx`, Docker, external vector database, or LLM requirement | Public install must work from another repository                                            | Proposed; needs clean-package spike        |
 
 ## Product direction
 
@@ -89,7 +89,7 @@ without requiring:
 - llama.cpp
 - Ollama
 - OpenAI
-- Qdrant
+- an external vector database
 - Docker
 - a downloaded embedding model
 - a downloaded reranker model
@@ -103,6 +103,8 @@ without requiring:
 - Phase 3 — complete
 - Phase 4 — complete
 - Phase 5 — complete
+- Phase 6 — complete
+- Phase 7 — not started
 
 ## External design references
 
@@ -210,7 +212,7 @@ Resolution already supports:
 ### Retrieval
 
 - local embeddings
-- Qdrant
+- optional local vector search
 - lexical search
 - vector search
 - RRF fusion
@@ -308,7 +310,7 @@ For example, `impact` has one core implementation reused by every adapter.
 
 ## Release invariants
 
-1. Graph and lexical indexing work without Qdrant, Docker, model downloads, LLMs, or cloud services.
+1. Graph and lexical indexing work without Docker, model downloads, LLMs, external vector databases, or cloud services.
 2. Optional capabilities degrade gracefully instead of crashing core operations.
 3. Graph writes remain transactional.
 4. Semantic replacement preserves the previous usable generation until a new generation is complete.
@@ -631,7 +633,7 @@ Target strategy:
    - hash canonical path with an identity-format version
    - create repository UUID
 4. If the repository directory moves together with `.codeatlas/atlas.db`, prefer the persisted UUID and update path metadata explicitly.
-5. Never silently reuse old basename-only Qdrant/index state.
+5. Never silently reuse old basename-only vector/index state.
 
 ---
 
@@ -695,10 +697,11 @@ type RerankerProvider = {
 };
 ```
 
-Users should not choose between Qdrant, SQLite, HNSW implementations, or
-other vector stores. CodeAtlas selects and ships one built-in local vector
-backend. The internal `VectorStore` seam exists for separation of concerns,
-testability, implementation replacement, and migration safety.
+Users should not choose between vector databases or implementations. CodeAtlas
+selects and ships one built-in local vector backend: SQLite BLOB storage with
+application cosine search. The internal `VectorStore` seam exists for
+separation of concerns, testability, implementation replacement, and migration
+safety; it is not a product configuration surface.
 
 Semantic Search requires an `EmbeddingProvider` and the built-in internal
 `VectorStore` backend. Users should normally only choose or configure the
@@ -711,10 +714,6 @@ the public provider set remains intentionally open until explicitly decided.
 ```text
 src/lib/embedding.ts
 → local Transformers.js EmbeddingProvider
-
-src/lib/qdrant.ts
-→ current development/legacy Qdrant VectorStore implementation; not the
-  intended default public backend
 
 src/lib/reranker.ts
 → optional local cross-encoder RerankerProvider
@@ -730,21 +729,20 @@ consumer configuration, not a CodeAtlas core provider dependency.
 
 # Local vector strategy
 
-Phase 6 will benchmark candidates and choose one built-in local vector backend
-for CodeAtlas. This is an implementation selection, not a user-selectable
-backend marketplace. Keep the internal `VectorStore` seam for lifecycle and
-migration safety.
+Phase 6 selected and shipped one built-in local vector backend for CodeAtlas:
+SQLite BLOB storage with application cosine search. This is an implementation
+decision, not a user-selectable backend marketplace. Keep the internal
+`VectorStore` seam for lifecycle and migration safety.
 
 Candidates:
 
 | Option                           | Benefits                            | Risks                                      | Decision      |
 | -------------------------------- | ----------------------------------- | ------------------------------------------ | ------------- |
-| SQLite + application cosine scan | Zero extra service/native extension | O(n) query, memory/deserialize cost        | Spike         |
+| SQLite + application cosine scan | Zero extra service/native extension | O(n) query, memory/deserialize cost        | Selected      |
 | sqlite-vec                       | Better local vector querying        | Native distribution/ABI/package complexity | Spike         |
 | Local HNSW library               | Fast local ANN                      | Another index format/dependency            | Spike         |
-| Qdrant                           | Current development/legacy backend  | External service; not zero-config           | Migrate away from default usage |
 
-Required benchmark before choosing CodeAtlas's one built-in semantic backend:
+Benchmark record for the selected CodeAtlas semantic backend:
 
 ```text
 1k chunks
@@ -768,7 +766,8 @@ The chosen backend must be local-first, persistent, require no mandatory
 daemon or Docker, suit repository-scale semantic search, integrate cleanly
 with `.codeatlas/`, provide simple lifecycle and cleanup, isolate repositories
 deterministically, support incremental semantic updates, and preserve the
-existing copy-on-write guarantees where applicable.
+existing copy-on-write guarantees where applicable. Legacy external-vector
+metadata is stale and rebuilds into SQLite; it is not read as a live backend.
 
 ---
 
@@ -1108,7 +1107,7 @@ They may temporarily still use:
 ```text
 graph.db
 index-metadata.db
-Qdrant
+legacy vector state is not read and is rebuilt into SQLite when needed
 ```
 
 No behavior change yet.
@@ -1355,7 +1354,6 @@ Browser never reads:
 
 - SQLite directly
 - filesystem directly
-- Qdrant directly
 
 ---
 
@@ -1633,19 +1631,18 @@ Do not make registry a prerequisite for single-repo core.
 | Current module                        | Responsibility today                     | Target direction                                                  |
 | ------------------------------------- | ---------------------------------------- | ----------------------------------------------------------------- |
 | `src/index-graph.ts`                  | Graph executable orchestration           | Thin CLI adapter → graph service → unified pipeline later         |
-| `src/embed-repo.ts`                   | Semantic/Qdrant executable orchestration | Thin adapter → semantic service/provider → unified pipeline later |
+| `src/embed-repo.ts`                   | Semantic executable orchestration       | Thin adapter → semantic service/provider → unified pipeline later |
 | `src/build-graph.ts`                  | Full graph CLI                           | Graph service/adapter                                             |
 | `src/query-graph.ts`                  | Direct graph query CLI                   | Core graph query + CLI adapter                                    |
 | `src/ask-rag.ts`                      | Retrieval + generation script            | Thin adapter over `inspectRetrieval` / `answerCodebase`           |
 | `src/graph/store.ts`                  | Graph-only SQLite                        | `AtlasStore`                                                      |
 | `src/services/index-metadata.ts`      | Separate metadata DB                     | `AtlasStore` versions/index runs                                  |
-| `src/services/index-state.ts`         | Qdrant-derived freshness                 | `file_capability_state`                                           |
-| `src/services/lexical-search.ts`      | Qdrant scan lexical                      | FTS5 lexical core                                                 |
-| `src/services/code-search.ts`         | Embedding + Qdrant query                 | Semantic search over providers                                    |
+| `src/services/index-state.ts`         | Vector-derived freshness                 | `file_capability_state`                                           |
+| `src/services/lexical-search.ts`      | Prior vector-scan lexical                | FTS5 lexical core                                                 |
+| `src/services/code-search.ts`         | Embedding + vector query                | Semantic search over providers                                    |
 | `src/services/hybrid-search.ts`       | vector + lexical + RRF                   | capability-aware fusion                                           |
 | `src/services/retrieval-inspector.ts` | Inspector orchestration                  | Core retrieval inspection                                         |
 | `src/lib/embedding.ts`                | local embedder                           | `EmbeddingProvider`                                               |
-| `src/lib/qdrant.ts`                   | fixed Qdrant client                      | `QdrantVectorStore`                                               |
 | `src/lib/reranker.ts`                 | local reranker                           | optional `RerankerProvider`                                       |
 | `src/lib/llama.ts`                    | llama/OpenAI-compatible client           | standalone/external LLM consumer                                 |
 | `src/cli/progress.ts`                 | listr2 progress renderer                 | **Keep**                                                          |
@@ -1759,7 +1756,6 @@ Old entrypoints become thin adapters.
 ```text
 graph.db
 index-metadata.db
-Qdrant
 ```
 
 ## Preserve CLI progress
@@ -1837,7 +1833,7 @@ SQLite
 FTS5
 ```
 
-No Qdrant call.
+No external vector service call.
 
 ## Tests
 
@@ -1848,7 +1844,7 @@ No Qdrant call.
 - deterministic tie ordering
 - changed/deleted rows
 - empty query
-- no Qdrant/model available
+- no external vector service/model available
 
 ---
 
@@ -1966,9 +1962,9 @@ RerankerProvider
 ```
 
 `VectorStore` remains an internal storage abstraction only. It is not a
-public provider choice or configuration surface. CodeAtlas should ship one
-built-in local vector backend selected in Phase 6; users should not choose
-between Qdrant, SQLite, HNSW implementations, or other vector databases.
+public provider choice or configuration surface. CodeAtlas ships one built-in
+local vector backend selected in Phase 6; users should not choose between
+vector databases or implementations.
 
 Feature-first configuration is:
 
@@ -2006,7 +2002,7 @@ Core health must remain ready when optional providers are absent.
 
 ## No provider required by default
 
-No Qdrant.
+No external vector database.
 No embedding model.
 No reranker model.
 No LLM.
@@ -2017,12 +2013,13 @@ No LLM.
 
 ## Status
 
-Planned after Phase 5.
+Complete.
 
 ## Goal
 
-Select and ship one built-in local vector backend for optional Semantic Search.
-This phase is not a user-selectable vector-backend marketplace.
+SQLite BLOB storage with application cosine search is the sole built-in vector
+backend for optional Semantic Search. This is not a user-selectable
+vector-backend marketplace.
 
 Benchmark candidates may include:
 
@@ -2033,10 +2030,9 @@ Benchmark candidates may include:
 The benchmark exists to choose one backend for CodeAtlas, not to expose all
 candidates as product configuration.
 
-Retain:
+Preserve:
 
 - local Transformers embeddings
-- current Qdrant development/legacy backend during migration
 - cross-encoder reranker
 - copy-on-write generation safety
 
@@ -2046,15 +2042,17 @@ The chosen backend must be local-first, persistent, require no mandatory
 daemon or Docker, suit repository-scale semantic search, integrate cleanly
 with `.codeatlas/`, provide easy lifecycle and cleanup, isolate repositories
 deterministically, support incremental semantic updates, and remain compatible
-with existing copy-on-write guarantees where applicable. Phase 6 defines the
-migration path away from mandatory Qdrant usage; it does not remove or migrate
-the current Qdrant implementation yet.
+with existing copy-on-write guarantees where applicable. Legacy external-vector
+metadata is stale and rebuilds into SQLite; it is not read as a live backend.
 
 ## Completion
 
 Lexical-only works with no provider.
 
 Configured semantic search works with the selected provider.
+
+The implementation lives in `src/storage/atlas/sqlite-vector.store.ts` and
+requires no external vector service or Docker runtime.
 
 ---
 
@@ -2408,7 +2406,7 @@ pnpm pack
 → code-atlas serve
 ```
 
-All must work without Docker/Qdrant/LLM.
+All must work without Docker, external vector databases, or LLMs.
 
 ---
 
@@ -2430,7 +2428,7 @@ Matrix:
 ```text
 Graph + lexical only
 Optional local semantic
-Legacy/optional Qdrant compatibility
+Legacy external-vector metadata is stale and rebuild-only
 No LLM
 Optional standalone external/host LLM consumer
 Zero-chunk files
@@ -2497,7 +2495,7 @@ Temporary fixture repository:
 - another repository
 - no dev absolute paths
 - no runtime `tsx`
-- no mandatory Docker/Qdrant/LLM
+- no mandatory Docker, external vector database, or LLM
 - supported OS/runtime matrix
 
 ---
@@ -2547,7 +2545,7 @@ Do not add a native vector dependency without measured need.
 - Neo4j
 - mandatory graph server
 - mandatory Docker
-- mandatory Qdrant
+- mandatory external vector database
 - mandatory model download
 - mandatory LLM
 - mandatory cloud service
@@ -2561,10 +2559,10 @@ Do not add a native vector dependency without measured need.
 
 # Recommended next action
 
-Phase 5 is complete and green. The next planned implementation phase is:
+Phase 6 is complete and green. The next planned implementation phase is:
 
-**Phase 6 — Optional semantic/vector indexing.**
+**Phase 7 — Resolution evidence and coverage.**
 
-The single built-in vector backend decision remains scheduled for Phase 6.
-Agent integration and `code-atlas init` remain scheduled for Phase 11, after
-MCP capability contracts stabilize. Phase 6 has not started.
+SQLite BLOB + cosine is the sole built-in vector backend; users do not select a
+vector database. Agent integration and `code-atlas init` remain scheduled for
+Phase 11, after MCP capability contracts stabilize. Phase 7 has not started.
