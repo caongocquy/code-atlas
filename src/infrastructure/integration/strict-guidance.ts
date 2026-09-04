@@ -22,9 +22,10 @@ export async function installStrictGuidance(repoPath: string): Promise<boolean> 
 }
 
 export async function installGuidance(repoPath: string, strict = false): Promise<boolean> {
+  void strict;
   const filePath = path.join(repoPath, "AGENTS.md");
   const file = await readTextFile(filePath);
-  const body = await guidanceBody(repoPath, strict);
+  const body = await guidanceBody(repoPath);
   const updated = updateManagedBlock(
     file.text,
     CODE_ATLAS_GUIDANCE_START,
@@ -49,48 +50,75 @@ export async function uninstallStrictGuidance(repoPath: string): Promise<boolean
   return true;
 }
 
-async function guidanceBody(repoPath: string, strict: boolean): Promise<string> {
+async function guidanceBody(repoPath: string): Promise<string> {
   const capabilities = await capabilitySummary(repoPath);
   const graphGuidance = capabilities.graphReady
     ? [
-      "- when graph is ready, use `find_callers`, `find_callees`, `find_imports`, `find_imported_by`, `impact`, or `trace` for relationship and blast-radius questions",
-      "- choose graph tools when the change touches shared or structural code; they are not required for every edit",
+      "When graph is ready, use `find_callers`, `find_callees`, `find_imports`, `find_imported_by`, `impact`, and `trace` for structural relationships and blast-radius questions.",
+      "Use graph tools for shared, unfamiliar, structural, or cross-module changes; they are not required for trivial or isolated edits.",
     ]
     : [];
   return [
-    `## CodeAtlas guidance${strict ? " (strict, opt-in)" : ""}`,
+    "## CodeAtlas — Code Intelligence",
     "",
-    ...(strict
-      ? [
-        "Use CodeAtlas MCP before broad repository exploration when it is available:",
-        "- query `repository_status` first",
-        "- use `search_code` and `get_symbol` to locate relevant code",
-        "- use `impact` or `trace` before making structural assumptions",
-      ]
-      : [
-        "CodeAtlas provides local code intelligence through MCP when available:",
-        "- use `repository_status` to check indexed capabilities",
-        "- use `search_code` and `get_symbol` for precise navigation",
-      ]),
+    "This repository is indexed by CodeAtlas.",
+    "",
+    "Current capabilities:",
+    `- graph: ${capabilities.graphState}`,
+    `- lexical: ${capabilities.lexicalState}`,
+    "",
+    "Use `repository_status` for freshness and capability checks.",
+    "Use `search_code` and `get_symbol` for precise navigation.",
     ...graphGuidance,
-    `- indexed capabilities: ${capabilities.summary}`,
-    "- if results report `mayBeIncomplete`, verify the relevant source files directly",
-    "- fall back to direct source inspection whenever CodeAtlas is unavailable or stale",
+    ...(capabilities.needsIndex
+      ? ["No index is available; run `code-atlas index`."]
+      : []),
+    ...(capabilities.needsSync
+      ? ["A capability is stale; run `code-atlas sync` before relying on graph or lexical results."]
+      : []),
+    ...(!capabilities.graphReady
+      ? ["Graph tools are unavailable until graph is ready; use direct source inspection when needed."]
+      : []),
+    "",
+    "Safety:",
+    "- `mayBeIncomplete=true` means CodeAtlas evidence is incomplete.",
+    "- `risk=unknown` means CodeAtlas cannot safely classify the change because graph evidence is incomplete.",
+    "- When `mayBeIncomplete=true`, negative results such as no callers or no impact are not authoritative.",
+    "- For risky changes with incomplete coverage, combine CodeAtlas evidence with direct source verification.",
+    "- Do not treat `risk=low` as authoritative when coverage is incomplete.",
+    "- If CodeAtlas is unavailable, fall back to direct source inspection.",
   ].join("\n");
 }
 
-async function capabilitySummary(repoPath: string): Promise<{ summary: string; graphReady: boolean }> {
+async function capabilitySummary(repoPath: string): Promise<{
+  graphState: string;
+  lexicalState: string;
+  graphReady: boolean;
+  needsIndex: boolean;
+  needsSync: boolean;
+}> {
   try {
     await fs.access(path.join(repoPath, ".codeatlas", "atlas.db"));
     const status = await getRepositoryStatus(repoPath);
-    const values = Object.entries(status.capabilities)
-      .filter(([, capability]) => capability.state !== "not_configured")
-      .map(([name, capability]) => `${name}=${capability.state}`);
+    const needsIndex = status.graph.status === "not-indexed";
+    const graphState = needsIndex ? "not-indexed" : status.capabilities.graph.state;
+    const lexicalState = needsIndex && status.capabilities.lexical.indexedFiles === 0
+      ? "not-indexed"
+      : status.capabilities.lexical.state;
     return {
-      summary: values.length > 0 ? values.join(", ") : "none reported; confirm with repository_status",
+      graphState,
+      lexicalState,
       graphReady: status.capabilities.graph.state === "ready",
+      needsIndex,
+      needsSync: graphState === "stale" || lexicalState === "stale",
     };
   } catch {
-    return { summary: "not initialized; confirm with repository_status", graphReady: false };
+    return {
+      graphState: "not-indexed",
+      lexicalState: "not-indexed",
+      graphReady: false,
+      needsIndex: true,
+      needsSync: false,
+    };
   }
 }

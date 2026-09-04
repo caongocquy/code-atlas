@@ -10,12 +10,16 @@ import test from "node:test";
 
 import { parse as parseToml } from "smol-toml";
 
+import { GRAPH_INDEX_VERSION, LEXICAL_INDEX_VERSION } from "../src/config/constants.js";
+import { createFileHash } from "../src/core/repository/file-hash.js";
+import { getRepositoryIdentity } from "../src/core/repository/repository-identity.js";
 import { scanRepo } from "../src/core/repository/repository-files.js";
 import { indexRepository } from "../src/core/indexing/index-pipeline.service.js";
 import { isInteractiveMcpSession, MCP_INTERACTIVE_NOTICE } from "../src/adapters/mcp/mcp-server.js";
 import { isEphemeralCodeAtlasPath, resolveCodeAtlasMcpLaunch } from "../src/infrastructure/integration/codex.adapter.js";
 import { createAgentIntegrationService } from "../src/infrastructure/integration/default-integrations.js";
 import { installGuidance } from "../src/infrastructure/integration/strict-guidance.js";
+import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
 
 const execFile = promisify(execFileCallback);
 const cliPath = path.resolve("src/cli.ts");
@@ -126,7 +130,103 @@ test("generated guidance advertises ready graph tools without making them mandat
     assert.match(guidance, /find_imports/);
     assert.match(guidance, /impact/);
     assert.match(guidance, /trace/);
-    assert.match(guidance, /not required for every edit/);
+    assert.match(guidance, /not required for trivial or isolated edits/);
+    assert.match(guidance, /repository_status.*freshness/s);
+    assert.match(guidance, /search_code.*get_symbol.*precise navigation/s);
+    assert.match(guidance, /mayBeIncomplete=true/);
+    assert.match(guidance, /risk=unknown/);
+    assert.match(guidance, /negative results.*not authoritative/s);
+    assert.doesNotMatch(guidance, /MUST|NEVER|strict, opt-in|indexed capabilities:/);
+    assert.equal(guidance.match(/<!-- code-atlas:start -->/g)?.length, 1);
+    assert.equal(guidance.match(/<!-- code-atlas:end -->/g)?.length, 1);
+  } finally {
+    await rm(repoPath, { recursive: true, force: true });
+  }
+});
+
+test("generated guidance reports stale capabilities and gives sync recovery", async () => {
+  const repoPath = await fixture("guidance-stale");
+  try {
+    const sourcePath = path.join(repoPath, "source.ts");
+    await writeFile(sourcePath, "export function source() { return true; }\n");
+    await indexRepository(repoPath, { skipGit: true });
+    await writeFile(sourcePath, "export function source() { return false; }\n");
+    await installGuidance(repoPath);
+    const guidance = await readFile(path.join(repoPath, "AGENTS.md"), "utf8");
+    assert.match(guidance, /- graph: stale/);
+    assert.match(guidance, /- lexical: stale/);
+    assert.match(guidance, /code-atlas sync/);
+    assert.doesNotMatch(guidance, /find_callers|find_callees|find_imports|find_imported_by|`impact`|`trace`/);
+  } finally {
+    await rm(repoPath, { recursive: true, force: true });
+  }
+});
+
+test("generated guidance reports an unavailable graph conservatively", async () => {
+  const repoPath = await fixture("guidance-unavailable");
+  const databasePath = path.join(repoPath, ".codeatlas", "atlas.db");
+  try {
+    const source = "export function source() { return true; }\n";
+    await writeFile(path.join(repoPath, "source.ts"), source);
+    const store = new AtlasStore(databasePath);
+    const repository = store.ensureRepository(getRepositoryIdentity(repoPath));
+    store.setFileCapabilityState(repository.id, "source.ts", "graph", {
+      fileHash: createFileHash(source),
+      version: GRAPH_INDEX_VERSION,
+      state: "unavailable",
+      itemCount: 0,
+    });
+    store.setFileCapabilityState(repository.id, "source.ts", "lexical", {
+      fileHash: createFileHash(source),
+      version: LEXICAL_INDEX_VERSION,
+      state: "unavailable",
+      itemCount: 0,
+    });
+    store.close();
+
+    await installGuidance(repoPath);
+    const guidance = await readFile(path.join(repoPath, "AGENTS.md"), "utf8");
+    assert.match(guidance, /- graph: unavailable/);
+    assert.match(guidance, /- lexical: unavailable/);
+    assert.doesNotMatch(guidance, /find_callers|find_callees|find_imports|find_imported_by|`impact`|`trace`/);
+    assert.match(guidance, /direct source inspection/);
+  } finally {
+    await rm(repoPath, { recursive: true, force: true });
+  }
+});
+
+test("generated guidance reports a missing index and gives index recovery", async () => {
+  const repoPath = await fixture("guidance-not-indexed");
+  try {
+    await installGuidance(repoPath);
+    const guidance = await readFile(path.join(repoPath, "AGENTS.md"), "utf8");
+    assert.match(guidance, /- graph: not-indexed/);
+    assert.match(guidance, /- lexical: not-indexed/);
+    assert.match(guidance, /code-atlas index/);
+    assert.doesNotMatch(guidance, /find_callers|find_callees|find_imports|find_imported_by|`impact`|`trace`/);
+  } finally {
+    await rm(repoPath, { recursive: true, force: true });
+  }
+});
+
+test("guidance refresh removes internal newline metadata and preserves the final newline", async () => {
+  const repoPath = await fixture("guidance-newline");
+  try {
+    await writeFile(path.join(repoPath, "AGENTS.md"), [
+      "# Local guidance",
+      "",
+      "<!-- code-atlas:start -->",
+      "code-atlas:final-newline=0",
+      "old guidance",
+      "<!-- code-atlas:end -->",
+    ].join("\n"));
+    await installGuidance(repoPath);
+    const guidancePath = path.join(repoPath, "AGENTS.md");
+    const guidance = await readFile(guidancePath, "utf8");
+    assert.match(guidance, /^# Local guidance\n/);
+    assert.doesNotMatch(guidance, /code-atlas:final-newline|old guidance/);
+    assert.equal(guidance.endsWith("\n"), false);
+    assert.equal(await installGuidance(repoPath), false);
   } finally {
     await rm(repoPath, { recursive: true, force: true });
   }
