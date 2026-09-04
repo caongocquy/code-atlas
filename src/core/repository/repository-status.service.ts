@@ -16,6 +16,7 @@ import type {
 import type { EmbeddingProvider } from "../semantic/embedding-provider.js";
 import type { VectorStore } from "../semantic/vector-store.js";
 import type { RerankerProvider } from "../retrieval/reranker-provider.js";
+import type { ResolutionCoverage } from "../graph/resolution.types.js";
 import {
   embeddingProviderIdentity,
   hasVectorStoreGeneration,
@@ -69,6 +70,7 @@ export type RepositoryStatus = {
       extends: number;
       contains: number;
     };
+    resolutionCoverage: ResolutionCoverage;
     sqlitePath: string;
     reachable: boolean;
     status: "ready" | "not-indexed" | "stale";
@@ -422,6 +424,7 @@ async function getGraphStatus(
       extends: 0,
       contains: 0,
     },
+    resolutionCoverage: store.getGraphResolutionCoverage(repoId),
     sqlitePath: databasePath,
     reachable: false,
     needsRebuild: metadata?.version !== GRAPH_INDEX_VERSION,

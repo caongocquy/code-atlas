@@ -3,453 +3,268 @@ import Parser from "tree-sitter";
 import { getLanguageAdapter } from "./parsers/registry.js";
 import type { CallReference } from "./calls.js";
 import type { ImportBinding } from "./import-bindings.js";
+import {
+  emptyResolutionCoverage,
+  type ResolutionBatch,
+  type ResolutionEvidence,
+  type ResolutionResult,
+} from "./resolution.types.js";
 import type { CodeGraph, GraphEdge, GraphNode } from "./types.js";
 
-export type ObjectBinding = {
-  localName: string;
-  className: string;
-  targetFile?: string;
-};
+export type ObjectBinding = { localName: string; className: string; targetFile?: string };
+export type ParameterBinding = { callerQualifiedName: string; localName: string; className: string; targetFile?: string };
+export type ClassFieldBinding = { ownerClassName: string; fieldName: string; className: string; targetFile?: string };
 
-export type ParameterBinding = {
-  callerQualifiedName: string;
-  localName: string;
-  className: string;
-  targetFile?: string;
-};
-
-export type ClassFieldBinding = {
-  ownerClassName: string;
-  fieldName: string;
-  className: string;
-  targetFile?: string;
-};
-
-type MemberCallPath = {
-  root: string;
-  members: string[];
-  constructedClassName?: string;
-};
+type MemberCallPath = { root: string; members: string[]; constructedClassName?: string };
 
 function parseMemberCallPath(calleeName: string): MemberCallPath | undefined {
-  const directNewMatch = calleeName.match(
-    /^new\s+([A-Za-z_$][\w$]*)\s*\(\)\.([A-Za-z_$][\w$]*)$/,
-  );
-
+  const directNewMatch = calleeName.match(/^new\s+([A-Za-z_$][\w$]*)\s*\(\)\.([A-Za-z_$][\w$]*)$/);
   if (directNewMatch?.[1] && directNewMatch[2]) {
-    return {
-      root: directNewMatch[1],
-      members: [directNewMatch[2]],
-      constructedClassName: directNewMatch[1],
-    };
+    return { root: directNewMatch[1], members: [directNewMatch[2]], constructedClassName: directNewMatch[1] };
   }
 
-  const parts = calleeName
-    .split(".")
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-  if (parts.length < 2) {
-    return undefined;
-  }
-
-  const [root, ...members] = parts;
-
-  if (!root || members.length === 0) {
-    return undefined;
-  }
-
-  return {
-    root,
-    members,
-  };
+  const parts = calleeName.split(".").map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 2 || !parts[0]) return undefined;
+  return { root: parts[0], members: parts.slice(1) };
 }
 
-function resolveClassBinding(
-  typeName: string,
-  filePath: string,
-  importByLocalName: Map<string, ImportBinding>,
-): {
-  className: string;
-  targetFile?: string;
-} {
-  const importBinding = importByLocalName.get(typeName);
-
-  if (importBinding) {
-    return {
-      className: importBinding.importedName,
-      targetFile: importBinding.targetFile,
-    };
+function bindingsByLocalName(bindings: ImportBinding[]): Map<string, ImportBinding[]> {
+  const result = new Map<string, ImportBinding[]>();
+  for (const binding of bindings) {
+    result.set(binding.localName, [...(result.get(binding.localName) ?? []), binding]);
   }
+  return result;
+}
 
-  return {
-    className: typeName,
-    targetFile: filePath,
-  };
+function resolveClassBindings(typeName: string, filePath: string, imports: Map<string, ImportBinding[]>): Array<{ className: string; targetFile?: string }> {
+  const bindings = imports.get(typeName);
+  return bindings
+    ? bindings.map((binding) => ({ className: binding.importedName, targetFile: binding.targetFile }))
+    : [{ className: typeName, targetFile: filePath }];
 }
 
 function createParser(filePath: string): Parser | undefined {
   const adapter = getLanguageAdapter(filePath);
-
-  if (!adapter) {
-    return undefined;
-  }
-
+  if (!adapter) return undefined;
   const parser = new Parser();
-
   parser.setLanguage(adapter.grammar);
-
   return parser;
 }
 
-function extractObjectBindings(
-  source: string,
-  filePath: string,
-  importBindings: ImportBinding[],
-): ObjectBinding[] {
+function extractObjectBindings(source: string, filePath: string, importBindings: ImportBinding[]): ObjectBinding[] {
   const parser = createParser(filePath);
-
-  if (!parser) {
-    return [];
-  }
-
-  const tree = parser.parse(source);
-
-  const importByLocalName = new Map(
-    importBindings.map((binding) => [binding.localName, binding]),
-  );
-
+  if (!parser) return [];
+  const imports = bindingsByLocalName(importBindings);
   const results: ObjectBinding[] = [];
 
   function walk(node: Parser.SyntaxNode): void {
     if (node.type === "variable_declarator") {
-      const nameNode = node.childForFieldName("name");
-
-      const valueNode = node.childForFieldName("value");
-
-      if (
-        nameNode?.type === "identifier" &&
-        valueNode?.type === "new_expression"
-      ) {
-        const constructorNode = valueNode.childForFieldName("constructor");
-
-        if (constructorNode?.type === "identifier") {
-          const resolved = resolveClassBinding(
-            constructorNode.text,
-            filePath,
-            importByLocalName,
-          );
-
-          results.push({
-            localName: nameNode.text,
-            className: resolved.className,
-            targetFile: resolved.targetFile,
-          });
+      const name = node.childForFieldName("name");
+      const value = node.childForFieldName("value");
+      const constructor = value?.type === "new_expression" ? value.childForFieldName("constructor") : undefined;
+      if (name?.type === "identifier" && constructor?.type === "identifier") {
+        for (const binding of resolveClassBindings(constructor.text, filePath, imports)) {
+          results.push({ localName: name.text, ...binding });
         }
       }
     }
-
-    for (const child of node.namedChildren) {
-      walk(child);
-    }
+    for (const child of node.namedChildren) walk(child);
   }
-
-  walk(tree.rootNode);
-
+  walk(parser.parse(source).rootNode);
   return results;
 }
 
 function findContainingClassName(node: Parser.SyntaxNode): string | undefined {
   let current: Parser.SyntaxNode | null = node.parent;
-
   while (current) {
-    if (current.type === "class_declaration") {
-      return current.childForFieldName("name")?.text;
-    }
-
+    if (current.type === "class_declaration") return current.childForFieldName("name")?.text;
     current = current.parent;
   }
-
   return undefined;
 }
 
 function getCallableQualifiedName(node: Parser.SyntaxNode): string | undefined {
-  if (node.type === "function_declaration") {
-    return node.childForFieldName("name")?.text;
-  }
-
-  if (node.type === "method_definition") {
-    const methodName = node.childForFieldName("name")?.text;
-
-    if (!methodName) {
-      return undefined;
-    }
-
-    const className = findContainingClassName(node);
-
-    return className ? `${className}.${methodName}` : methodName;
-  }
-
-  return undefined;
+  if (node.type === "function_declaration") return node.childForFieldName("name")?.text;
+  if (node.type !== "method_definition") return undefined;
+  const method = node.childForFieldName("name")?.text;
+  const className = findContainingClassName(node);
+  return method ? (className ? `${className}.${method}` : method) : undefined;
 }
 
-function extractParameterType(parameter: Parser.SyntaxNode): {
-  localName?: string;
-  typeName?: string;
-} {
-  const patternNode =
-    parameter.childForFieldName("pattern") ??
-    parameter.childForFieldName("name");
-
-  const typeNode = parameter.childForFieldName("type");
-
-  if (patternNode?.type === "identifier" && typeNode) {
-    const typeName = typeNode.text.replace(/^:\s*/, "").trim();
-
-    if (/^[A-Za-z_$][\w$]*$/.test(typeName)) {
-      return {
-        localName: patternNode.text,
-        typeName,
-      };
-    }
+function extractParameterType(parameter: Parser.SyntaxNode): { localName?: string; typeName?: string } {
+  const pattern = parameter.childForFieldName("pattern") ?? parameter.childForFieldName("name");
+  const type = parameter.childForFieldName("type");
+  if (pattern?.type === "identifier" && type) {
+    const typeName = type.text.replace(/^:\s*/, "").trim();
+    if (/^[A-Za-z_$][\w$]*$/.test(typeName)) return { localName: pattern.text, typeName };
   }
-
-  const match = parameter.text.match(
-    /^([A-Za-z_$][\w$]*)\??\s*:\s*([A-Za-z_$][\w$]*)/,
-  );
-
-  if (!match) {
-    return {};
-  }
-
-  return {
-    localName: match[1],
-    typeName: match[2],
-  };
+  const match = parameter.text.match(/^([A-Za-z_$][\w$]*)\??\s*:\s*([A-Za-z_$][\w$]*)/);
+  return match ? { localName: match[1], typeName: match[2] } : {};
 }
 
-function extractParameterBindings(
-  source: string,
-  filePath: string,
-  importBindings: ImportBinding[],
-): ParameterBinding[] {
+function extractParameterBindings(source: string, filePath: string, importBindings: ImportBinding[]): ParameterBinding[] {
   const parser = createParser(filePath);
-
-  if (!parser) {
-    return [];
-  }
-
-  const tree = parser.parse(source);
-
-  const importByLocalName = new Map(
-    importBindings.map((binding) => [binding.localName, binding]),
-  );
-
+  if (!parser) return [];
+  const imports = bindingsByLocalName(importBindings);
   const results: ParameterBinding[] = [];
-
   function walk(node: Parser.SyntaxNode): void {
-    if (
-      node.type === "function_declaration" ||
-      node.type === "method_definition"
-    ) {
-      const callerQualifiedName = getCallableQualifiedName(node);
-
+    if (node.type === "function_declaration" || node.type === "method_definition") {
+      const caller = getCallableQualifiedName(node);
       const parameters = node.childForFieldName("parameters");
-
-      if (callerQualifiedName && parameters) {
-        for (const parameter of parameters.namedChildren) {
-          const { localName, typeName } = extractParameterType(parameter);
-
-          if (!localName || !typeName) {
-            continue;
-          }
-
-          const resolved = resolveClassBinding(
-            typeName,
-            filePath,
-            importByLocalName,
-          );
-
-          results.push({
-            callerQualifiedName,
-            localName,
-            className: resolved.className,
-            targetFile: resolved.targetFile,
-          });
+      if (caller && parameters) for (const parameter of parameters.namedChildren) {
+        const { localName, typeName } = extractParameterType(parameter);
+        if (localName && typeName) for (const binding of resolveClassBindings(typeName, filePath, imports)) {
+          results.push({ callerQualifiedName: caller, localName, ...binding });
         }
       }
     }
-
-    for (const child of node.namedChildren) {
-      walk(child);
-    }
+    for (const child of node.namedChildren) walk(child);
   }
-
-  walk(tree.rootNode);
-
+  walk(parser.parse(source).rootNode);
   return results;
 }
 
-function extractClassFieldBindings(
-  source: string,
-  filePath: string,
-  importBindings: ImportBinding[],
-): ClassFieldBinding[] {
+function extractClassFieldBindings(source: string, filePath: string, importBindings: ImportBinding[]): ClassFieldBinding[] {
   const parser = createParser(filePath);
-
-  if (!parser) {
-    return [];
-  }
-
-  const tree = parser.parse(source);
-
-  const importByLocalName = new Map(
-    importBindings.map((binding) => [binding.localName, binding]),
-  );
-
+  if (!parser) return [];
+  const imports = bindingsByLocalName(importBindings);
   const results: ClassFieldBinding[] = [];
-
-  function addBinding(
-    ownerClassName: string | undefined,
-    fieldName: string | undefined,
-    parameter: Parser.SyntaxNode,
-  ): void {
+  function add(owner: string | undefined, field: string | undefined, parameter: Parser.SyntaxNode): void {
     const { typeName } = extractParameterType(parameter);
-
-    if (!ownerClassName || !fieldName || !typeName) {
-      return;
-    }
-
-    const resolved = resolveClassBinding(
-      typeName,
-      filePath,
-      importByLocalName,
-    );
-
-    results.push({
-      ownerClassName,
-      fieldName,
-      className: resolved.className,
-      targetFile: resolved.targetFile,
-    });
+    if (!owner || !field || !typeName) return;
+    for (const binding of resolveClassBindings(typeName, filePath, imports)) results.push({ ownerClassName: owner, fieldName: field, ...binding });
   }
-
   function walk(node: Parser.SyntaxNode): void {
-    if (
-      node.type === "method_definition" &&
-      node.childForFieldName("name")?.text === "constructor"
-    ) {
-      const ownerClassName = findContainingClassName(node);
-      const parameters = node.childForFieldName("parameters");
-
-      for (const parameter of parameters?.namedChildren ?? []) {
-        if (
-          !parameter.namedChildren.some(
-            (child) => child.type === "accessibility_modifier",
-          )
-        ) {
-          continue;
+    if (node.type === "method_definition" && node.childForFieldName("name")?.text === "constructor") {
+      const owner = findContainingClassName(node);
+      for (const parameter of node.childForFieldName("parameters")?.namedChildren ?? []) {
+        if (parameter.namedChildren.some((child) => child.type === "accessibility_modifier")) {
+          add(owner, extractParameterType(parameter).localName, parameter);
         }
-
-        const { localName } = extractParameterType(parameter);
-
-        addBinding(ownerClassName, localName, parameter);
       }
     }
-
     if (node.type === "public_field_definition") {
-      const ownerClassName = findContainingClassName(node);
-
-      const nameNode = node.childForFieldName("name");
-
-      const typeNode = node.childForFieldName("type");
-
-      if (
-        ownerClassName &&
-        nameNode?.type === "property_identifier" &&
-        typeNode
-      ) {
-        const typeName = typeNode.text.replace(/^:\s*/, "").trim();
-
-        if (/^[A-Za-z_$][\w$]*$/.test(typeName)) {
-          const resolved = resolveClassBinding(
-            typeName,
-            filePath,
-            importByLocalName,
-          );
-
-          results.push({
-            ownerClassName,
-            fieldName: nameNode.text,
-            className: resolved.className,
-            targetFile: resolved.targetFile,
-          });
-        }
+      const owner = findContainingClassName(node);
+      const name = node.childForFieldName("name");
+      const type = node.childForFieldName("type")?.text.replace(/^:\s*/, "").trim();
+      if (owner && name?.type === "property_identifier" && type && /^[A-Za-z_$][\w$]*$/.test(type)) {
+        for (const binding of resolveClassBindings(type, filePath, imports)) results.push({ ownerClassName: owner, fieldName: name.text, ...binding });
       }
     }
-
-    for (const child of node.namedChildren) {
-      walk(child);
-    }
+    for (const child of node.namedChildren) walk(child);
   }
-
-  walk(tree.rootNode);
-
+  walk(parser.parse(source).rootNode);
   return results;
 }
 
-function findCallerNode(
+function findCallerNodes(graph: CodeGraph, file: string, call: CallReference): GraphNode[] {
+  if (!call.callerName || !call.callerType) return [];
+  const qualified = call.callerQualifiedName
+    ? graph.nodes.filter((node) => node.file === file && node.type === call.callerType && node.qualifiedName === call.callerQualifiedName)
+    : [];
+  return [...(qualified.length > 0 ? qualified : graph.nodes.filter((node) => node.file === file && node.name === call.callerName && node.type === call.callerType))]
+    .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function findMethodNodes(graph: CodeGraph, targetFile: string, className: string, methodName: string): GraphNode[] {
+  const qualifiedName = `${className}.${methodName}`;
+  return graph.nodes.filter((node) => node.file === targetFile && node.type === "method" && node.qualifiedName === qualifiedName)
+    .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function evidence(file: string, line: number, method?: ResolutionEvidence["resolutionMethod"]): ResolutionEvidence {
+  return { evidenceKind: method ? "INFERRED" : "EXTRACTED", resolutionMethod: method, source: { file, line } };
+}
+
+function unresolved(file: string, line: number, reason: string, unsupportedDynamic = false): ResolutionResult {
+  return { kind: "unresolved", evidence: [evidence(file, line)], reason, source: { file, line }, unsupportedDynamic };
+}
+
+function edgeFor(caller: GraphNode, callee: GraphNode, result: Extract<ResolutionResult, { kind: "resolved" }>): GraphEdge {
+  return { from: caller.id, to: callee.id, type: "calls", resolutionMethod: result.resolutionMethod, evidenceKind: result.evidence[0]?.evidenceKind, confidence: result.confidence, resolutionSource: result.source };
+}
+
+export function resolveMemberCallResults(
   graph: CodeGraph,
   file: string,
-  call: CallReference,
-): GraphNode | undefined {
-  if (!call.callerName || !call.callerType) {
-    return undefined;
+  source: string,
+  calls: CallReference[],
+  importBindings: ImportBinding[],
+): ResolutionBatch {
+  const coverage = emptyResolutionCoverage();
+  const edges: GraphEdge[] = [];
+  const results: ResolutionResult[] = [];
+  const imports = bindingsByLocalName(importBindings);
+  const objects = new Map<string, ObjectBinding[]>();
+  for (const binding of extractObjectBindings(source, file, importBindings)) objects.set(binding.localName, [...(objects.get(binding.localName) ?? []), binding]);
+  const parameters = new Map<string, ParameterBinding[]>();
+  for (const binding of extractParameterBindings(source, file, importBindings)) {
+    const key = [binding.callerQualifiedName, binding.localName].join(":");
+    parameters.set(key, [...(parameters.get(key) ?? []), binding]);
   }
+  const fields = new Map<string, ClassFieldBinding[]>();
+  for (const binding of extractClassFieldBindings(source, file, importBindings)) {
+    const key = [binding.ownerClassName, binding.fieldName].join(":");
+    fields.set(key, [...(fields.get(key) ?? []), binding]);
+  }
+  const seen = new Set<string>();
 
-  if (call.callerQualifiedName) {
-    const qualifiedMatch = graph.nodes.find(
-      (node) =>
-        node.file === file &&
-        node.type === call.callerType &&
-        node.qualifiedName === call.callerQualifiedName,
-    );
-
-    if (qualifiedMatch) {
-      return qualifiedMatch;
+  for (const call of calls) {
+    if (!call.calleeName.includes(".")) continue;
+    coverage.calls += 1;
+    const callers = findCallerNodes(graph, file, call);
+    const memberPath = parseMemberCallPath(call.calleeName);
+    let result: ResolutionResult;
+    if (callers.length !== 1) {
+      result = callers.length > 1
+        ? { kind: "ambiguous", candidates: callers.map((node) => node.id), evidence: [{ ...evidence(file, call.line), evidenceKind: "AMBIGUOUS" }], ambiguityReason: "caller identity is not unique", source: { file, line: call.line } }
+        : unresolved(file, call.line, "caller identity is unavailable");
+    } else if (!memberPath) {
+      result = unresolved(file, call.line, "unsupported member expression", true);
+    } else {
+      const caller = callers[0]!;
+      let bindings: Array<{ className: string; targetFile?: string }> = [];
+      let method: ResolutionEvidence["resolutionMethod"];
+      const methodName = memberPath.members.at(-1);
+      if (memberPath.constructedClassName) {
+        bindings = resolveClassBindings(memberPath.constructedClassName, file, imports);
+        method = "constructor_type";
+      } else if (memberPath.root === "this" && memberPath.members.length === 1 && call.callerClassName && methodName) {
+        bindings = [{ className: call.callerClassName, targetFile: file }];
+        method = "this_receiver";
+      } else if (memberPath.root === "this" && memberPath.members.length === 2 && call.callerClassName) {
+        const fieldName = memberPath.members[0];
+        bindings = fieldName ? (fields.get([call.callerClassName, fieldName].join(":")) ?? []) : [];
+        method = "field_type";
+      } else if (memberPath.members.length === 1 && methodName && call.callerQualifiedName) {
+        bindings = parameters.get([call.callerQualifiedName, memberPath.root].join(":")) ?? objects.get(memberPath.root) ?? [];
+        method = parameters.has([call.callerQualifiedName, memberPath.root].join(":")) ? "parameter_type" : "constructor_type";
+      } else {
+        method = undefined;
+      }
+      const candidateNodes = methodName
+        ? bindings.flatMap((binding) => binding.targetFile ? findMethodNodes(graph, binding.targetFile, binding.className, methodName) : [])
+        : [];
+      const candidates = candidateNodes.filter((node, index, all) => all.findIndex((item) => item.id === node.id) === index).sort((left, right) => left.id.localeCompare(right.id));
+      if (candidates.length === 1 && candidates[0] && method) {
+        result = { kind: "resolved", targetSymbolId: candidates[0].id, evidence: [evidence(file, call.line, method)], resolutionMethod: method, confidence: 1, source: { file, line: call.line } };
+        if (caller.id !== candidates[0].id) {
+          const edge = edgeFor(caller, candidates[0], result);
+          const key = [edge.from, edge.to, edge.type].join(":");
+          if (!seen.has(key)) { seen.add(key); edges.push(edge); }
+        }
+      } else if (candidates.length > 1) {
+        result = { kind: "ambiguous", candidates: candidates.map((node) => node.id), evidence: [{ ...evidence(file, call.line), evidenceKind: "AMBIGUOUS" }], ambiguityReason: "member target is not unique", source: { file, line: call.line } };
+      } else {
+        result = unresolved(file, call.line, method ? "no unique member target candidate" : "unsupported receiver expression", !method || memberPath.members.length !== 1);
+      }
     }
+    if (result.kind === "resolved") coverage.resolvedCalls += 1;
+    else if (result.kind === "ambiguous") coverage.ambiguousCalls += 1;
+    else { coverage.unresolvedCalls += 1; if (result.unsupportedDynamic) coverage.unsupportedDynamic += 1; }
+    results.push(result);
   }
-
-  return graph.nodes.find(
-    (node) =>
-      node.file === file &&
-      node.name === call.callerName &&
-      node.type === call.callerType,
-  );
-}
-
-function findMethodNode(
-  graph: CodeGraph,
-  targetFile: string,
-  className: string,
-  methodName: string,
-): GraphNode | undefined {
-  const qualifiedName = `${className}.${methodName}`;
-
-  return graph.nodes.find(
-    (node) =>
-      node.file === targetFile &&
-      node.type === "method" &&
-      node.qualifiedName === qualifiedName,
-  );
-}
-
-function createEdge(callerNode: GraphNode, methodNode: GraphNode): GraphEdge {
-  return {
-    from: callerNode.id,
-    to: methodNode.id,
-    type: "calls",
-  };
+  return { edges, results, coverage };
 }
 
 export function resolveMemberCallEdges(
@@ -459,220 +274,5 @@ export function resolveMemberCallEdges(
   calls: CallReference[],
   importBindings: ImportBinding[],
 ): GraphEdge[] {
-  const objectBindings = extractObjectBindings(source, file, importBindings);
-
-  const parameterBindings = extractParameterBindings(
-    source,
-    file,
-    importBindings,
-  );
-
-  const classFieldBindings = extractClassFieldBindings(
-    source,
-    file,
-    importBindings,
-  );
-
-  const importByLocalName = new Map(
-    importBindings.map((binding) => [binding.localName, binding]),
-  );
-
-  const objectByLocalName = new Map(
-    objectBindings.map((binding) => [binding.localName, binding]),
-  );
-
-  const parameterByScope = new Map(
-    parameterBindings.map((binding) => [
-      [binding.callerQualifiedName, binding.localName].join(":"),
-      binding,
-    ]),
-  );
-
-  const fieldByClass = new Map(
-    classFieldBindings.map((binding) => [
-      [binding.ownerClassName, binding.fieldName].join(":"),
-      binding,
-    ]),
-  );
-
-  const edges: GraphEdge[] = [];
-
-  const seen = new Set<string>();
-
-  function pushEdge(edge: GraphEdge): void {
-    const key = [edge.from, edge.to, edge.type].join(":");
-
-    if (seen.has(key)) {
-      return;
-    }
-
-    seen.add(key);
-    edges.push(edge);
-  }
-
-  for (const call of calls) {
-    const callerNode = findCallerNode(graph, file, call);
-
-    if (!callerNode) {
-      continue;
-    }
-
-    const memberPath = parseMemberCallPath(call.calleeName);
-
-    if (!memberPath) {
-      continue;
-    }
-
-    if (memberPath.constructedClassName && memberPath.members.length === 1) {
-      const resolved = resolveClassBinding(
-        memberPath.constructedClassName,
-        file,
-        importByLocalName,
-      );
-      const methodName = memberPath.members[0];
-
-      if (!methodName || !resolved.targetFile) {
-        continue;
-      }
-
-      const methodNode = findMethodNode(
-        graph,
-        resolved.targetFile,
-        resolved.className,
-        methodName,
-      );
-
-      if (methodNode) {
-        pushEdge(createEdge(callerNode, methodNode));
-      }
-
-      continue;
-    }
-
-    //
-    // this.method()
-    //
-
-    if (memberPath.root === "this" && memberPath.members.length === 1) {
-      const methodName = memberPath.members[0];
-
-      if (!methodName || !call.callerClassName) {
-        continue;
-      }
-
-      const methodNode = findMethodNode(
-        graph,
-        file,
-        call.callerClassName,
-        methodName,
-      );
-
-      if (!methodNode) {
-        continue;
-      }
-
-      pushEdge(createEdge(callerNode, methodNode));
-
-      continue;
-    }
-
-    //
-    // this.field.method()
-    //
-
-    if (memberPath.root === "this" && memberPath.members.length === 2) {
-      const [fieldName, methodName] = memberPath.members;
-
-      if (!fieldName || !methodName || !call.callerClassName) {
-        continue;
-      }
-
-      const fieldBinding = fieldByClass.get(
-        [call.callerClassName, fieldName].join(":"),
-      );
-
-      if (!fieldBinding || !fieldBinding.targetFile) {
-        continue;
-      }
-
-      const methodNode = findMethodNode(
-        graph,
-        fieldBinding.targetFile,
-        fieldBinding.className,
-        methodName,
-      );
-
-      if (!methodNode) {
-        continue;
-      }
-
-      pushEdge(createEdge(callerNode, methodNode));
-
-      continue;
-    }
-
-    //
-    // object.method()
-    //
-
-    if (memberPath.members.length !== 1) {
-      continue;
-    }
-
-    const objectName = memberPath.root;
-
-    const methodName = memberPath.members[0];
-
-    if (!objectName || !methodName) {
-      continue;
-    }
-
-    let className: string | undefined;
-
-    let targetFile: string | undefined;
-
-    //
-    // Typed parameter.
-    //
-
-    if (call.callerQualifiedName) {
-      const parameterBinding = parameterByScope.get(
-        [call.callerQualifiedName, objectName].join(":"),
-      );
-
-      if (parameterBinding) {
-        className = parameterBinding.className;
-
-        targetFile = parameterBinding.targetFile;
-      }
-    }
-
-    //
-    // Local object created with `new`.
-    //
-
-    if (!className || !targetFile) {
-      const objectBinding = objectByLocalName.get(objectName);
-
-      if (objectBinding) {
-        className = objectBinding.className;
-
-        targetFile = objectBinding.targetFile;
-      }
-    }
-
-    if (!className || !targetFile) {
-      continue;
-    }
-
-    const methodNode = findMethodNode(graph, targetFile, className, methodName);
-
-    if (!methodNode) {
-      continue;
-    }
-
-    pushEdge(createEdge(callerNode, methodNode));
-  }
-
-  return edges;
+  return resolveMemberCallResults(graph, file, source, calls, importBindings).edges;
 }

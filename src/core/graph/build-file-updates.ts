@@ -2,8 +2,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { parseCodeSymbols } from "./parsers/code-parser.js";
-import { extractCalls } from "./calls.js";
-import { resolveCallEdges } from "./call-resolution.js";
+import { extractCalls, hasParserErrors } from "./calls.js";
+import { resolveCallResults } from "./call-resolution.js";
 import { getQualifiedSymbolName } from "./build-graph.js";
 import { extractImportBindings } from "./import-bindings.js";
 import {
@@ -18,14 +18,16 @@ import type {
   GraphNode,
   GraphNodeType,
 } from "./types.js";
-import { resolveMemberCallEdges } from "./member-resolution.js";
-import { resolveExtendsEdges } from "./extends.js";
+import { resolveMemberCallResults } from "./member-resolution.js";
+import { resolveExtendsResults } from "./extends.js";
+import { mergeResolutionCoverage, type GraphResolutionFile } from "./resolution.types.js";
 import type { ProgressReporter } from "../progress/progress.types.js";
 
 export type BuiltFileGraph = {
   file: string;
   nodes: GraphNode[];
   edges: GraphEdge[];
+  resolution: GraphResolutionFile;
 };
 
 function toGraphNodeType(symbolType: string): GraphNodeType | undefined {
@@ -65,6 +67,7 @@ export async function buildFileGraphs(
       source: string;
       nodes: GraphNode[];
       edges: GraphEdge[];
+      resolution?: GraphResolutionFile;
     }
   >();
 
@@ -234,15 +237,14 @@ export async function buildFileGraphs(
       edges: local.edges,
     };
 
-    const callEdges = resolveCallEdges(
+    const callResults = resolveCallResults(
       temporaryGraph,
       relativePath,
       calls,
       bindings,
     );
 
-    local.edges.push(...callEdges);
-    const memberCallEdges = resolveMemberCallEdges(
+    const memberResults = resolveMemberCallResults(
       temporaryGraph,
       relativePath,
       local.source,
@@ -250,16 +252,25 @@ export async function buildFileGraphs(
       bindings,
     );
 
-    local.edges.push(...memberCallEdges);
-
-    local.edges.push(
-      ...resolveExtendsEdges(workingGraph, relativePath, local.source, bindings),
+    const extendsResults = resolveExtendsResults(workingGraph, relativePath, local.source, bindings);
+    local.edges.push(...callResults.edges, ...memberResults.edges, ...extendsResults.edges);
+    const coverage = mergeResolutionCoverage(
+      mergeResolutionCoverage(callResults.coverage, memberResults.coverage),
+      extendsResults.coverage,
     );
+    coverage.parserErrors = hasParserErrors(local.source, relativePath) ? 1 : 0;
+    coverage.mayBeIncomplete = coverage.parserErrors > 0 || coverage.unsupportedDynamic > 0;
+    local.resolution = {
+      coverage,
+      diagnostics: [...callResults.results, ...memberResults.results, ...extendsResults.results]
+        .filter((result): result is Exclude<typeof result, { kind: "resolved" }> => result.kind !== "resolved"),
+    };
 
     results.push({
       file: relativePath,
       nodes: local.nodes,
       edges: local.edges,
+      resolution: local.resolution ?? { coverage: mergeResolutionCoverage(mergeResolutionCoverage(callResults.coverage, memberResults.coverage), extendsResults.coverage), diagnostics: [] },
     });
   }
 

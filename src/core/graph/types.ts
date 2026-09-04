@@ -34,6 +34,10 @@ export type GraphEdge = {
   from: string;
   to: string;
   type: GraphEdgeType;
+  resolutionMethod?: import("./resolution.types.js").ResolutionMethod;
+  evidenceKind?: import("./resolution.types.js").ResolutionEvidenceKind;
+  confidence?: number;
+  resolutionSource?: import("./resolution.types.js").ResolutionLocation;
 };
 
 export type CodeGraph = {

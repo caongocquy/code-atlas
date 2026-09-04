@@ -134,3 +134,11 @@ export function extractCalls(
 
   return calls;
 }
+
+export function hasParserErrors(source: string, filePath: string): boolean {
+  const adapter = getLanguageAdapter(filePath);
+  if (!adapter) return false;
+  const parser = new Parser();
+  parser.setLanguage(adapter.grammar);
+  return parser.parse(source).rootNode.hasError;
+}

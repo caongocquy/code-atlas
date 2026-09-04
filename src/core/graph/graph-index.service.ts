@@ -7,7 +7,7 @@ import type {
 } from "../progress/progress.types.js";
 import { GRAPH_INDEX_VERSION } from "../../config/constants.js";
 import { buildFileGraphs } from "./build-file-updates.js";
-import { buildCodeGraph } from "./build-graph.js";
+import { buildCodeGraphWithResolution } from "./build-graph.js";
 import { AtlasStore } from "../../storage/atlas/atlas.store.js";
 import type { GraphFileState, GraphFileUpdate } from "../../storage/atlas/atlas.types.js";
 import type { CodeGraph } from "./types.js";
@@ -240,13 +240,16 @@ export async function indexGraph(
 
     if (forceFullRebuild) {
       let graph: CodeGraph | undefined;
+      let resolutionByFile: Awaited<ReturnType<typeof buildCodeGraphWithResolution>>["resolutionByFile"];
 
       await progress.runAll([
         {
           title: "Building CodeGraph",
           kind: "graph",
           work: async (reporter) => {
-            graph = await buildCodeGraph(repoPath, reporter, repoId, files);
+            const built = await buildCodeGraphWithResolution(repoPath, reporter, repoId, files);
+            graph = built.graph;
+            resolutionByFile = built.resolutionByFile;
             assertUniqueNodeIds(graph);
           },
         },
@@ -258,7 +261,7 @@ export async function indexGraph(
               throw new Error("Graph build produced no graph");
             }
 
-            store.replaceGraph(repoId, graph, currentHashes, GRAPH_INDEX_VERSION);
+            store.replaceGraph(repoId, graph, currentHashes, GRAPH_INDEX_VERSION, resolutionByFile);
           },
         },
       ]);
@@ -338,6 +341,7 @@ export async function indexGraph(
               fileHash,
               nodes: built.nodes,
               edges: built.edges,
+              resolution: built.resolution,
             };
           });
 

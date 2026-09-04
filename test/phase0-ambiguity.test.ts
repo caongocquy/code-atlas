@@ -9,7 +9,7 @@ import { buildCodeGraph } from "../src/core/graph/build-graph.js";
 
 const fixturePath = fileURLToPath(new URL("./fixtures/phase-0-ambiguity", import.meta.url));
 
-test("ambiguity fixture documents current deterministic first-match behavior", async () => {
+test("ambiguous local calls are dropped deterministically", async () => {
   const repoPath = await mkdtemp(path.join(tmpdir(), "code-atlas-phase-0-ambiguity-"));
 
   try {
@@ -28,8 +28,7 @@ test("ambiguity fixture documents current deterministic first-match behavior", a
     assert.equal(targets.length, 2);
     assert.notEqual(targets[0]?.id, targets[1]?.id);
     assert.ok(caller);
-    assert.deepEqual(callTargets, [targets[0]?.id]);
-    // TODO(Resolution Evidence v2): change this baseline to unique-or-drop.
+    assert.deepEqual(callTargets, []);
   } finally {
     await rm(repoPath, { recursive: true, force: true });
   }

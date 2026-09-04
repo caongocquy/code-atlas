@@ -89,8 +89,34 @@ export function initializeAtlasSchema(database: DatabaseSync): void {
       from_symbol_id TEXT NOT NULL,
       to_symbol_id TEXT NOT NULL,
       type TEXT NOT NULL,
+      resolution_method TEXT,
+      evidence_kind TEXT,
+      confidence REAL,
+      resolution_file TEXT,
+      resolution_line INTEGER,
 
       PRIMARY KEY (repository_id, owner_file, from_symbol_id, to_symbol_id, type),
+      FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS graph_resolution_files (
+      repository_id TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      calls INTEGER NOT NULL DEFAULT 0,
+      resolved_calls INTEGER NOT NULL DEFAULT 0,
+      unresolved_calls INTEGER NOT NULL DEFAULT 0,
+      ambiguous_calls INTEGER NOT NULL DEFAULT 0,
+      extends_count INTEGER NOT NULL DEFAULT 0,
+      resolved_extends INTEGER NOT NULL DEFAULT 0,
+      unresolved_extends INTEGER NOT NULL DEFAULT 0,
+      ambiguous_extends INTEGER NOT NULL DEFAULT 0,
+      parser_errors INTEGER NOT NULL DEFAULT 0,
+      unsupported_dynamic INTEGER NOT NULL DEFAULT 0,
+      may_be_incomplete INTEGER NOT NULL DEFAULT 0,
+      diagnostics_json TEXT NOT NULL DEFAULT '[]',
+      updated_at TEXT NOT NULL,
+
+      PRIMARY KEY (repository_id, file_path),
       FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
     );
 
@@ -127,6 +153,9 @@ export function initializeAtlasSchema(database: DatabaseSync): void {
 
     CREATE INDEX IF NOT EXISTS idx_edges_repo_to
       ON edges (repository_id, to_symbol_id, type);
+
+    CREATE INDEX IF NOT EXISTS idx_graph_resolution_repo
+      ON graph_resolution_files (repository_id);
 
     CREATE VIRTUAL TABLE IF NOT EXISTS lexical_documents USING fts5(
       repository_id UNINDEXED,
@@ -190,5 +219,25 @@ export function initializeAtlasSchema(database: DatabaseSync): void {
 
   if (!capabilityColumns.some((column) => column.name === "provider_identity")) {
     database.exec("ALTER TABLE file_capability_state ADD COLUMN provider_identity TEXT;");
+  }
+
+  const edgeColumns = database
+    .prepare("PRAGMA table_info(edges)")
+    .all() as Array<{ name: string }>;
+
+  if (!edgeColumns.some((column) => column.name === "resolution_method")) {
+    database.exec("ALTER TABLE edges ADD COLUMN resolution_method TEXT;");
+  }
+  if (!edgeColumns.some((column) => column.name === "evidence_kind")) {
+    database.exec("ALTER TABLE edges ADD COLUMN evidence_kind TEXT;");
+  }
+  if (!edgeColumns.some((column) => column.name === "confidence")) {
+    database.exec("ALTER TABLE edges ADD COLUMN confidence REAL;");
+  }
+  if (!edgeColumns.some((column) => column.name === "resolution_file")) {
+    database.exec("ALTER TABLE edges ADD COLUMN resolution_file TEXT;");
+  }
+  if (!edgeColumns.some((column) => column.name === "resolution_line")) {
+    database.exec("ALTER TABLE edges ADD COLUMN resolution_line INTEGER;");
   }
 }
