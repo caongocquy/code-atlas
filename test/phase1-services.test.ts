@@ -63,8 +63,9 @@ test("Phase 1 entrypoints delegate orchestration and services keep CLI/process b
   assert.match(askAdapter, /answerCodebase/);
   assert.doesNotMatch(askAdapter, /chatStream/);
 
-  assert.match(semanticService, /infrastructure\/embedding\/transformers-embedding\.client\.js/);
-  assert.match(semanticService, /infrastructure\/vector\/qdrant\.client\.js/);
+  assert.match(semanticService, /EmbeddingProvider/);
+  assert.match(semanticService, /VectorStore/);
+  assert.doesNotMatch(semanticService, /infrastructure\/(?:embedding|vector)\/.*\.client\.js/);
   assert.match(semanticService, /runCopyOnWriteGeneration/);
   assert.match(inspectorService, /export async function inspectRetrieval/);
   assert.match(inspectorService, /export async function answerCodebase/);

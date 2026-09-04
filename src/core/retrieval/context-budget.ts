@@ -21,11 +21,12 @@ export type DetailedContextBudgetResult = ContextBudgetResult & {
   budget: number;
 };
 
-export function applyContextBudget(
+export async function applyContextBudget(
   chunks: SearchResult[],
   maxTokens = MAX_CONTEXT_TOKENS,
-): ContextBudgetResult {
-  const result = applyContextBudgetDetailed(chunks, maxTokens);
+  useModel = true,
+): Promise<ContextBudgetResult> {
+  const result = await applyContextBudgetDetailed(chunks, maxTokens, useModel);
 
   return {
     chunks: result.chunks,
@@ -33,17 +34,18 @@ export function applyContextBudget(
   };
 }
 
-export function applyContextBudgetDetailed(
+export async function applyContextBudgetDetailed(
   chunks: SearchResult[],
   maxTokens = MAX_CONTEXT_TOKENS,
-): DetailedContextBudgetResult {
+  useModel = true,
+): Promise<DetailedContextBudgetResult> {
   const selected: SearchResult[] = [];
   const decisions: ContextBudgetDecision[] = [];
   let usedTokens = 0;
 
   for (const chunk of chunks) {
     // ponytail: O(n²) render checks, candidate count is bounded by retrieval caps.
-    const tokenCount = countTokens(buildContext([...selected, chunk]));
+    const tokenCount = await countTokens(buildContext([...selected, chunk]), { useModel });
 
     if (usedTokens + tokenCount > maxTokens) {
       decisions.push({

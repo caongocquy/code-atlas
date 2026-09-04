@@ -43,6 +43,7 @@ type CapabilityStateRow = {
   version: string;
   state: CapabilityState;
   generation: string | null;
+  provider_identity: string | null;
   item_count: number;
   last_error: string | null;
   updated_at: string;
@@ -555,7 +556,7 @@ export class AtlasStore {
     const rows = this.database
       .prepare(
          `SELECT c.repository_id, c.file_path, c.file_hash, c.capability,
-                c.version, c.state, c.generation, c.item_count,
+                c.version, c.state, c.generation, c.provider_identity, c.item_count,
                 c.last_error, c.updated_at
          FROM file_capability_state c
          WHERE c.repository_id = ? AND c.capability = ?`,
@@ -602,6 +603,7 @@ export class AtlasStore {
       version: row.version,
       state: row.state,
       generation: row.generation ?? undefined,
+      providerIdentity: row.provider_identity ?? undefined,
       itemCount: row.item_count,
       lastError: row.last_error ?? undefined,
       updatedAt: row.updated_at,
@@ -634,13 +636,14 @@ export class AtlasStore {
       .prepare(
         `INSERT INTO file_capability_state
          (repository_id, file_path, capability, file_hash, version, state,
-          generation, item_count, last_error, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          generation, provider_identity, item_count, last_error, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (repository_id, file_path, capability)
          DO UPDATE SET file_hash = excluded.file_hash,
                        version = excluded.version,
                        state = excluded.state,
                        generation = excluded.generation,
+                       provider_identity = excluded.provider_identity,
                        item_count = excluded.item_count,
                        last_error = excluded.last_error,
                        updated_at = excluded.updated_at`,
@@ -653,6 +656,7 @@ export class AtlasStore {
         input.version,
         input.state,
         input.generation ?? null,
+        input.providerIdentity ?? null,
         input.itemCount,
         input.lastError ?? null,
         new Date().toISOString(),

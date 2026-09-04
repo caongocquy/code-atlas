@@ -2,6 +2,7 @@ import {
   AutoModelForSequenceClassification,
   AutoTokenizer,
 } from "@huggingface/transformers";
+import type { RerankerProvider } from "../../core/retrieval/reranker-provider.js";
 
 const RERANK_MODEL = "Xenova/ms-marco-MiniLM-L-6-v2";
 
@@ -89,3 +90,16 @@ export async function rerank<T extends RerankCandidate>(
     .sort((a, b) => b.rerankScore - a.rerankScore)
     .slice(0, limit);
 }
+
+export const transformersRerankerProvider: RerankerProvider = {
+  id: "transformers",
+  version: RERANK_MODEL,
+
+  async isAvailable(): Promise<boolean> {
+    return RERANK_MODEL.length > 0;
+  },
+
+  async rerank<T extends RerankCandidate>(query: string, candidates: T[], limit: number) {
+    return rerank(query, candidates, limit);
+  },
+};

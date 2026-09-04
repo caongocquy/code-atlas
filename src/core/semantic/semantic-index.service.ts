@@ -7,20 +7,15 @@ import type {
 } from "../progress/progress.types.js";
 import {
   EMBEDDING_BATCH_SIZE,
-  EMBEDDING_DIMENSIONS,
-  REPO_CODE_COLLECTION,
   UPSERT_BATCH_SIZE,
   VECTOR_INDEX_VERSION,
 } from "../../config/constants.js";
-import { embedBatch } from "../../infrastructure/embedding/transformers-embedding.client.js";
-import { qdrant } from "../../infrastructure/vector/qdrant.client.js";
 import { parseCodeSymbols } from "../graph/parsers/code-parser.js";
 import type { CodeChunk } from "../graph/parsers/types.js";
 import {
   deleteIndexedFile,
   deletePointIds,
   getIndexedFileStates,
-  type IndexedFileState,
 } from "../repository/index-state.service.js";
 import { AtlasStore } from "../../storage/atlas/atlas.store.js";
 import { silentProgressRunner } from "../progress/silent-progress-runner.js";
@@ -38,6 +33,10 @@ import {
 import { splitLargeSymbol } from "./split-symbol.js";
 import { runCopyOnWriteGeneration } from "./copy-on-write.js";
 import { vectorRefreshMode } from "../repository/index-version.js";
+import type { EmbeddingProvider } from "./embedding-provider.js";
+import type { VectorStore } from "./vector-store.js";
+import type { IndexedFileState } from "../repository/indexed-file-state.js";
+import { embeddingProviderIdentity } from "./provider-identity.js";
 
 type PreparedFile = {
   relativePath: string;
@@ -72,12 +71,14 @@ export type SemanticIndexOptions = {
   deletedFiles?: string[];
   fileHashes?: Map<string, string>;
   forceFullReindex?: boolean;
+  embeddingProvider?: EmbeddingProvider;
+  vectorStore?: VectorStore;
 };
 
 export type SemanticIndexResult = {
   repoPath: string;
   repoId: string;
-  status: "indexed" | "nothing-to-index";
+  status: "indexed" | "nothing-to-index" | "not-configured";
   storedVersion?: string;
   version: string;
   fullReindex: boolean;
@@ -94,25 +95,6 @@ export type SemanticIndexResult = {
   deletedFiles: number;
   totalMs: number;
 };
-
-async function ensureCollection(): Promise<void> {
-  const collections = await qdrant.getCollections();
-
-  const exists = collections.collections.some(
-    (collection) => collection.name === REPO_CODE_COLLECTION,
-  );
-
-  if (exists) {
-    return;
-  }
-
-  await qdrant.createCollection(REPO_CODE_COLLECTION, {
-    vectors: {
-      size: EMBEDDING_DIMENSIONS,
-      distance: "Cosine",
-    },
-  });
-}
 
 function chunkArray<T>(items: T[], size: number): T[][] {
   if (size <= 0) {
@@ -135,8 +117,32 @@ export async function syncSemantic(
   const repoPath = canonicalRepositoryPath(path.resolve(inputPath));
   const progress = options.progress ?? silentProgressRunner;
   const startedAt = performance.now();
+  const embeddingProvider = options.embeddingProvider;
+  const vectorStore = options.vectorStore;
 
-  await ensureCollection();
+  if (!embeddingProvider || !vectorStore) {
+    return {
+      repoPath,
+      repoId: getRepositoryIdentity(repoPath).id,
+      status: "not-configured",
+      version: VECTOR_INDEX_VERSION,
+      fullReindex: false,
+      files: 0,
+      chunks: 0,
+      points: 0,
+      embeddedSymbols: 0,
+      cleanedOldPoints: 0,
+      embeddingBatches: 0,
+      qdrantBatches: 0,
+      addedFiles: 0,
+      updatedFiles: 0,
+      skippedFiles: 0,
+      deletedFiles: 0,
+      totalMs: performance.now() - startedAt,
+    };
+  }
+
+  await vectorStore.ensureCollection(embeddingProvider.dimensions);
 
   const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
   const repository = store.ensureRepository(getRepositoryIdentity(repoPath));
@@ -174,7 +180,7 @@ export async function syncSemantic(
     await progress.run(
       "Parsing source",
       async (reporter) => {
-        indexedStates = await getIndexedFileStates(repoId);
+        indexedStates = await getIndexedFileStates(repoId, vectorStore);
         const capabilityStates = store.getFileCapabilityStates(repoId, "semantic");
 
         for (let index = 0; index < files.length; index += 1) {
@@ -203,7 +209,8 @@ export async function syncSemantic(
           if (
             !forceFullReindex &&
             previousState?.state === "ready" &&
-            previousState.fileHash === fileHash
+            previousState.fileHash === fileHash &&
+            previousState.providerIdentity === embeddingProviderIdentity(embeddingProvider)
           ) {
             skippedFiles += 1;
             reporter.setProgress(index + 1, files.length);
@@ -250,7 +257,7 @@ export async function syncSemantic(
               continue;
             }
 
-            await deleteIndexedFile(repoId, indexedFile);
+            await deleteIndexedFile(vectorStore, repoId, indexedFile);
             store.deleteFileCapabilityState(repoId, indexedFile, "semantic");
             deletedFiles += 1;
             reporter.setProgress(index + 1, deletedFileNames.length);
@@ -284,7 +291,7 @@ export async function syncSemantic(
           continue;
         }
 
-        await deletePointIds(preparedFile.previousPointIds);
+        await deletePointIds(vectorStore, preparedFile.previousPointIds);
         cleanedOldPoints += preparedFile.previousPointIds.length;
       }
 
@@ -296,6 +303,7 @@ export async function syncSemantic(
               fileHash: preparedFile.fileHash,
               version: VECTOR_INDEX_VERSION,
               state: "ready",
+              providerIdentity: embeddingProviderIdentity(embeddingProvider),
               generation: preparedFile.generationId,
               itemCount: 0,
             });
@@ -338,7 +346,7 @@ export async function syncSemantic(
         const embeddingTexts = batch.map(({ chunk, relativePath }) =>
           buildEmbeddingText(relativePath, chunk),
         );
-        const vectors = await embedBatch(embeddingTexts);
+        const vectors = await embeddingProvider.embedBatch(embeddingTexts);
 
         if (vectors.length !== batch.length) {
           throw new Error(
@@ -411,10 +419,7 @@ export async function syncSemantic(
 
     const writePoints = async (reporter: ProgressReporter): Promise<void> => {
       for (const batch of upsertBatches) {
-        await qdrant.upsert(REPO_CODE_COLLECTION, {
-          wait: true,
-          points: batch,
-        });
+        await vectorStore.upsert(batch);
 
         writtenPoints += batch.length;
         reporter.setProgress(writtenPoints, allPoints.length);
@@ -445,8 +450,15 @@ export async function syncSemantic(
                 continue;
               }
 
-              await deletePointIds(fileEntry.previousPointIds);
-              cleanedOldPoints += fileEntry.previousPointIds.length;
+              const currentPointIds = new Set<string | number>(
+                fileEntry.points.map((point) => point.id),
+              );
+              const stalePointIds = fileEntry.previousPointIds.filter(
+                (pointId) => !currentPointIds.has(pointId),
+              );
+
+              await deletePointIds(vectorStore, stalePointIds);
+              cleanedOldPoints += stalePointIds.length;
               reporter.setProgress(index + 1, cleanupTargets.length);
             }
           },
@@ -463,6 +475,7 @@ export async function syncSemantic(
             fileHash: preparedFile.fileHash,
             version: VECTOR_INDEX_VERSION,
             state: "ready",
+            providerIdentity: embeddingProviderIdentity(embeddingProvider),
             generation: fileEntry.generationId,
             itemCount: fileEntry.points.length,
           });
@@ -497,6 +510,7 @@ export async function syncSemantic(
         fileHash: preparedFile.fileHash,
         version: VECTOR_INDEX_VERSION,
         state: "error",
+        providerIdentity: embeddingProviderIdentity(embeddingProvider),
         generation: preparedFile.generationId,
         itemCount: 0,
         lastError: error instanceof Error ? error.message : String(error),
