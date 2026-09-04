@@ -55,11 +55,12 @@ export function initializeAtlasSchema(database: DatabaseSync): void {
     CREATE TABLE IF NOT EXISTS file_capability_state (
       repository_id TEXT NOT NULL,
       file_path TEXT NOT NULL,
-      capability TEXT NOT NULL CHECK (capability IN ('graph', 'lexical', 'semantic', 'metrics')),
+      capability TEXT NOT NULL CHECK (capability IN ('graph', 'lexical', 'semantic', 'reranker', 'metrics')),
       file_hash TEXT,
       version TEXT NOT NULL,
       state TEXT NOT NULL CHECK (state IN ('ready', 'disabled', 'not_configured', 'unavailable', 'error', 'stale')),
       generation TEXT,
+      provider_identity TEXT,
       item_count INTEGER NOT NULL DEFAULT 0 CHECK (item_count >= 0),
       last_error TEXT,
       updated_at TEXT NOT NULL,
@@ -165,5 +166,9 @@ export function initializeAtlasSchema(database: DatabaseSync): void {
       database.exec("ROLLBACK;");
       throw error;
     }
+  }
+
+  if (!capabilityColumns.some((column) => column.name === "provider_identity")) {
+    database.exec("ALTER TABLE file_capability_state ADD COLUMN provider_identity TEXT;");
   }
 }

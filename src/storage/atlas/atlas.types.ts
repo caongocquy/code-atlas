@@ -9,7 +9,7 @@ export type AtlasIndexAxis =
   | "semantic"
   | "metrics";
 
-export type AtlasCapability = "graph" | "lexical" | "semantic" | "metrics";
+export type AtlasCapability = "graph" | "lexical" | "semantic" | "reranker" | "metrics";
 
 export type CapabilityState =
   | "ready"
@@ -32,6 +32,7 @@ export type AtlasFileCapabilityState = {
   version: string;
   state: CapabilityState;
   generation?: string;
+  providerIdentity?: string;
   itemCount: number;
   lastError?: string;
   updatedAt: string;
@@ -41,6 +42,7 @@ export type FileCapabilityStateInput = {
   version: string;
   state: CapabilityState;
   generation?: string;
+  providerIdentity?: string;
   itemCount: number;
   fileHash?: string;
   lastError?: string;

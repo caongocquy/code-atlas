@@ -65,7 +65,10 @@ async function runPipeline(
   const graph = await indexGraph(repoPath, serviceOptions);
   const lexical = await indexLexical(repoPath, serviceOptions);
   const semantic = options.includeSemantic
-    ? await syncSemantic(repoPath, serviceOptions)
+    ? await syncSemantic(repoPath, {
+        ...serviceOptions,
+        ...options.semanticProviders,
+      })
     : undefined;
 
   return {

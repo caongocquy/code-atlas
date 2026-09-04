@@ -7,10 +7,15 @@ import {
   UPSERT_BATCH_SIZE,
 } from "../../config/constants.js";
 import { indexSemantic } from "../../core/semantic/semantic-index.service.js";
+import { defaultProviders } from "../../infrastructure/provider-defaults.js";
 
 async function main(): Promise<void> {
   const repoPath = path.resolve(process.argv[2] ?? ".");
-  const result = await indexSemantic(repoPath, { progress: cliProgressRunner });
+  const result = await indexSemantic(repoPath, {
+    progress: cliProgressRunner,
+    embeddingProvider: defaultProviders.embeddingProvider,
+    vectorStore: defaultProviders.vectorStore,
+  });
 
   if (result.fullReindex) {
     console.log(

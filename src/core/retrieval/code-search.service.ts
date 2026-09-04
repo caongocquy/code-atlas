@@ -1,6 +1,11 @@
-import { REPO_CODE_COLLECTION } from "../../config/constants.js";
-import { embed } from "../../infrastructure/embedding/transformers-embedding.client.js";
-import { qdrant } from "../../infrastructure/vector/qdrant.client.js";
+import path from "node:path";
+
+import type { EmbeddingProvider } from "../semantic/embedding-provider.js";
+import type { VectorStore } from "../semantic/vector-store.js";
+import {
+  canonicalRepositoryPath,
+  getRepositoryIdentity,
+} from "../repository/repository-identity.js";
 
 export type SearchResult = {
   score: number;
@@ -13,19 +18,35 @@ export type SearchResult = {
   content?: string;
 };
 
+export type CodeSearchOptions = {
+  repoPath?: string;
+  embeddingProvider?: EmbeddingProvider;
+  vectorStore?: VectorStore;
+};
+
 export async function searchCode(
   query: string,
   limit = 5,
+  options: CodeSearchOptions = {},
 ): Promise<SearchResult[]> {
-  const queryVector = await embed(query);
+  if (!query.trim() || limit <= 0 || !options.embeddingProvider || !options.vectorStore) {
+    return [];
+  }
 
-  const result = await qdrant.query(REPO_CODE_COLLECTION, {
-    query: queryVector,
-    limit,
-    with_payload: true,
-  });
+  const [queryVector] = await options.embeddingProvider.embedBatch([query]);
 
-  return result.points.map((point) => ({
+  if (!queryVector) {
+    throw new Error("Embedding provider returned no query vector");
+  }
+
+  const repoId = options.repoPath
+    ? getRepositoryIdentity(
+        canonicalRepositoryPath(path.resolve(options.repoPath)),
+      ).id
+    : undefined;
+  const results = await options.vectorStore.search(repoId, queryVector, limit);
+
+  return results.map((point) => ({
     score: point.score,
     repoId:
       typeof point.payload?.repoId === "string"

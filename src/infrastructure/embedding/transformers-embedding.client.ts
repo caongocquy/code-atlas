@@ -3,7 +3,8 @@ import {
   type FeatureExtractionPipeline,
 } from "@huggingface/transformers";
 
-import { EMBEDDING_MODEL } from "../../config/constants.js";
+import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL } from "../../config/constants.js";
+import type { EmbeddingProvider } from "../../core/semantic/embedding-provider.js";
 
 let embedderPromise: Promise<FeatureExtractionPipeline> | null = null;
 
@@ -63,3 +64,15 @@ export async function embedBatch(texts: string[]): Promise<number[][]> {
 
   return vectors;
 }
+
+export const transformersEmbeddingProvider: EmbeddingProvider = {
+  id: "transformers",
+  version: EMBEDDING_MODEL,
+  dimensions: EMBEDDING_DIMENSIONS,
+
+  async isAvailable(): Promise<boolean> {
+    return EMBEDDING_MODEL.length > 0;
+  },
+
+  embedBatch,
+};

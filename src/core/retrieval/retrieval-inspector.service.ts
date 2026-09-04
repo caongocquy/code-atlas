@@ -7,13 +7,15 @@ import {
 } from "../graph/expand.js";
 import { AtlasStore } from "../../storage/atlas/atlas.store.js";
 import type { GraphNode } from "../graph/types.js";
-import { chatStream, type StreamChatOptions } from "../../infrastructure/llm/llama.client.js";
-import { rerank } from "../../infrastructure/reranker/transformers-reranker.client.js";
+import type { StreamChatOptions } from "../../infrastructure/llm/llama.client.js";
 import type { SearchResult } from "./code-search.service.js";
 import {
   inspectHybridSearch,
+  type HybridSearchProviders,
   type HybridSearchResult,
 } from "./hybrid-search.service.js";
+import type { RerankerProvider } from "./reranker-provider.js";
+import type { CapabilityState } from "../../storage/atlas/atlas.types.js";
 import { applyContextBudgetDetailed } from "./context-budget.js";
 import type { DetailedContextBudgetResult } from "./context-budget.js";
 import { buildContext } from "./context.js";
@@ -28,6 +30,11 @@ export type RetrievalInspectOptions = {
   graphMaxNodes?: number;
   tokenBudget?: number;
   repoPath?: string;
+  providers?: RetrievalProviders;
+};
+
+export type RetrievalProviders = HybridSearchProviders & {
+  rerankerProvider?: RerankerProvider;
 };
 
 export type AnswerCodebaseOptions = RetrievalInspectOptions & {
@@ -111,6 +118,10 @@ export type RetrievalInspection = {
     graphExpansionMs: number;
     contextMs: number;
     totalMs: number;
+  };
+  capabilities: {
+    semantic: CapabilityState;
+    reranker: CapabilityState;
   };
 };
 
@@ -295,9 +306,15 @@ export async function inspectRetrieval(
   }
 
   const options = normalizeOptions(inputOptions);
+  const providers = inputOptions.providers;
   const repoPath = path.resolve(inputOptions.repoPath ?? process.cwd());
   let repoId = getRepositoryIdentity(repoPath).id;
-  const stages = await inspectHybridSearch(trimmedQuery, options.topK, repoPath);
+  const stages = await inspectHybridSearch(
+    trimmedQuery,
+    options.topK,
+    repoPath,
+    providers,
+  );
   const vectorResults = stages.vectorResults.map((result, index) =>
     toInspectorChunk(result, [{ source: "vector", stage: "vector" }], {
       source: "vector",
@@ -317,7 +334,26 @@ export async function inspectRetrieval(
   );
 
   const rerankStart = performance.now();
-  const reranked = await rerank(trimmedQuery, stages.fusedResults, options.rerankTopK);
+  let rerankerState: CapabilityState = "not_configured";
+  let reranked: Array<HybridSearchResult & { rerankScore?: number }> = stages.fusedResults;
+  const rerankerProvider = providers?.rerankerProvider;
+
+  if (rerankerProvider) {
+    try {
+      if (await rerankerProvider.isAvailable()) {
+        reranked = await rerankerProvider.rerank(
+          trimmedQuery,
+          stages.fusedResults,
+          options.rerankTopK,
+        );
+        rerankerState = "ready";
+      } else {
+        rerankerState = "unavailable";
+      }
+    } catch {
+      rerankerState = "error";
+    }
+  }
   const rerankMs = performance.now() - rerankStart;
   const rerankedResults = reranked.map((result, index) => {
     const before = fusedResults.findIndex((candidate) => candidate.key === resultKey(result));
@@ -402,13 +438,15 @@ export async function inspectRetrieval(
 
   const graphExpansionMs = performance.now() - graphStart;
   const contextStart = performance.now();
+  const useModelTokenization = stages.semanticState === "ready";
   const retrievalOnly = inspectBudget(
-    applyContextBudgetDetailed(rerankedResults, options.tokenBudget),
+    await applyContextBudgetDetailed(rerankedResults, options.tokenBudget, useModelTokenization),
   );
   const withGraph = inspectBudget(
-    applyContextBudgetDetailed(
+    await applyContextBudgetDetailed(
       mergeChunks(rerankedResults, graphChunks),
       options.tokenBudget,
+      useModelTokenization,
     ),
   );
   const finalContext = options.graphEnabled ? withGraph : retrievalOnly;
@@ -437,6 +475,10 @@ export async function inspectRetrieval(
       contextMs,
       totalMs: stages.searchMs + rerankMs + graphExpansionMs + contextMs,
     },
+    capabilities: {
+      semantic: stages.semanticState,
+      reranker: rerankerState,
+    },
   };
 }
 
@@ -448,6 +490,7 @@ export async function answerCodebase(
   const { onInspection, ...inspectOptions } = options;
   const inspection = await inspectRetrieval(query, inspectOptions);
   await onInspection?.(inspection);
+  const { chatStream } = await import("../../infrastructure/llm/llama.client.js");
   const answerStart = performance.now();
   const result = await chatStream(inspection.messages, streamOptions);
   const totalMs = performance.now() - answerStart;

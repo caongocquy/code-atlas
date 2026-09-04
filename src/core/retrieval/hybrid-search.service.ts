@@ -1,5 +1,8 @@
 import type { SearchResult } from "./code-search.service.js";
 import { searchCode } from "./code-search.service.js";
+import type { CapabilityState } from "../../storage/atlas/atlas.types.js";
+import type { EmbeddingProvider } from "../semantic/embedding-provider.js";
+import type { VectorStore } from "../semantic/vector-store.js";
 import {
   lexicalSearchCode,
   type LexicalSearchResult,
@@ -18,10 +21,16 @@ export type HybridSearchResult = SearchResult & {
 export type HybridSearchStages = {
   vectorResults: SearchResult[];
   lexicalResults: LexicalSearchResult[];
+  semanticState: CapabilityState;
   fusedResults: HybridSearchResult[];
   vectorMs: number;
   lexicalMs: number;
   searchMs: number;
+};
+
+export type HybridSearchProviders = {
+  embeddingProvider?: EmbeddingProvider;
+  vectorStore?: VectorStore;
 };
 
 function createResultKey(result: SearchResult): string {
@@ -38,8 +47,9 @@ export async function hybridSearchCode(
   query: string,
   limit = 20,
   repoPath?: string,
+  providers: HybridSearchProviders = {},
 ): Promise<HybridSearchResult[]> {
-  const { fusedResults } = await inspectHybridSearch(query, limit, repoPath);
+  const { fusedResults } = await inspectHybridSearch(query, limit, repoPath, providers);
 
   return fusedResults;
 }
@@ -48,16 +58,42 @@ export async function inspectHybridSearch(
   query: string,
   limit = 20,
   repoPath?: string,
+  providers: HybridSearchProviders = {},
 ): Promise<HybridSearchStages> {
   const searchStart = performance.now();
   let vectorMs = 0;
+  let semanticState: CapabilityState = "not_configured";
   let lexicalMs = 0;
 
   const vectorPromise = (async () => {
     const startedAt = performance.now();
-    const results = await searchCode(query, limit);
-    vectorMs = performance.now() - startedAt;
-    return results;
+
+    try {
+      if (!providers.embeddingProvider || !providers.vectorStore) {
+        return [];
+      }
+
+      if (
+        !(await providers.embeddingProvider.isAvailable()) ||
+        !(await providers.vectorStore.isAvailable())
+      ) {
+        semanticState = "unavailable";
+        return [];
+      }
+
+      const results = await searchCode(query, limit, {
+        repoPath,
+        embeddingProvider: providers.embeddingProvider,
+        vectorStore: providers.vectorStore,
+      });
+      semanticState = "ready";
+      return results;
+    } catch {
+      semanticState = "error";
+      return [];
+    } finally {
+      vectorMs = performance.now() - startedAt;
+    }
   })();
 
   const lexicalPromise = (async () => {
@@ -121,6 +157,7 @@ export async function inspectHybridSearch(
   return {
     vectorResults,
     lexicalResults,
+    semanticState,
     fusedResults,
     vectorMs,
     lexicalMs,

@@ -1,5 +1,4 @@
-import { REPO_CODE_COLLECTION } from "../../config/constants.js";
-import { qdrant } from "../../infrastructure/vector/qdrant.client.js";
+import type { VectorStore } from "../semantic/vector-store.js";
 import {
   collectIndexedFileStates,
   mergeIndexedFileStates,
@@ -12,73 +11,22 @@ export type { IndexedFilePoint, IndexedFileState } from "./indexed-file-state.js
 
 export async function getIndexedFileStates(
   repoId: string,
+  vectorStore: VectorStore,
 ): Promise<Map<string, IndexedFileState>> {
-  const states = new Map<string, IndexedFileState>();
-
-  let offset: string | number | Record<string, unknown> | null | undefined;
-
-  do {
-    const response = await qdrant.scroll(REPO_CODE_COLLECTION, {
-      limit: 256,
-      offset,
-      with_payload: true,
-      with_vector: false,
-
-      filter: {
-        must: [
-          {
-            key: "repoId",
-            match: {
-              value: repoId,
-            },
-          },
-        ],
-      },
-    });
-
-    mergeIndexedFileStates(states, collectIndexedFileStates(response.points));
-
-    offset = response.next_page_offset;
-  } while (offset);
-
-  return states;
+  return vectorStore.getIndexedFileStates(repoId);
 }
 
 export async function deletePointIds(
+  vectorStore: VectorStore,
   pointIds: Array<string | number>,
 ): Promise<void> {
-  if (pointIds.length === 0) {
-    return;
-  }
-
-  await qdrant.delete(REPO_CODE_COLLECTION, {
-    wait: true,
-    points: pointIds,
-  });
+  await vectorStore.deletePointIds(pointIds);
 }
 
 export async function deleteIndexedFile(
+  vectorStore: VectorStore,
   repoId: string,
   file: string,
 ): Promise<void> {
-  await qdrant.delete(REPO_CODE_COLLECTION, {
-    wait: true,
-
-    filter: {
-      must: [
-        {
-          key: "repoId",
-          match: {
-            value: repoId,
-          },
-        },
-        {
-          key: "file",
-          match: {
-            value: file,
-          },
-        },
-      ],
-    },
-  });
+  await vectorStore.deleteFile(repoId, file);
 }

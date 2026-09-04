@@ -15,6 +15,7 @@ import {
 import { AtlasStore } from "../../storage/atlas/atlas.store.js";
 import { getRepositoryIdentity } from "../../core/repository/repository-identity.js";
 import { qdrant } from "../../infrastructure/vector/qdrant.client.js";
+import { defaultProviders } from "../../infrastructure/provider-defaults.js";
 import { getRepositoryStatus } from "../../core/repository/repository-status.service.js";
 import { resolveRepoSourcePath } from "./repository-source-path.js";
 import {
@@ -78,7 +79,11 @@ app.get("/health", async () => {
 
 app.get("/api/status", async (_request, reply) => {
   try {
-    return await getRepositoryStatus(repoPath);
+    return await getRepositoryStatus(repoPath, {
+      embeddingProvider: defaultProviders.embeddingProvider,
+      vectorStore: defaultProviders.vectorStore,
+      rerankerProvider: defaultProviders.rerankerProvider,
+    });
   } catch (error) {
     return reply.code(500).send(requestError(error));
   }
@@ -207,6 +212,7 @@ app.post("/api/retrieval/inspect", async (request, reply) => {
     return await inspectRetrieval(query, {
       ...body,
       repoPath,
+      providers: defaultProviders,
     });
   } catch (error) {
     return reply.code(400).send(requestError(error));
@@ -218,7 +224,11 @@ app.post("/api/retrieval/answer", async (request, reply) => {
   const query = typeof body?.query === "string" ? body.query : "";
 
   try {
-    return await answerCodebase(query, { ...body, repoPath });
+    return await answerCodebase(query, {
+      ...body,
+      repoPath,
+      providers: defaultProviders,
+    });
   } catch (error) {
     return reply.code(503).send(requestError(error));
   }
