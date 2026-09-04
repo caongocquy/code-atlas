@@ -104,7 +104,9 @@ without requiring:
 - Phase 4 — complete
 - Phase 5 — complete
 - Phase 6 — complete
-- Phase 7 — not started
+- Phase 7 — complete
+- Phase 8 — complete
+- Phase 9 — not started
 
 ## External design references
 
@@ -2060,7 +2062,7 @@ requires no external vector service or Docker runtime.
 
 ## Status
 
-Planned after Phase 6.
+Complete.
 
 ## Goal
 
@@ -2116,7 +2118,7 @@ unsupported dynamic cases, and `mayBeIncomplete`.
 
 ## Status
 
-Planned after Phase 7.
+Complete.
 
 ## Goal
 
@@ -2165,7 +2167,7 @@ and blast-radius semantics with structured risk output.
 
 ## Status
 
-Planned after Phase 8.
+Next; not started.
 
 ## Goal
 
@@ -2312,6 +2314,107 @@ must not trap agents in a loop, and must not prevent direct source inspection
 when graph capability is unavailable, stale, or incomplete.
 
 Do not implement hooks or strict mode now.
+
+# Future capability — Project Memory
+
+Project Memory is a later, repository-scoped capability for durable knowledge
+about why the codebase is designed as it is. It records architecture and
+technical decisions, constraints, conventions, known issues, milestones, and
+important project context. It is not a transcript archive or raw conversation
+and session logger.
+
+Do not store raw user messages, assistant messages, tool calls, or full agent
+session logs as the memory model. Those inputs create storage growth, noisy
+context, secret and privacy risk, stale information, poor reuse quality, and
+duplication. Project Memory should contain normalized, durable, attributable
+facts instead.
+
+## Storage direction
+
+Project Memory should eventually live in the repository's existing
+`.codeatlas/atlas.db`. A future conceptual model is:
+
+```text
+project_memories
+├─ id
+├─ repository_id
+├─ kind
+├─ title
+├─ content
+├─ source / provenance
+├─ confidence (optional)
+├─ created_at
+├─ updated_at
+└─ superseded_by
+```
+
+The exact schema is a future implementation detail; no schema is added by
+this plan update.
+
+Initial taxonomy should remain small:
+
+```text
+decision
+architecture
+constraint
+convention
+known_issue
+milestone
+```
+
+Every memory item must retain provenance. Possible sources include an explicit
+user or agent record, repository-derived facts, Git or commit history,
+CodeAtlas analysis, and imported project documentation. Memory must not become
+an unattributed collection of free-form facts.
+
+## Supersession and creation
+
+Decisions can change. The model should support superseding an older item,
+preserving its historical reason, identifying the current active item, and
+avoiding silent history overwrite. For example, a decision that Qdrant was the
+semantic backend could be superseded by the current decision that SQLite BLOB
+plus cosine is the sole VectorStore backend.
+
+Future creation modes may include:
+
+- explicit records such as `code-atlas memory add ...`
+- repository-derived memories from significant architectural changes,
+  conventions, or plan/ADR data
+- agent-authored records through MCP, potentially with tools such as
+  `get_project_memory`, `search_project_memory`,
+  `record_project_decision`, and `supersede_project_memory`
+
+The final MCP tool contract is intentionally not defined yet. Agent-authored
+memory must not become permanent through blind append; validation rules are
+required before durable acceptance.
+
+## Retrieval and quality rules
+
+Project Memory should eventually support exact/category lookup, lexical search,
+optional semantic search, and MCP access. Retrieval must be deterministic,
+bounded, repository-isolated, and avoid injecting unbounded memory into an
+agent context. Future implementation must also address deduplication,
+supersession, secret and sensitive-data avoidance, and stale or conflicting
+records.
+
+Project Memory becomes a first-class cross-agent capability only after MCP and
+Agent Integration exist. It should remain repository-scoped first; groups and
+cross-repository memory may be considered only after the multi-repository
+registry exists. Standalone desktop or chat consumers, if added later, remain
+separate consumer layers over CodeAtlas core and an external or host LLM.
+
+Examples:
+
+```text
+decision: SQLite BLOB + cosine is the sole VectorStore backend.
+reason: Selected after the Phase 6 benchmark for zero-daemon persistence and
+        the lowest cross-platform packaging risk.
+
+architecture: Graph resolution uses precision-first unique-or-drop.
+reason: Ambiguous structural relationships must not create speculative edges.
+```
+
+Do not implement Project Memory in the current phase.
 
 ---
 
@@ -2559,10 +2662,11 @@ Do not add a native vector dependency without measured need.
 
 # Recommended next action
 
-Phase 6 is complete and green. The next planned implementation phase is:
+Phase 8 is complete and green. The next planned implementation phase is:
 
-**Phase 7 — Resolution evidence and coverage.**
+**Phase 9 — Importance and communities.**
 
 SQLite BLOB + cosine is the sole built-in vector backend; users do not select a
 vector database. Agent integration and `code-atlas init` remain scheduled for
-Phase 11, after MCP capability contracts stabilize. Phase 7 has not started.
+Phase 11, after MCP capability contracts stabilize. Project Memory remains a
+later capability after MCP and Agent Integration; Phase 9 has not started.
