@@ -52,7 +52,7 @@ export type RepositoryStatus = {
     chunks: number;
     backend: string;
     reachable: boolean;
-    status: "ready" | "not-indexed" | "stale" | "unavailable" | "not-configured";
+    status: CapabilityState;
     needsSync: boolean;
     updatedAt?: string;
     error?: string;
@@ -72,7 +72,7 @@ export type RepositoryStatus = {
     resolutionCoverage: ResolutionCoverage;
     sqlitePath: string;
     reachable: boolean;
-    status: "ready" | "not-indexed" | "stale";
+    status: CapabilityState;
     needsRebuild: boolean;
     updatedAt?: string;
   };
@@ -154,12 +154,15 @@ function capabilityFromFiles(
       .filter(([, state]) => state.state === "ready" && state.fileHash !== undefined)
       .map(([file, state]) => [file, { fileHash: state.fileHash! }]),
   );
-  let state: CapabilityState = "not_configured";
+  const hasPersistedIndex = metadata !== undefined || states.size > 0;
+  let state: CapabilityState = hasPersistedIndex ? "ready" : "not_indexed";
 
   if (error) {
     state = "error";
   } else if (explicitState) {
     state = explicitState.state;
+  } else if (!hasPersistedIndex) {
+    state = "not_indexed";
   } else if (staleState) {
     state = "stale";
   } else if (metadata?.version !== currentVersion || hasChanges(hashes, readyStates)) {
@@ -301,13 +304,6 @@ export async function getRepositoryStatus(
   const repoId = repository.id;
 
   try {
-    const vector = await getVectorStatus(
-      repoId,
-      hashes,
-      store.getMetadata(repoId, "semantic"),
-      store.getFileCapabilityStates(repoId, "semantic"),
-      providers.vectorStore,
-    );
     const graph = await getGraphStatus(
       repoId,
       path.join(repoPath, ".codeatlas", "atlas.db"),
@@ -320,6 +316,15 @@ export async function getRepositoryStatus(
       hashes,
       store,
       providers,
+    );
+    const vector = await getVectorStatus(
+      repoId,
+      store,
+      hashes,
+      store.getMetadata(repoId, "semantic"),
+      store.getFileCapabilityStates(repoId, "semantic"),
+      capabilities.semantic.state,
+      providers.vectorStore,
     );
 
     return {
@@ -340,9 +345,11 @@ export async function getRepositoryStatus(
 
 async function getVectorStatus(
   repoId: string,
+  store: AtlasStore,
   hashes: Map<string, string>,
   metadata: IndexMetadata | undefined,
   capabilityStates: Map<string, { fileHash?: string; state: string }>,
+  semanticState: CapabilityState,
   vectorStore?: VectorStore,
 ): Promise<RepositoryStatus["vector"]> {
   const base = {
@@ -353,19 +360,12 @@ async function getVectorStatus(
     chunks: 0,
     backend: vectorStore?.id ?? "sqlite",
     reachable: false,
-    needsSync: metadata?.version !== VECTOR_INDEX_VERSION,
+    needsSync: false,
     updatedAt: metadata?.updatedAt,
   };
 
-  if (!vectorStore) {
-    return {
-      ...base,
-      status: "not-configured",
-    };
-  }
-
   try {
-    if (!(await vectorStore.isAvailable())) {
+    if (vectorStore && !(await vectorStore.isAvailable())) {
       return {
         ...base,
         status: "unavailable",
@@ -378,11 +378,19 @@ async function getVectorStatus(
         .filter(([, state]) => state.fileHash !== undefined)
         .map(([file, state]) => [file, { fileHash: state.fileHash! }]),
     );
-    const count = await vectorStore.count(repoId);
-    const needsSync = base.needsSync || hasChanges(hashes, readyStates);
-    const status = !metadata && capabilityStates.size === 0 && count === 0
-      ? "not-indexed"
-      : needsSync
+    const count = vectorStore
+      ? await vectorStore.count(repoId)
+      : store.countSemanticVectors(repoId);
+    const hasPersistedIndex = metadata !== undefined || capabilityStates.size > 0 || count > 0;
+    const semanticCanSync = semanticState !== "not_configured" &&
+      semanticState !== "unavailable" && semanticState !== "disabled";
+    const isStale = hasPersistedIndex && (
+      metadata?.version !== VECTOR_INDEX_VERSION || hasChanges(hashes, readyStates)
+    );
+    const needsSync = semanticCanSync && isStale;
+    const status = !hasPersistedIndex
+      ? "not_indexed"
+      : isStale
         ? "stale"
         : "ready";
 
@@ -435,7 +443,7 @@ async function getGraphStatus(
   if (states.size === 0) {
     return {
       ...base,
-      status: "not-indexed",
+      status: "not_indexed",
     };
   }
 

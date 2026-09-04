@@ -7,7 +7,6 @@ import {
 } from "../graph/expand.js";
 import { AtlasStore } from "../../storage/atlas/atlas.store.js";
 import type { GraphNode } from "../graph/types.js";
-import type { StreamChatOptions } from "../../infrastructure/llm/llama.client.js";
 import type { SearchResult } from "./code-search.service.js";
 import {
   inspectHybridSearch,
@@ -17,9 +16,8 @@ import {
 import type { RerankerProvider } from "./reranker-provider.js";
 import type { CapabilityState } from "../../storage/atlas/atlas.types.js";
 import { applyContextBudgetDetailed } from "./context-budget.js";
-import type { DetailedContextBudgetResult } from "./context-budget.js";
+import type { DetailedContextBudgetResult, TokenCounter } from "./context-budget.js";
 import { buildContext } from "./context.js";
-import { buildCodebaseMessages } from "./prompt.js";
 import { getRepositoryIdentity } from "../repository/repository-identity.js";
 
 export type RetrievalInspectOptions = {
@@ -35,10 +33,6 @@ export type RetrievalInspectOptions = {
 
 export type RetrievalProviders = HybridSearchProviders & {
   rerankerProvider?: RerankerProvider;
-};
-
-export type AnswerCodebaseOptions = RetrievalInspectOptions & {
-  onInspection?: (inspection: RetrievalInspection) => void | Promise<void>;
 };
 
 export type ChunkProvenance = {
@@ -109,7 +103,6 @@ export type RetrievalInspection = {
   retrievalOnly: ContextInspection;
   withGraph: ContextInspection;
   finalContext: ContextInspection;
-  messages: ReturnType<typeof buildCodebaseMessages>;
   metrics: {
     vectorMs: number;
     lexicalMs: number;
@@ -122,16 +115,6 @@ export type RetrievalInspection = {
   capabilities: {
     semantic: CapabilityState;
     reranker: CapabilityState;
-  };
-};
-
-export type AnswerInspection = RetrievalInspection & {
-  answer: string;
-  reasoningContent: string;
-  metrics: RetrievalInspection["metrics"] & {
-    ttftMs: number | null;
-    generationMs: number;
-    totalMs: number;
   };
 };
 
@@ -438,20 +421,22 @@ export async function inspectRetrieval(
 
   const graphExpansionMs = performance.now() - graphStart;
   const contextStart = performance.now();
-  const useModelTokenization = stages.semanticState === "ready";
+  const tokenCounter: TokenCounter | undefined =
+    stages.semanticState === "ready"
+      ? inputOptions.providers?.embeddingProvider?.countTokens
+      : undefined;
   const retrievalOnly = inspectBudget(
-    await applyContextBudgetDetailed(rerankedResults, options.tokenBudget, useModelTokenization),
+    await applyContextBudgetDetailed(rerankedResults, options.tokenBudget, tokenCounter),
   );
   const withGraph = inspectBudget(
     await applyContextBudgetDetailed(
       mergeChunks(rerankedResults, graphChunks),
       options.tokenBudget,
-      useModelTokenization,
+      tokenCounter,
     ),
   );
   const finalContext = options.graphEnabled ? withGraph : retrievalOnly;
   const contextMs = performance.now() - contextStart;
-  const messages = buildCodebaseMessages(trimmedQuery, finalContext.rendered);
 
   return {
     query: trimmedQuery,
@@ -465,7 +450,6 @@ export async function inspectRetrieval(
     retrievalOnly,
     withGraph,
     finalContext,
-    messages,
     metrics: {
       vectorMs: stages.vectorMs,
       lexicalMs: stages.lexicalMs,
@@ -478,32 +462,6 @@ export async function inspectRetrieval(
     capabilities: {
       semantic: stages.semanticState,
       reranker: rerankerState,
-    },
-  };
-}
-
-export async function answerCodebase(
-  query: string,
-  options: AnswerCodebaseOptions = {},
-  streamOptions: StreamChatOptions = {},
-): Promise<AnswerInspection> {
-  const { onInspection, ...inspectOptions } = options;
-  const inspection = await inspectRetrieval(query, inspectOptions);
-  await onInspection?.(inspection);
-  const { chatStream } = await import("../../infrastructure/llm/llama.client.js");
-  const answerStart = performance.now();
-  const result = await chatStream(inspection.messages, streamOptions);
-  const totalMs = performance.now() - answerStart;
-
-  return {
-    ...inspection,
-    answer: result.content,
-    reasoningContent: result.reasoningContent,
-    metrics: {
-      ...inspection.metrics,
-      ttftMs: result.ttftMs,
-      generationMs: result.totalMs,
-      totalMs: inspection.metrics.totalMs + totalMs,
     },
   };
 }

@@ -52,35 +52,62 @@ export async function uninstallStrictGuidance(repoPath: string): Promise<boolean
 
 async function guidanceBody(repoPath: string): Promise<string> {
   const capabilities = await capabilitySummary(repoPath);
-  const graphGuidance = capabilities.graphReady
+  const mcpRows = capabilities.graphReady
     ? [
-      "When graph is ready, use `find_callers`, `find_callees`, `find_imports`, `find_imported_by`, `impact`, and `trace` for structural relationships and blast-radius questions.",
-      "Use graph tools for shared, unfamiliar, structural, or cross-module changes; they are not required for trivial or isolated edits.",
+      "| Check index freshness/capabilities | `repository_status` |",
+      "| Find code or symbols | `search_code`, `get_symbol` |",
+      "| Find callers/callees | `find_callers`, `find_callees` |",
+      "| Inspect module dependencies | `find_imports`, `find_imported_by` |",
+      "| Assess blast radius | `impact` |",
+      "| Trace execution paths | `trace` |",
+    ]
+    : [
+      "| Check index freshness/capabilities | `repository_status` |",
+      "| Find code or symbols | `search_code`, `get_symbol` |",
+    ];
+  const graphWorkflow = capabilities.graphReady
+    ? [
+      "Use graph tools for shared, unfamiliar, structural, or cross-module changes when useful. They are not required for trivial or isolated edits.",
     ]
     : [];
   return [
     "## CodeAtlas — Code Intelligence",
     "",
-    "This repository is indexed by CodeAtlas.",
+    capabilities.needsIndex
+      ? `This repository is not indexed by CodeAtlas yet; repository name: **${capabilities.repositoryName}**.`
+      : `This repository is indexed by CodeAtlas as **${capabilities.repositoryName}**${capabilities.statistics ? ` (${capabilities.statistics})` : ""}.`,
     "",
     "Current capabilities:",
     `- graph: ${capabilities.graphState}`,
     `- lexical: ${capabilities.lexicalState}`,
     "",
-    "Use `repository_status` for freshness and capability checks.",
-    "Use `search_code` and `get_symbol` for precise navigation.",
-    ...graphGuidance,
+    "### MCP tools",
+    "",
+    "| Task | Use |",
+    "| --- | --- |",
+    ...mcpRows,
+    "",
+    ...graphWorkflow,
+    ...(graphWorkflow.length > 0 ? [""] : []),
+    "### CLI",
+    "",
+    "| Task | Command |",
+    "| --- | --- |",
+    "| Check repository/index status | `code-atlas status` |",
+    "| Refresh changed files | `code-atlas sync` |",
+    "| Rebuild the full index | `code-atlas index` |",
     ...(capabilities.needsIndex
-      ? ["No index is available; run `code-atlas index`."]
+      ? ["", "No index is available; run `code-atlas index`."]
       : []),
     ...(capabilities.needsSync
-      ? ["A capability is stale; run `code-atlas sync` before relying on graph or lexical results."]
+      ? ["", "A capability is stale; run `code-atlas sync` before relying on graph or lexical results."]
       : []),
     ...(!capabilities.graphReady
-      ? ["Graph tools are unavailable until graph is ready; use direct source inspection when needed."]
+      ? ["", "Graph tools are unavailable until graph is ready; use direct source inspection when needed."]
       : []),
     "",
-    "Safety:",
+    "### Safety",
+    "",
     "- `mayBeIncomplete=true` means CodeAtlas evidence is incomplete.",
     "- `risk=unknown` means CodeAtlas cannot safely classify the change because graph evidence is incomplete.",
     "- When `mayBeIncomplete=true`, negative results such as no callers or no impact are not authoritative.",
@@ -91,6 +118,8 @@ async function guidanceBody(repoPath: string): Promise<string> {
 }
 
 async function capabilitySummary(repoPath: string): Promise<{
+  repositoryName: string;
+  statistics?: string;
   graphState: string;
   lexicalState: string;
   graphReady: boolean;
@@ -100,12 +129,21 @@ async function capabilitySummary(repoPath: string): Promise<{
   try {
     await fs.access(path.join(repoPath, ".codeatlas", "atlas.db"));
     const status = await getRepositoryStatus(repoPath);
-    const needsIndex = status.graph.status === "not-indexed";
-    const graphState = needsIndex ? "not-indexed" : status.capabilities.graph.state;
+    const needsIndex = status.graph.status === "not_indexed";
+    const graphState = needsIndex ? "not-indexed" : guidanceState(status.capabilities.graph.state);
     const lexicalState = needsIndex && status.capabilities.lexical.indexedFiles === 0
       ? "not-indexed"
-      : status.capabilities.lexical.state;
+      : guidanceState(status.capabilities.lexical.state);
+    const statistics = graphState === "ready" || graphState === "stale"
+      ? [
+        status.graph.indexedFiles > 0 ? `${status.graph.indexedFiles} files` : undefined,
+        status.graph.nodes > 0 ? `${status.graph.nodes} symbols` : undefined,
+        status.graph.edges > 0 ? `${status.graph.edges} relationships` : undefined,
+      ].filter((value): value is string => value !== undefined).join(", ") || undefined
+      : undefined;
     return {
+      repositoryName: path.basename(status.repository.path),
+      statistics,
       graphState,
       lexicalState,
       graphReady: status.capabilities.graph.state === "ready",
@@ -114,6 +152,8 @@ async function capabilitySummary(repoPath: string): Promise<{
     };
   } catch {
     return {
+      repositoryName: path.basename(path.resolve(repoPath)),
+      statistics: undefined,
       graphState: "not-indexed",
       lexicalState: "not-indexed",
       graphReady: false,
@@ -121,4 +161,8 @@ async function capabilitySummary(repoPath: string): Promise<{
       needsSync: false,
     };
   }
+}
+
+function guidanceState(state: string): string {
+  return state === "not_indexed" ? "not-indexed" : state;
 }

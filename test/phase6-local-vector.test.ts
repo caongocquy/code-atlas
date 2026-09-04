@@ -88,6 +88,8 @@ test("the default semantic backend is the built-in local SQLite store", async ()
     const providers = createDefaultProviders(root);
     assert.equal(providers.vectorStore.id, "sqlite");
     assert.equal(await providers.vectorStore.isAvailable(), true);
+    assert.equal(providers.embeddingProvider, undefined);
+    assert.equal(providers.rerankerProvider, undefined);
     (providers.vectorStore as SqliteVectorStore).close();
   } finally {
     await rm(root, { recursive: true, force: true });

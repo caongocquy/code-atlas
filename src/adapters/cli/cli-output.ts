@@ -171,11 +171,9 @@ export function formatCommandFailure(command: string, error: unknown): string {
 export function formatRepositoryStatus(status: RepositoryStatus): string {
   const graph = status.graph.status === "ready"
     ? `✓ ready    ${status.graph.nodes} symbols · ${status.graph.edges} relationships`
-    : `${statusMark(status.graph.status)} ${status.graph.status}`;
+    : formatCapability(status.graph.status);
   const lexical = status.capabilities.lexical.state === "ready"
     ? `✓ ready    ${status.capabilities.lexical.indexedFiles} files`
-    : status.capabilities.lexical.indexedFiles === 0 && status.capabilities.lexical.state === "stale"
-      ? "○ not indexed"
     : `${statusMark(status.capabilities.lexical.state)} ${status.capabilities.lexical.state}`;
   const semantic = formatCapability(status.capabilities.semantic.state);
   const reranker = formatCapability(status.capabilities.reranker.state);
@@ -254,6 +252,7 @@ function capabilityStatus(status: string): string {
 
 function formatCapability(state: string): string {
   if (state === "not_configured") return "- not configured";
+  if (state === "not_indexed") return "○ not indexed";
   if (state === "ready") return "✓ ready";
   return `${statusMark(state)} ${state}`;
 }

@@ -20,7 +20,7 @@ export async function loadIndexedGraph(inputPath: string): Promise<IndexedGraph>
   const repoPath = canonicalRepositoryPath(path.resolve(inputPath));
   const status = await getRepositoryStatus(repoPath);
 
-  if (status.graph.status === "not-indexed") {
+  if (status.graph.status === "not_indexed") {
     throw new Error("Repository graph is not indexed.");
   }
 

@@ -6,4 +6,6 @@ export type EmbeddingProvider = {
   isAvailable(): Promise<boolean>;
 
   embedBatch(texts: string[]): Promise<number[][]>;
+
+  countTokens?(text: string): Promise<number>;
 };

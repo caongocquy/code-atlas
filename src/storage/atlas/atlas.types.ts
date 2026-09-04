@@ -16,6 +16,7 @@ export type CapabilityState =
   | "ready"
   | "disabled"
   | "not_configured"
+  | "not_indexed"
   | "unavailable"
   | "error"
   | "stale";

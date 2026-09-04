@@ -14,6 +14,7 @@ import { GRAPH_INDEX_VERSION, LEXICAL_INDEX_VERSION } from "../src/config/consta
 import { createFileHash } from "../src/core/repository/file-hash.js";
 import { getRepositoryIdentity } from "../src/core/repository/repository-identity.js";
 import { scanRepo } from "../src/core/repository/repository-files.js";
+import { getRepositoryStatus } from "../src/core/repository/repository-status.service.js";
 import { indexRepository } from "../src/core/indexing/index-pipeline.service.js";
 import { isInteractiveMcpSession, MCP_INTERACTIVE_NOTICE } from "../src/adapters/mcp/mcp-server.js";
 import { isEphemeralCodeAtlasPath, resolveCodeAtlasMcpLaunch } from "../src/infrastructure/integration/codex.adapter.js";
@@ -124,6 +125,8 @@ test("generated guidance advertises ready graph tools without making them mandat
     await indexRepository(repoPath, { skipGit: true });
     await installGuidance(repoPath);
     const guidance = await readFile(path.join(repoPath, "AGENTS.md"), "utf8");
+    const status = await getRepositoryStatus(repoPath);
+    assert.match(guidance, new RegExp(`This repository is indexed by CodeAtlas as \\*\\*${path.basename(repoPath)}\\*\\* \\(${status.graph.indexedFiles} files, ${status.graph.nodes} symbols, ${status.graph.edges} relationships\\)\\.`));
     assert.doesNotMatch(guidance, /code-atlas:final-newline/);
     assert.match(guidance, /find_callers/);
     assert.match(guidance, /find_callees/);
@@ -131,12 +134,16 @@ test("generated guidance advertises ready graph tools without making them mandat
     assert.match(guidance, /impact/);
     assert.match(guidance, /trace/);
     assert.match(guidance, /not required for trivial or isolated edits/);
-    assert.match(guidance, /repository_status.*freshness/s);
-    assert.match(guidance, /search_code.*get_symbol.*precise navigation/s);
+    assert.match(guidance, /Check index freshness\/capabilities.*repository_status/s);
+    assert.match(guidance, /Find code or symbols.*search_code.*get_symbol/s);
+    assert.match(guidance, /### CLI/);
+    assert.match(guidance, /code-atlas status/);
+    assert.match(guidance, /code-atlas sync/);
+    assert.match(guidance, /code-atlas index/);
     assert.match(guidance, /mayBeIncomplete=true/);
     assert.match(guidance, /risk=unknown/);
     assert.match(guidance, /negative results.*not authoritative/s);
-    assert.doesNotMatch(guidance, /MUST|NEVER|strict, opt-in|indexed capabilities:/);
+    assert.doesNotMatch(guidance, /MUST|NEVER|strict, opt-in|indexed capabilities:|GitNexus|gitnexus|resources\/|skills\//);
     assert.equal(guidance.match(/<!-- code-atlas:start -->/g)?.length, 1);
     assert.equal(guidance.match(/<!-- code-atlas:end -->/g)?.length, 1);
   } finally {
@@ -156,6 +163,10 @@ test("generated guidance reports stale capabilities and gives sync recovery", as
     assert.match(guidance, /- graph: stale/);
     assert.match(guidance, /- lexical: stale/);
     assert.match(guidance, /code-atlas sync/);
+    assert.match(guidance, /### CLI/);
+    assert.match(guidance, /code-atlas status/);
+    assert.match(guidance, /code-atlas sync/);
+    assert.match(guidance, /code-atlas index/);
     assert.doesNotMatch(guidance, /find_callers|find_callees|find_imports|find_imported_by|`impact`|`trace`/);
   } finally {
     await rm(repoPath, { recursive: true, force: true });
@@ -190,6 +201,7 @@ test("generated guidance reports an unavailable graph conservatively", async () 
     assert.match(guidance, /- lexical: unavailable/);
     assert.doesNotMatch(guidance, /find_callers|find_callees|find_imports|find_imported_by|`impact`|`trace`/);
     assert.match(guidance, /direct source inspection/);
+    assert.doesNotMatch(guidance, /0 symbols|0 relationships/);
   } finally {
     await rm(repoPath, { recursive: true, force: true });
   }
@@ -204,6 +216,7 @@ test("generated guidance reports a missing index and gives index recovery", asyn
     assert.match(guidance, /- lexical: not-indexed/);
     assert.match(guidance, /code-atlas index/);
     assert.doesNotMatch(guidance, /find_callers|find_callees|find_imports|find_imported_by|`impact`|`trace`/);
+    assert.doesNotMatch(guidance, /\(.*symbols|\(.*relationships/);
   } finally {
     await rm(repoPath, { recursive: true, force: true });
   }

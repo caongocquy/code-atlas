@@ -20,12 +20,14 @@ export type DetailedContextBudgetResult = ContextBudgetResult & {
   budget: number;
 };
 
+export type TokenCounter = (text: string) => Promise<number>;
+
 export async function applyContextBudget(
   chunks: SearchResult[],
   maxTokens = MAX_CONTEXT_TOKENS,
-  useModel = true,
+  tokenCounter?: TokenCounter,
 ): Promise<ContextBudgetResult> {
-  const result = await applyContextBudgetDetailed(chunks, maxTokens, useModel);
+  const result = await applyContextBudgetDetailed(chunks, maxTokens, tokenCounter);
 
   return {
     chunks: result.chunks,
@@ -36,7 +38,7 @@ export async function applyContextBudget(
 export async function applyContextBudgetDetailed(
   chunks: SearchResult[],
   maxTokens = MAX_CONTEXT_TOKENS,
-  useModel = true,
+  tokenCounter?: TokenCounter,
 ): Promise<DetailedContextBudgetResult> {
   const selected: SearchResult[] = [];
   const decisions: ContextBudgetDecision[] = [];
@@ -44,7 +46,7 @@ export async function applyContextBudgetDetailed(
 
   for (const chunk of chunks) {
     // ponytail: O(n²) render checks, candidate count is bounded by retrieval caps.
-    const tokenCount = await countContextTokens(buildContext([...selected, chunk]), useModel);
+    const tokenCount = await countContextTokens(buildContext([...selected, chunk]), tokenCounter);
 
     if (usedTokens + tokenCount > maxTokens) {
       decisions.push({
@@ -73,9 +75,8 @@ export async function applyContextBudgetDetailed(
   };
 }
 
-async function countContextTokens(text: string, useModel: boolean): Promise<number> {
-  if (!useModel) return text.trim() ? text.trim().split(/\s+/).length : 0;
-
-  const { countTokens } = await import("../../infrastructure/embedding/transformers-tokenizer.client.js");
-  return countTokens(text, { useModel: true });
+async function countContextTokens(text: string, tokenCounter?: TokenCounter): Promise<number> {
+  return tokenCounter
+    ? tokenCounter(text)
+    : text.trim() ? text.trim().split(/\s+/).length : 0;
 }

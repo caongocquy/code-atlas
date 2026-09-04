@@ -18,7 +18,6 @@ import { createDefaultProviders } from "../../infrastructure/provider-defaults.j
 import { getRepositoryStatus } from "../../core/repository/repository-status.service.js";
 import { resolveRepoSourcePath } from "./repository-source-path.js";
 import {
-  answerCodebase,
   inspectRetrieval,
   type RetrievalInspectOptions,
 } from "../../core/retrieval/retrieval-inspector.service.js";
@@ -210,21 +209,6 @@ app.post("/api/retrieval/inspect", async (request, reply) => {
     });
   } catch (error) {
     return reply.code(400).send(requestError(error));
-  }
-});
-
-app.post("/api/retrieval/answer", async (request, reply) => {
-  const body = request.body as RetrievalInspectOptions & { query?: unknown };
-  const query = typeof body?.query === "string" ? body.query : "";
-
-  try {
-    return await answerCodebase(query, {
-      ...body,
-      repoPath,
-      providers: defaultProviders,
-    });
-  } catch (error) {
-    return reply.code(503).send(requestError(error));
   }
 });
 

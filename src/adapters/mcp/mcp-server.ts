@@ -108,7 +108,7 @@ function registerJsonTool(
 
 async function lexicalStatus(repoPath: string) {
   const status = await getRepositoryStatus(repoPath);
-  if (status.capabilities.lexical.state === "not_configured") {
+  if (status.capabilities.lexical.state === "not_configured" || status.capabilities.lexical.state === "not_indexed") {
     throw new McpToolError("index_required", "Repository lexical index is not ready.", {
       repositoryPath: repoPath,
       next: "Call index_repository or sync_repository first.",
@@ -190,10 +190,6 @@ function compactInspection(inspection: RetrievalInspection): JsonObject {
     retrievalOnly: compactContext(inspection.retrievalOnly),
     withGraph: compactContext(inspection.withGraph),
     finalContext: compactContext(inspection.finalContext),
-    messages: inspection.messages.map((message) => ({
-      role: message.role,
-      content: typeof message.content === "string" ? bounded(message.content, 20_000) : message.content,
-    })),
     metrics: inspection.metrics,
     capabilities: inspection.capabilities,
   };
@@ -480,7 +476,7 @@ export function createMcpServer(): McpServer {
           return await operation(repoPath, {
             skipGit: args.skipGit === true,
             includeSemantic: args.includeSemantic === true,
-            semanticProviders: providers ? {
+            semanticProviders: providers?.embeddingProvider ? {
               embeddingProvider: providers.embeddingProvider,
               vectorStore: providers.vectorStore,
             } : undefined,

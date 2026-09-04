@@ -15,8 +15,6 @@ import type { VectorPoint, VectorStore } from "../src/core/semantic/vector-store
 import { getRepositoryIdentity } from "../src/core/repository/repository-identity.js";
 import { createFileHash } from "../src/core/repository/file-hash.js";
 import { getRepositoryStatus } from "../src/core/repository/repository-status.service.js";
-import { transformersEmbeddingProvider } from "../src/infrastructure/embedding/transformers-embedding.client.js";
-import { transformersRerankerProvider } from "../src/infrastructure/reranker/transformers-reranker.client.js";
 import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
 
 async function temporaryRepository(name: string): Promise<string> {
@@ -90,13 +88,6 @@ function unavailableReranker(): RerankerProvider {
       candidates.slice(0, limit).map((candidate) => ({ ...candidate, rerankScore: 0 })),
   };
 }
-
-test("concrete optional integrations conform to their provider boundaries without initialization", () => {
-  assert.equal(transformersEmbeddingProvider.id, "transformers");
-  assert.equal(transformersRerankerProvider.id, "transformers");
-  assert.equal(typeof transformersEmbeddingProvider.embedBatch, "function");
-  assert.equal(typeof transformersRerankerProvider.rerank, "function");
-});
 
 test("semantic indexing uses injected providers and preserves unrelated graph state", async () => {
   const repoPath = await temporaryRepository("semantic");
@@ -204,7 +195,7 @@ test("semantic and reranker capability status is independent and normalized", as
     });
     assert.equal(stale.capabilities.semantic.state, "stale");
     assert.equal(stale.capabilities.reranker.state, "not_configured");
-    assert.equal(stale.capabilities.graph.state, "stale");
+    assert.equal(stale.capabilities.graph.state, "not_indexed");
   } finally {
     await rm(repoPath, { recursive: true, force: true });
   }

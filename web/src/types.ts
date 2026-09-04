@@ -103,10 +103,7 @@ export type Inspection = {
   retrievalOnly: ContextInspection;
   withGraph: ContextInspection;
   finalContext: ContextInspection;
-  messages: Array<{ role: string; content: string }>;
   metrics: Record<string, number>;
-  answer?: string;
-  reasoningContent?: string;
 };
 
 export type Status = {

@@ -1,6 +1,3 @@
-export const EMBEDDING_MODEL = "Xenova/all-MiniLM-L6-v2";
-
-export const EMBEDDING_DIMENSIONS = 384;
 export const EMBEDDING_BATCH_SIZE = 32;
 export const UPSERT_BATCH_SIZE = 64;
 // Generate once with `uuidgen` and keep it fixed.
