@@ -13,12 +13,11 @@
 | Parser                       | Tree-sitter with existing TS/TSX/JS adapters                                                         | Proven parser seam; keep structural parsing local and deterministic                         | Decided                                    |
 | Primary storage              | Per-repository `.codeatlas/atlas.db` using built-in SQLite                                           | One local source of truth; zero-config; transactional                                       | Proposed; needs schema/portability spike   |
 | Lexical search               | SQLite FTS5                                                                                          | Zero-config, local, fast enough for public default                                          | Proposed; needs ranking/tokenization spike |
-| Semantic search              | Optional capability                                                                                  | Core must work without model downloads or external services                                 | Decided                                    |
-| Vector provider              | Provider seam; SQLite-local candidate first, Qdrant optional                                         | Avoid mandatory Docker/server; preserve scalable Qdrant path                                | Proposed; needs benchmark spike            |
+| Semantic search              | Optional feature requiring an embedding provider and one built-in local vector backend              | Core must work without model downloads or external services                                 | Decided                                    |
+| Vector storage               | Internal `VectorStore` abstraction with one built-in local backend selected in Phase 6; Qdrant remains a legacy/development backend | Keep storage replaceable without making vector databases a user choice             | Planned; Phase 6                            |
 | Graph model                  | Typed structural graph with stable identity, evidence, ambiguity/drop policy, and coverage signals   | Improves trust and makes graph reasoning inspectable                                        | Proposed                                   |
-| LLM requirement              | None by default                                                                                      | Search, graph, inspection, impact, trace must work without generation                       | Decided                                    |
-| LLM provider                 | OpenAI-compatible adapter                                                                            | Supports llama.cpp and other compatible servers through configuration                       | Proposed                                   |
-| Reranker                     | Optional local cross-encoder                                                                         | Preserve current quality differentiator without making it mandatory                         | Proposed                                   |
+| LLM requirement              | None in CodeAtlas core; host agents and standalone consumers may provide reasoning                   | Search, graph, inspection, impact, trace must work without generation                       | Decided                                    |
+| Reranker                     | Optional `RerankerProvider`                                                                          | Preserve current quality differentiator without making it mandatory                         | Proposed                                   |
 | UI                           | Existing React/Vite AI Inspector + Sigma.js + Graphology Graph Explorer                              | Human/debug surface over the same index used by CLI/MCP                                     | Decided                                    |
 | CLI progress                 | Keep `listr2`, colors, icons, progress bars, `ProgressReporter`, TTY/non-TTY and `NO_COLOR` behavior | This layer is already complete and must not regress                                         | Decided                                    |
 | MCP                          | Add only after core services and capability contracts stabilize                                      | MCP must be an adapter, not a second implementation                                         | Proposed                                   |
@@ -50,10 +49,31 @@ Code Intelligence Index
 │ CLI      │ MCP      │ UI       │
 └──────────┴──────────┴──────────┘
         ↓
-Optional AI Providers
+Optional feature integrations
 ```
 
 RAG and LLM generation are consumers of the index, not core requirements.
+
+CodeAtlas is a code-intelligence engine, not a chat or agent runtime. Host
+agents such as Codex, OpenCode, and Claude perform reasoning when they use
+CodeAtlas through MCP. CodeAtlas does not require an internal LLM for MCP
+usage; the host model interprets structured CodeAtlas results.
+
+Feature-first product model:
+
+```text
+Core
+├─ Graph
+└─ Lexical / FTS5
+
+Optional enhancement
+└─ Semantic Search
+   └─ EmbeddingProvider + built-in internal VectorStore
+
+Optional enhancement
+└─ Reranking
+   └─ RerankerProvider
+```
 
 A public user must be able to run:
 
@@ -72,6 +92,7 @@ without requiring:
 - Qdrant
 - Docker
 - a downloaded embedding model
+- a downloaded reranker model
 
 ## Implementation status
 
@@ -191,7 +212,7 @@ Resolution already supports:
 - reranker
 - graph expansion
 - context budgeting
-- llama.cpp / OpenAI-compatible generation
+- optional external/host LLM generation consumer (llama.cpp/OpenAI-compatible)
 
 ### UI
 
@@ -259,11 +280,9 @@ Core Services
         ↓
 CLI / HTTP API / Web UI / MCP
         ↓
-Optional Providers
-  ├─ embedding
-  ├─ vector
-  ├─ reranker
-  └─ LLM
+Optional enhancements
+  ├─ EmbeddingProvider for Semantic Search
+  └─ RerankerProvider for Reranking
 ```
 
 ## Release invariants
@@ -573,7 +592,9 @@ Target strategy:
 
 # Provider architecture
 
-Optional AI/search providers must be small and concrete.
+Public/configurable provider boundaries are feature-first and intentionally
+small. The CodeAtlas core/provider roadmap exposes only `EmbeddingProvider`
+and `RerankerProvider`.
 
 ## EmbeddingProvider
 
@@ -589,6 +610,9 @@ type EmbeddingProvider = {
 ```
 
 ## VectorStore
+
+`VectorStore` is an internal storage abstraction only. It is not a public
+addon or configuration surface.
 
 ```ts
 type VectorStore = {
@@ -610,10 +634,10 @@ type VectorStore = {
 };
 ```
 
-## Reranker
+## RerankerProvider
 
 ```ts
-type Reranker = {
+type RerankerProvider = {
   readonly id: string;
 
   isAvailable(): Promise<boolean>;
@@ -626,20 +650,16 @@ type Reranker = {
 };
 ```
 
-## LlmProvider
+Users should not choose between Qdrant, SQLite, HNSW implementations, or
+other vector stores. CodeAtlas selects and ships one built-in local vector
+backend. The internal `VectorStore` seam exists for separation of concerns,
+testability, implementation replacement, and migration safety.
 
-```ts
-type LlmProvider = {
-  readonly id: string;
-
-  isAvailable(): Promise<boolean>;
-
-  chatStream(
-    messages: ChatMessage[],
-    options?: StreamChatOptions,
-  ): Promise<StreamChatResult>;
-};
-```
+Semantic Search requires an `EmbeddingProvider` and the built-in internal
+`VectorStore` backend. Users should normally only choose or configure the
+`EmbeddingProvider`. Possible categories include a built-in/local embedding
+model, an OpenAI-compatible embedding API, and future compatible providers;
+the public provider set remains intentionally open until explicitly decided.
 
 ### Current module mapping
 
@@ -648,24 +668,27 @@ src/lib/embedding.ts
 → local Transformers.js EmbeddingProvider
 
 src/lib/qdrant.ts
-→ optional QdrantVectorStore
+→ current development/legacy Qdrant VectorStore implementation; not the
+  intended default public backend
 
 src/lib/reranker.ts
-→ optional local cross-encoder Reranker
+→ optional local cross-encoder RerankerProvider
 
 src/lib/llama.ts
-→ OpenAICompatibleLlmProvider
+→ standalone/external LLM consumer, outside the CodeAtlas core provider model
 ```
 
-`llama.cpp` becomes a configuration of the OpenAI-compatible provider, not a special core dependency.
+Any `llama.cpp` or OpenAI-compatible LLM client remains a standalone/external
+consumer configuration, not a CodeAtlas core provider dependency.
 
 ---
 
 # Local vector strategy
 
-Do not lock the public architecture to SQLite BLOB vectors before measuring.
-
-Keep the `VectorStore` seam first.
+Phase 6 will benchmark candidates and choose one built-in local vector backend
+for CodeAtlas. This is an implementation selection, not a user-selectable
+backend marketplace. Keep the internal `VectorStore` seam for lifecycle and
+migration safety.
 
 Candidates:
 
@@ -674,9 +697,9 @@ Candidates:
 | SQLite + application cosine scan | Zero extra service/native extension | O(n) query, memory/deserialize cost        | Spike         |
 | sqlite-vec                       | Better local vector querying        | Native distribution/ABI/package complexity | Spike         |
 | Local HNSW library               | Fast local ANN                      | Another index format/dependency            | Spike         |
-| Qdrant                           | Existing scalable implementation    | External service                           | Keep optional |
+| Qdrant                           | Current development/legacy backend  | External service; not zero-config           | Migrate away from default usage |
 
-Required benchmark before choosing a default semantic implementation:
+Required benchmark before choosing CodeAtlas's one built-in semantic backend:
 
 ```text
 1k chunks
@@ -695,6 +718,12 @@ Measure:
 - macOS/Linux/Windows behavior
 
 Graph + FTS5 remain the public default regardless of this decision.
+
+The chosen backend must be local-first, persistent, require no mandatory
+daemon or Docker, suit repository-scale semantic search, integrate cleanly
+with `.codeatlas/`, provide simple lifecycle and cleanup, isolate repositories
+deterministically, support incremental semantic updates, and preserve the
+existing copy-on-write guarantees where applicable.
 
 ---
 
@@ -927,15 +956,16 @@ ranked candidates
 
 ## `answerCodebase`
 
-Optional generation consumer:
+Optional standalone AI consumer:
 
 ```text
 inspectRetrieval
 → buildContext
-→ LlmProvider
+→ external/host LLM client
 ```
 
-LLM availability must never be required for the first three.
+LLM availability is outside the CodeAtlas core capability model and is never
+required for retrieval or MCP usage.
 
 ---
 
@@ -950,7 +980,6 @@ Graph:      ready
 Lexical:    ready
 Semantic:   not configured
 Reranker:   not configured
-LLM:        not configured
 Metrics:    unavailable
 ```
 
@@ -972,7 +1001,7 @@ Lexical only
 → FTS5
 
 Semantic only
-→ configured semantic provider
+→ EmbeddingProvider + built-in internal VectorStore
 
 Hybrid
 → lexical + semantic → RRF
@@ -983,8 +1012,8 @@ Rerank
 Graph expansion
 → structural graph
 
-Answer
-→ only if LLM configured
+Standalone answer
+→ only if an external/host LLM client is configured
 ```
 
 Repository status also exposes the active change-detection mode:
@@ -992,6 +1021,21 @@ Repository status also exposes the active change-detection mode:
 ```text
 changeDetection: "git" | "filesystem"
 ```
+
+# Standalone AI separation
+
+Any future desktop, TUI, or chat answer experience is a separate consumer
+layer over CodeAtlas core:
+
+```text
+Standalone UI/chat
+├─ external/host LLM client
+└─ CodeAtlas core
+```
+
+LLM reasoning, synthesis, and final user-facing answers stay with the host
+agent or standalone consumer. They are not responsibilities of the
+code-intelligence engine.
 
 ---
 
@@ -1208,7 +1252,7 @@ Semantic: not configured
 Fusion: not applicable
 Graph Expansion: ready
 Context: ready
-LLM: not configured
+Standalone answer: external/host LLM not configured
 ```
 
 No fake stages.
@@ -1258,8 +1302,7 @@ For example `/health` should conceptually return:
   "graph": "ready",
   "lexical": "ready",
   "semantic": "not_configured",
-  "reranker": "not_configured",
-  "llm": "not_configured"
+  "reranker": "not_configured"
 }
 ```
 
@@ -1294,10 +1337,11 @@ impact
 trace
 
 inspect_retrieval
-ask_codebase
 ```
 
-`ask_codebase` is optional/capability-aware.
+`ask_codebase` is not a required core or MCP capability. If retained later, it
+is optional standalone AI UX over structured CodeAtlas retrieval and an
+external/host LLM client.
 
 Responses should expose when relevant:
 
@@ -1389,8 +1433,8 @@ CodeAtlas-managed block. A later refresh updates that block from actual
 Generated guidance advertises only capabilities that are actually ready,
 including `repository_status`, `search_code`, `get_symbol`, `find_callers`,
 `find_callees`, `find_imports`, `find_imported_by`, `impact`, `trace`, and
-`inspect_retrieval` when supported. `ask_codebase` is advertised only when an
-LLM capability is configured. Any repository/index summary—symbols,
+`inspect_retrieval` when supported. `ask_codebase` is not part of the required
+CodeAtlas capability set. Any repository/index summary—symbols,
 relationships, capability readiness, and stale/fresh state—comes from actual
 CodeAtlas status rather than hardcoded values.
 
@@ -1486,8 +1530,8 @@ Do not make registry a prerequisite for single-repo core.
 | `src/services/retrieval-inspector.ts` | Inspector orchestration                  | Core retrieval inspection                                         |
 | `src/lib/embedding.ts`                | local embedder                           | `EmbeddingProvider`                                               |
 | `src/lib/qdrant.ts`                   | fixed Qdrant client                      | `QdrantVectorStore`                                               |
-| `src/lib/reranker.ts`                 | local reranker                           | optional `Reranker`                                               |
-| `src/lib/llama.ts`                    | llama/OpenAI-compatible client           | `OpenAICompatibleLlmProvider`                                     |
+| `src/lib/reranker.ts`                 | local reranker                           | optional `RerankerProvider`                                       |
+| `src/lib/llama.ts`                    | llama/OpenAI-compatible client           | standalone/external LLM consumer                                 |
 | `src/cli/progress.ts`                 | listr2 progress renderer                 | **Keep**                                                          |
 | `src/cli/theme.ts`                    | CLI colors/theme                         | **Keep**                                                          |
 | `src/cli/format.ts`                   | icons/bars/formatting                    | **Keep**                                                          |
@@ -1798,10 +1842,34 @@ Move concrete optional dependencies behind:
 
 ```text
 EmbeddingProvider
-VectorStore
-Reranker
-LlmProvider
+RerankerProvider
 ```
+
+`VectorStore` remains an internal storage abstraction only. It is not a
+public provider choice or configuration surface. CodeAtlas should ship one
+built-in local vector backend selected in Phase 6; users should not choose
+between Qdrant, SQLite, HNSW implementations, or other vector databases.
+
+Feature-first configuration is:
+
+```text
+Core
+├─ Graph
+└─ Lexical / FTS5
+
+Optional Semantic Search
+└─ EmbeddingProvider
+
+Optional Reranking
+└─ RerankerProvider
+```
+
+Semantic Search requires an `EmbeddingProvider` plus the built-in internal
+`VectorStore` backend. The user normally configures only the embedding
+provider. CodeAtlas is a code-intelligence engine, not a chat or agent
+runtime; host agents perform reasoning through MCP, and CodeAtlas must not
+require an internal LLM for MCP usage. `ask_codebase` is not a required
+core/MCP capability.
 
 Add capability statuses:
 
@@ -1820,26 +1888,47 @@ Core health must remain ready when optional providers are absent.
 
 No Qdrant.
 No embedding model.
+No reranker model.
 No LLM.
 
 ---
 
 # Phase 6 — Optional semantic/vector indexing
 
+## Status
+
+Planned after Phase 5.
+
 ## Goal
 
-Preserve current semantic quality as opt-in.
+Select and ship one built-in local vector backend for optional Semantic Search.
+This phase is not a user-selectable vector-backend marketplace.
 
-Do the local-vector benchmark spike before committing the default semantic store.
+Benchmark candidates may include:
+
+- SQLite BLOB + cosine
+- sqlite-vec
+- local HNSW
+
+The benchmark exists to choose one backend for CodeAtlas, not to expose all
+candidates as product configuration.
 
 Retain:
 
 - local Transformers embeddings
-- Qdrant adapter
+- current Qdrant development/legacy backend during migration
 - cross-encoder reranker
 - copy-on-write generation safety
 
 Implement explicit semantic file state including zero chunks.
+
+The chosen backend must be local-first, persistent, require no mandatory
+daemon or Docker, suit repository-scale semantic search, integrate cleanly
+with `.codeatlas/`, provide easy lifecycle and cleanup, isolate repositories
+deterministically, support incremental semantic updates, and remain compatible
+with existing copy-on-write guarantees where applicable. Phase 6 defines the
+migration path away from mandatory Qdrant usage; it does not remove or migrate
+the current Qdrant implementation yet.
 
 ## Completion
 
@@ -2004,6 +2093,19 @@ peripheral-to-hub dependencies, and structurally surprising dependencies.
 
 Expose core services via MCP.
 
+Target architecture:
+
+```text
+Host agent / host LLM
+        ↓
+       MCP
+        ↓
+CodeAtlas structured intelligence tools
+```
+
+The host model owns reasoning, synthesis, and final user-facing answers.
+CodeAtlas does not require an internal LLM provider for this flow.
+
 No duplicate business logic.
 
 No CLI spawning.
@@ -2052,7 +2154,7 @@ design decision.
 - `.codeatlas/.gitignore` is created with exactly the defensive generated-state semantics
 - defensive ignore content protects generated files while allowing `.gitignore`
 - AGENTS.md managed-block removal/refresh does not remove either Git ignore protection
-- unavailable capabilities are omitted, including `ask_codebase` without an LLM
+- unavailable capabilities are omitted from the structured CodeAtlas surface
 - generated summary reflects actual symbols, relationships, readiness, and stale/fresh state
 - `.codeatlas/` ignore setup is idempotent
 - `init` does not build the full index by default
@@ -2208,9 +2310,9 @@ Matrix:
 ```text
 Graph + lexical only
 Optional local semantic
-Optional Qdrant
+Legacy/optional Qdrant compatibility
 No LLM
-Configured OpenAI-compatible LLM
+Optional standalone external/host LLM consumer
 Zero-chunk files
 Changed files
 Deleted files
