@@ -78,7 +78,7 @@ export type SemanticIndexOptions = {
 export type SemanticIndexResult = {
   repoPath: string;
   repoId: string;
-  status: "indexed" | "nothing-to-index" | "not-configured";
+  status: "indexed" | "nothing-to-index" | "not-configured" | "unavailable";
   storedVersion?: string;
   version: string;
   fullReindex: boolean;
@@ -94,7 +94,51 @@ export type SemanticIndexResult = {
   skippedFiles: number;
   deletedFiles: number;
   totalMs: number;
+  error?: string;
 };
+
+function unavailableResult(
+  repoPath: string,
+  repoId: string,
+  startedAt: number,
+  error?: unknown,
+): SemanticIndexResult {
+  return {
+    repoPath,
+    repoId,
+    status: "unavailable",
+    version: VECTOR_INDEX_VERSION,
+    fullReindex: false,
+    files: 0,
+    chunks: 0,
+    points: 0,
+    embeddedSymbols: 0,
+    cleanedOldPoints: 0,
+    embeddingBatches: 0,
+    qdrantBatches: 0,
+    addedFiles: 0,
+    updatedFiles: 0,
+    skippedFiles: 0,
+    deletedFiles: 0,
+    totalMs: performance.now() - startedAt,
+    error: error instanceof Error ? error.message : error ? String(error) : undefined,
+  };
+}
+
+function generationIdFor(
+  fileHash: string,
+  providerIdentity: string,
+  previousProviderIdentity?: string,
+  hasPreviousIndex = false,
+): string {
+  const generation = [`v${VECTOR_INDEX_VERSION}`, fileHash];
+
+  if (hasPreviousIndex && previousProviderIdentity !== providerIdentity) {
+    generation.push(providerIdentity);
+  }
+
+  return generation.join(":");
+}
 
 function chunkArray<T>(items: T[], size: number): T[][] {
   if (size <= 0) {
@@ -119,11 +163,12 @@ export async function syncSemantic(
   const startedAt = performance.now();
   const embeddingProvider = options.embeddingProvider;
   const vectorStore = options.vectorStore;
+  const repositoryId = getRepositoryIdentity(repoPath).id;
 
   if (!embeddingProvider || !vectorStore) {
     return {
       repoPath,
-      repoId: getRepositoryIdentity(repoPath).id,
+      repoId: repositoryId,
       status: "not-configured",
       version: VECTOR_INDEX_VERSION,
       fullReindex: false,
@@ -142,6 +187,19 @@ export async function syncSemantic(
     };
   }
 
+  let providerAvailable: boolean;
+
+  try {
+    providerAvailable = await embeddingProvider.isAvailable() && await vectorStore.isAvailable();
+  } catch (error) {
+    return unavailableResult(repoPath, repositoryId, startedAt, error);
+  }
+
+  if (!providerAvailable) {
+    return unavailableResult(repoPath, repositoryId, startedAt);
+  }
+
+  const providerIdentity = embeddingProviderIdentity(embeddingProvider);
   await vectorStore.ensureCollection(embeddingProvider.dimensions);
 
   const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
@@ -210,7 +268,7 @@ export async function syncSemantic(
             !forceFullReindex &&
             previousState?.state === "ready" &&
             previousState.fileHash === fileHash &&
-            previousState.providerIdentity === embeddingProviderIdentity(embeddingProvider)
+            previousState.providerIdentity === providerIdentity
           ) {
             skippedFiles += 1;
             reporter.setProgress(index + 1, files.length);
@@ -219,7 +277,12 @@ export async function syncSemantic(
 
           const parsedChunks = parseCodeSymbols(content, relativePath);
           const chunks = parsedChunks.flatMap(splitLargeSymbol);
-          const generationId = [`v${VECTOR_INDEX_VERSION}`, fileHash].join(":");
+          const generationId = generationIdFor(
+            fileHash,
+            providerIdentity,
+            previousState?.providerIdentity,
+            previousState !== undefined || previousPointState !== undefined,
+          );
 
           preparedFiles.push({
             relativePath,
@@ -303,7 +366,7 @@ export async function syncSemantic(
               fileHash: preparedFile.fileHash,
               version: VECTOR_INDEX_VERSION,
               state: "ready",
-              providerIdentity: embeddingProviderIdentity(embeddingProvider),
+              providerIdentity,
               generation: preparedFile.generationId,
               itemCount: 0,
             });
@@ -475,7 +538,7 @@ export async function syncSemantic(
             fileHash: preparedFile.fileHash,
             version: VECTOR_INDEX_VERSION,
             state: "ready",
-            providerIdentity: embeddingProviderIdentity(embeddingProvider),
+            providerIdentity,
             generation: fileEntry.generationId,
             itemCount: fileEntry.points.length,
           });
@@ -510,7 +573,7 @@ export async function syncSemantic(
         fileHash: preparedFile.fileHash,
         version: VECTOR_INDEX_VERSION,
         state: "error",
-        providerIdentity: embeddingProviderIdentity(embeddingProvider),
+        providerIdentity,
         generation: preparedFile.generationId,
         itemCount: 0,
         lastError: error instanceof Error ? error.message : String(error),

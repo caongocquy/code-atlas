@@ -6,12 +6,18 @@ import test from "node:test";
 
 import { GRAPH_INDEX_VERSION, VECTOR_INDEX_VERSION } from "../src/config/constants.js";
 import { inspectRetrieval } from "../src/core/retrieval/retrieval-inspector.service.js";
+import type { SearchResult } from "../src/core/retrieval/code-search.service.js";
+import type { RerankerProvider } from "../src/core/retrieval/reranker-provider.js";
 import { indexLexical } from "../src/core/lexical/lexical-index.service.js";
 import { syncSemantic } from "../src/core/semantic/semantic-index.service.js";
 import type { EmbeddingProvider } from "../src/core/semantic/embedding-provider.js";
 import type { VectorPoint, VectorStore } from "../src/core/semantic/vector-store.js";
 import { getRepositoryIdentity } from "../src/core/repository/repository-identity.js";
 import { createFileHash } from "../src/core/repository/file-hash.js";
+import { getRepositoryStatus } from "../src/core/repository/repository-status.service.js";
+import { transformersEmbeddingProvider } from "../src/infrastructure/embedding/transformers-embedding.client.js";
+import { transformersRerankerProvider } from "../src/infrastructure/reranker/transformers-reranker.client.js";
+import { qdrantVectorStore } from "../src/infrastructure/vector/qdrant-vector.store.js";
 import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
 
 async function temporaryRepository(name: string): Promise<string> {
@@ -76,6 +82,25 @@ function vectorStore(): VectorStore & { points: Map<string, VectorPoint>; delete
   };
 }
 
+function unavailableReranker(): RerankerProvider {
+  return {
+    id: "test-reranker",
+    version: "1",
+    isAvailable: async () => false,
+    rerank: async <T extends SearchResult>(_query: string, candidates: T[], limit: number) =>
+      candidates.slice(0, limit).map((candidate) => ({ ...candidate, rerankScore: 0 })),
+  };
+}
+
+test("concrete optional integrations conform to their provider boundaries without initialization", () => {
+  assert.equal(transformersEmbeddingProvider.id, "transformers");
+  assert.equal(transformersRerankerProvider.id, "transformers");
+  assert.equal(qdrantVectorStore.id, "qdrant");
+  assert.equal(typeof transformersEmbeddingProvider.embedBatch, "function");
+  assert.equal(typeof transformersRerankerProvider.rerank, "function");
+  assert.equal(typeof qdrantVectorStore.upsert, "function");
+});
+
 test("semantic indexing uses injected providers and preserves unrelated graph state", async () => {
   const repoPath = await temporaryRepository("semantic");
   const filePath = path.join(repoPath, "source.ts");
@@ -123,7 +148,102 @@ test("semantic indexing uses injected providers and preserves unrelated graph st
     });
     assert.equal(second.status, "indexed");
     assert.equal(vectors.points.size, oldPointCount);
-    assert.equal(vectors.deleted.length, 0);
+    assert.equal(vectors.deleted.length, oldPointCount);
+  } finally {
+    await rm(repoPath, { recursive: true, force: true });
+  }
+});
+
+test("semantic indexing reports unavailable providers without touching storage", async () => {
+  const repoPath = await temporaryRepository("unavailable");
+
+  try {
+    const unavailable = {
+      ...embeddingProvider(),
+      isAvailable: async () => false,
+    } satisfies EmbeddingProvider;
+    const result = await syncSemantic(repoPath, {
+      embeddingProvider: unavailable,
+      vectorStore: vectorStore(),
+    });
+
+    assert.equal(result.status, "unavailable");
+    assert.equal(result.error, undefined);
+  } finally {
+    await rm(repoPath, { recursive: true, force: true });
+  }
+});
+
+test("semantic and reranker capability status is independent and normalized", async () => {
+  const repoPath = await temporaryRepository("capabilities");
+  const databasePath = path.join(repoPath, ".codeatlas", "atlas.db");
+  const vectors = vectorStore();
+
+  try {
+    const source = "export function statusTarget() { return true; }\n";
+    await writeFile(path.join(repoPath, "source.ts"), source);
+    await indexLexical(repoPath);
+    await syncSemantic(repoPath, {
+      embeddingProvider: embeddingProvider("1"),
+      vectorStore: vectors,
+    });
+
+    const unavailableProvider = {
+      ...embeddingProvider("1"),
+      isAvailable: async () => false,
+    } satisfies EmbeddingProvider;
+    const unavailable = await getRepositoryStatus(repoPath, {
+      embeddingProvider: unavailableProvider,
+      vectorStore: vectors,
+      rerankerProvider: unavailableReranker(),
+    });
+    assert.equal(unavailable.capabilities.semantic.state, "unavailable");
+    assert.equal(unavailable.capabilities.reranker.state, "unavailable");
+    assert.equal(unavailable.capabilities.lexical.state, "ready");
+
+    const stale = await getRepositoryStatus(repoPath, {
+      embeddingProvider: embeddingProvider("2"),
+      vectorStore: vectors,
+    });
+    assert.equal(stale.capabilities.semantic.state, "stale");
+    assert.equal(stale.capabilities.reranker.state, "not_configured");
+    assert.equal(stale.capabilities.graph.state, "stale");
+  } finally {
+    await rm(repoPath, { recursive: true, force: true });
+  }
+});
+
+test("semantic operation failures persist error state without losing other capabilities", async () => {
+  const repoPath = await temporaryRepository("error");
+  const databasePath = path.join(repoPath, ".codeatlas", "atlas.db");
+
+  try {
+    const content = "export function failingEmbedding() { return true; }\n";
+    await writeFile(path.join(repoPath, "source.ts"), content);
+    await indexLexical(repoPath);
+    const failingProvider = {
+      ...embeddingProvider(),
+      embedBatch: async () => {
+        throw new Error("embedding inference failed");
+      },
+    } satisfies EmbeddingProvider;
+
+    await assert.rejects(
+      syncSemantic(repoPath, {
+        embeddingProvider: failingProvider,
+        vectorStore: vectorStore(),
+      }),
+      /embedding inference failed/,
+    );
+
+    const store = new AtlasStore(databasePath);
+    try {
+      const repository = store.ensureRepository(getRepositoryIdentity(repoPath));
+      assert.equal(store.getFileCapabilityState(repository.id, "source.ts", "semantic")?.state, "error");
+      assert.equal(store.getFileCapabilityState(repository.id, "source.ts", "lexical")?.state, "ready");
+    } finally {
+      store.close();
+    }
   } finally {
     await rm(repoPath, { recursive: true, force: true });
   }
@@ -193,10 +313,11 @@ test("retrieval remains lexical-only without semantic providers and preserves le
     const inspection = await inspectRetrieval("createUserToken", {
       repoPath,
       graphEnabled: false,
+      providers: { rerankerProvider: unavailableReranker() },
     });
     assert.ok(inspection.lexicalResults.length > 0);
     assert.equal(inspection.capabilities.semantic, "not_configured");
-    assert.equal(inspection.capabilities.reranker, "not_configured");
+    assert.equal(inspection.capabilities.reranker, "unavailable");
     assert.ok(inspection.lexicalResults[0]?.provenance.some((item) => item.stage === "lexical"));
   } finally {
     await rm(repoPath, { recursive: true, force: true });
