@@ -18,6 +18,8 @@ import type {
 } from "./atlas.types.js";
 import type { CodeGraph, GraphEdge, GraphEdgeType, GraphNode, GraphNodeType } from "../../core/graph/types.js";
 import type { RepositoryIdentity } from "../../core/repository/repository-identity.js";
+import type { IndexedFileState } from "../../core/repository/indexed-file-state.js";
+import type { VectorPoint, VectorSearchResult } from "../../core/semantic/vector-store.js";
 
 export const DEFAULT_ATLAS_DB_PATH = ".codeatlas/atlas.db";
 
@@ -527,6 +529,222 @@ export class AtlasStore {
       score: row.score,
       snippet: row.snippet,
     }));
+  }
+
+  ensureSemanticVectorDimensions(dimensions: number): void {
+    if (!Number.isInteger(dimensions) || dimensions <= 0) {
+      throw new Error("Vector dimensions must be a positive integer");
+    }
+
+    const row = this.database
+      .prepare("SELECT dimensions FROM semantic_vector_config WHERE id = 1")
+      .get() as { dimensions: number } | undefined;
+
+    if (row && row.dimensions !== dimensions) {
+      throw new Error(
+        `Vector dimensions changed from ${row.dimensions} to ${dimensions}`,
+      );
+    }
+
+    if (!row) {
+      this.database
+        .prepare("INSERT INTO semantic_vector_config (id, dimensions) VALUES (1, ?)")
+        .run(dimensions);
+    }
+  }
+
+  searchSemanticVectors(
+    repoId: string,
+    vector: number[],
+    limit: number,
+  ): VectorSearchResult[] {
+    if (limit <= 0 || vector.length === 0) {
+      return [];
+    }
+
+    const queryNorm = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0));
+
+    if (queryNorm === 0) {
+      return [];
+    }
+
+    const rows = this.database
+      .prepare(
+        `SELECT point_id, vector, payload_json
+         FROM semantic_vectors
+         WHERE repository_id = ?`,
+      )
+      .all(repoId) as Array<{
+      point_id: string;
+      vector: Uint8Array;
+      payload_json: string;
+    }>;
+    const results: Array<VectorSearchResult & { pointId: string }> = [];
+
+    // ponytail: O(n) scan keeps the built-in backend dependency-free; replace behind VectorStore if repository scale requires ANN.
+    for (const row of rows) {
+      const candidate = new Float32Array(
+        row.vector.buffer,
+        row.vector.byteOffset,
+        row.vector.byteLength / Float32Array.BYTES_PER_ELEMENT,
+      );
+
+      if (candidate.length !== vector.length) {
+        continue;
+      }
+
+      let dot = 0;
+      let candidateNormSquared = 0;
+
+      for (let index = 0; index < vector.length; index += 1) {
+        const value = candidate[index] ?? 0;
+        dot += (vector[index] ?? 0) * value;
+        candidateNormSquared += value * value;
+      }
+
+      if (candidateNormSquared === 0) {
+        continue;
+      }
+
+      results.push({
+        pointId: row.point_id,
+        score: dot / (queryNorm * Math.sqrt(candidateNormSquared)),
+        payload: JSON.parse(row.payload_json) as Record<string, unknown>,
+      });
+    }
+
+    return results
+      .sort((left, right) => right.score - left.score || left.pointId.localeCompare(right.pointId))
+      .slice(0, limit)
+      .map(({ pointId: _pointId, ...result }) => result);
+  }
+
+  countSemanticVectors(repoId: string): number {
+    const row = this.database
+      .prepare("SELECT count(*) AS count FROM semantic_vectors WHERE repository_id = ?")
+      .get(repoId) as { count: number };
+
+    return row.count;
+  }
+
+  getSemanticIndexedFileStates(repoId: string): Map<string, IndexedFileState> {
+    const rows = this.database
+      .prepare(
+        `SELECT point_id, file_path, file_hash
+         FROM semantic_vectors
+         WHERE repository_id = ?
+         ORDER BY file_path ASC, point_id ASC`,
+      )
+      .all(repoId) as Array<{
+      point_id: string;
+      file_path: string;
+      file_hash: string;
+    }>;
+    const states = new Map<string, IndexedFileState>();
+
+    for (const row of rows) {
+      const existing = states.get(row.file_path);
+
+      if (existing) {
+        existing.pointIds.push(row.point_id);
+      } else {
+        states.set(row.file_path, {
+          fileHash: row.file_hash,
+          pointIds: [row.point_id],
+        });
+      }
+    }
+
+    return states;
+  }
+
+  upsertSemanticVectors(points: VectorPoint[]): void {
+    if (points.length === 0) {
+      return;
+    }
+
+    const config = this.database
+      .prepare("SELECT dimensions FROM semantic_vector_config WHERE id = 1")
+      .get() as { dimensions: number } | undefined;
+
+    if (!config) {
+      throw new Error("Vector dimensions must be configured before upsert");
+    }
+
+    this.database.exec("BEGIN IMMEDIATE;");
+
+    try {
+      const statement = this.database.prepare(
+        `INSERT INTO semantic_vectors
+         (repository_id, point_id, vector, file_path, file_hash, payload_json)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (repository_id, point_id)
+         DO UPDATE SET vector = excluded.vector,
+                       file_path = excluded.file_path,
+                       file_hash = excluded.file_hash,
+                       payload_json = excluded.payload_json`,
+      );
+
+      for (const point of points) {
+        const repositoryId = point.payload.repoId;
+        const file = point.payload.file;
+        const fileHash = point.payload.fileHash;
+
+        if (
+          typeof repositoryId !== "string" ||
+          typeof file !== "string" ||
+          typeof fileHash !== "string"
+        ) {
+          throw new Error("Semantic vector payload must include repoId, file, and fileHash");
+        }
+
+        if (point.vector.length !== config.dimensions) {
+          throw new Error(
+            `Vector dimensions mismatch: expected ${config.dimensions}, received ${point.vector.length}`,
+          );
+        }
+
+        const vector = Float32Array.from(point.vector);
+        statement.run(
+          repositoryId,
+          String(point.id),
+          Buffer.from(vector.buffer),
+          file,
+          fileHash,
+          JSON.stringify(point.payload),
+        );
+      }
+
+      this.database.exec("COMMIT;");
+    } catch (error) {
+      this.database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  deleteSemanticVectorIds(pointIds: Array<string | number>): void {
+    if (pointIds.length === 0) {
+      return;
+    }
+
+    this.database.exec("BEGIN IMMEDIATE;");
+
+    try {
+      const placeholders = pointIds.map(() => "?").join(", ");
+      this.database
+        .prepare(`DELETE FROM semantic_vectors WHERE point_id IN (${placeholders})`)
+        .run(...pointIds.map(String));
+      this.database.exec("COMMIT;");
+    } catch (error) {
+      this.database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  deleteSemanticFile(repoId: string, file: string): void {
+    this.database
+      .prepare("DELETE FROM semantic_vectors WHERE repository_id = ? AND file_path = ?")
+      .run(repoId, file);
   }
 
   getVersion(repoId: string, axis: AtlasIndexAxis): string | undefined {

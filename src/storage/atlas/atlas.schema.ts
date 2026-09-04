@@ -140,6 +140,26 @@ export function initializeAtlasSchema(database: DatabaseSync): void {
       end_line UNINDEXED,
       tokenize = 'unicode61 remove_diacritics 1'
     );
+
+    CREATE TABLE IF NOT EXISTS semantic_vector_config (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      dimensions INTEGER NOT NULL CHECK (dimensions > 0)
+    );
+
+    CREATE TABLE IF NOT EXISTS semantic_vectors (
+      repository_id TEXT NOT NULL,
+      point_id TEXT NOT NULL,
+      vector BLOB NOT NULL,
+      file_path TEXT NOT NULL,
+      file_hash TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+
+      PRIMARY KEY (repository_id, point_id),
+      FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_semantic_vectors_repo_file
+      ON semantic_vectors (repository_id, file_path);
   `);
 
   const capabilityColumns = database

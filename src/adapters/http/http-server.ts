@@ -14,8 +14,8 @@ import {
 } from "../../core/graph/explorer.js";
 import { AtlasStore } from "../../storage/atlas/atlas.store.js";
 import { getRepositoryIdentity } from "../../core/repository/repository-identity.js";
+import { createDefaultProviders } from "../../infrastructure/provider-defaults.js";
 import { qdrant } from "../../infrastructure/vector/qdrant.client.js";
-import { defaultProviders } from "../../infrastructure/provider-defaults.js";
 import { getRepositoryStatus } from "../../core/repository/repository-status.service.js";
 import { resolveRepoSourcePath } from "./repository-source-path.js";
 import {
@@ -27,6 +27,7 @@ import {
 const app = Fastify({ logger: true });
 const repoPath = path.resolve(process.env.CODE_RAG_REPO_PATH ?? process.cwd());
 const uiRoot = path.resolve("dist/ui");
+const defaultProviders = createDefaultProviders(repoPath);
 
 async function loadGraph() {
   const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
