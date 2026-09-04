@@ -3,7 +3,7 @@ import type { ProgressKind } from "../../core/progress/progress.types.js";
 import type { IndexPipelineResult } from "../../core/indexing/index-pipeline.service.js";
 import type { RepositoryStatus } from "../../core/repository/repository-status.service.js";
 import type { RepositoryInitResult } from "../../core/repository/repository-init.service.js";
-import type { IntegrationChange, IntegrationStatus } from "../../core/integration/integration.types.js";
+import type { IntegrationChange, IntegrationStatus, LegacyIntegrationChange } from "../../core/integration/integration.types.js";
 import type { HookStatus } from "../../core/integration/integration.types.js";
 
 const DEFAULT_BAR_WIDTH = 20;
@@ -209,21 +209,24 @@ export function formatInitResult(result: RepositoryInitResult): string {
   ].join("\n");
 }
 
-export function formatIntegrationChange(change: IntegrationChange): string {
+export function formatIntegrationChange(change: IntegrationChange | LegacyIntegrationChange): string {
   const status = change.status;
-  const connecting = change.operation === "install";
+  const connecting = change.operation === "install" || change.operation === "connect";
+  const configured = "codeAtlasMcpConfigured" in status ? status.codeAtlasMcpConfigured : status.state === "connected";
+  const valid = "configurationValid" in status ? status.configurationValid : status.state !== "invalid_config" && status.state !== "stale";
+  const guidanceConfigured = "strictGuidanceConfigured" in status && status.strictGuidanceConfigured === true;
   const heading = connecting ? `Connecting CodeAtlas to ${change.displayName}...` : `Disconnecting CodeAtlas from ${change.displayName}...`;
   const lines = [heading, ""];
   if (connecting) {
     lines.push(
-      `${check(status.codeAtlasMcpConfigured)} MCP configured`,
-      `${check(status.strictGuidanceConfigured === true)} AGENTS.md guidance configured`,
-      `${check(status.configurationValid)} Configuration valid`,
+      `${check(configured)} MCP configured`,
+      `${check(guidanceConfigured)} AGENTS.md guidance configured`,
+      `${check(valid)} Configuration valid`,
       "",
       `${change.displayName} is ready to use CodeAtlas.`,
     );
   } else {
-    lines.push(`${status.codeAtlasMcpConfigured ? "! MCP still configured" : "✓ MCP disconnected"}`);
+    lines.push(`${configured ? "! MCP still configured" : "✓ MCP disconnected"}`);
   }
   return lines.join("\n");
 }
@@ -232,8 +235,23 @@ export function formatIntegrationStatuses(statuses: IntegrationStatus[]): string
   return [
     "CodeAtlas Integrations",
     "",
-    ...statuses.map((status) => `${statusMark(status.state)} ${status.displayName}  ${status.state}`),
+    ...statuses.map((status) => `${statusMark(status.connection.state)} ${status.displayName}  ${status.connection.state}`),
   ].join("\n");
+}
+
+export function formatIntegrationBatch(
+  operation: "connected" | "disconnected",
+  results: Array<{ displayName: string; ok: boolean; error?: string }>,
+  skipped: Array<{ displayName: string; reason: string }>,
+): string {
+  const lines = results.map((result) => result.ok
+    ? `✓ ${result.displayName} ${operation}`
+    : [`✗ ${result.displayName} failed`, `  Reason: ${result.error ?? "Unknown error"}`].join("\n"));
+  lines.push(...skipped.map((result) => `- ${result.displayName} skipped (${result.reason})`));
+  const successes = results.filter((result) => result.ok).length;
+  const failures = results.length - successes;
+  lines.push("", `${successes} ${operation} · ${failures} failed`);
+  return lines.join("\n");
 }
 
 export function formatHookStatus(status: HookStatus): string {

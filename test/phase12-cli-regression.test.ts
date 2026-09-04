@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import test from "node:test";
 
 import { parse as parseToml } from "smol-toml";
+import { parse as parseJsonc } from "jsonc-parser";
 
 import { GRAPH_INDEX_VERSION, LEXICAL_INDEX_VERSION } from "../src/config/constants.js";
 import { createFileHash } from "../src/core/repository/file-hash.js";
@@ -17,7 +18,7 @@ import { scanRepo } from "../src/core/repository/repository-files.js";
 import { getRepositoryStatus } from "../src/core/repository/repository-status.service.js";
 import { indexRepository } from "../src/core/indexing/index-pipeline.service.js";
 import { isInteractiveMcpSession, MCP_INTERACTIVE_NOTICE } from "../src/adapters/mcp/mcp-server.js";
-import { isEphemeralCodeAtlasPath, resolveCodeAtlasMcpLaunch } from "../src/infrastructure/integration/codex.adapter.js";
+import { isEphemeralMcpPath, resolveDurableMcpLaunch } from "../src/infrastructure/integration/mcp-launcher.js";
 import { createAgentIntegrationService } from "../src/infrastructure/integration/default-integrations.js";
 import { installGuidance } from "../src/infrastructure/integration/strict-guidance.js";
 import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
@@ -117,6 +118,61 @@ test("connect configures Codex and default CodeAtlas guidance", async () => {
     await rm(repoPath, { recursive: true, force: true });
   }
 });
+
+test("modern and legacy integration aliases produce equivalent config changes", async () => {
+  for (const id of ["codex", "opencode", "claude"] as const) {
+    const modernRoot = await fixture(`alias-modern-${id}`);
+    const legacyRoot = await fixture(`alias-legacy-${id}`);
+    try {
+      await runCli(modernRoot, "connect", id, "--no-guidance");
+      await runCli(legacyRoot, "integration", "install", id, "--no-guidance");
+      assert.deepEqual(await integrationConfig(modernRoot, id), await integrationConfig(legacyRoot, id));
+
+      await runCli(modernRoot, "disconnect", id, "--no-guidance");
+      await runCli(legacyRoot, "integration", "uninstall", id, "--no-guidance");
+      assert.deepEqual(await integrationConfig(modernRoot, id), await integrationConfig(legacyRoot, id));
+    } finally {
+      await rm(modernRoot, { recursive: true, force: true });
+      await rm(legacyRoot, { recursive: true, force: true });
+    }
+  }
+});
+
+test("modern and legacy integration aliases use the same unknown-id error", async () => {
+  const modernRoot = await fixture("unknown-modern");
+  const legacyRoot = await fixture("unknown-legacy");
+  try {
+    const errors = [];
+    for (const [root, args] of [
+      [modernRoot, ["connect", "missing"]],
+      [legacyRoot, ["integration", "install", "missing"]],
+    ] as const) {
+      try {
+        await runCli(root, ...args);
+        assert.fail("expected an unknown integration error");
+      } catch (error) {
+        errors.push(error instanceof Error ? error.message : String(error));
+      }
+    }
+    for (const error of errors) {
+      assert.match(error, /Unknown integration id `missing`/);
+      assert.match(error, /codex\|opencode\|claude/);
+    }
+  } finally {
+    await rm(modernRoot, { recursive: true, force: true });
+    await rm(legacyRoot, { recursive: true, force: true });
+  }
+});
+
+async function integrationConfig(root: string, id: "codex" | "opencode" | "claude"): Promise<unknown> {
+  if (id === "codex") {
+    return parseToml(await readFile(path.join(root, ".codex-home", "config.toml"), "utf8"));
+  }
+  if (id === "opencode") {
+    return parseJsonc(await readFile(path.join(root, ".xdg", "opencode", "opencode.json"), "utf8"));
+  }
+  return parseJsonc(await readFile(path.join(root, ".mcp.json"), "utf8"));
+}
 
 test("generated guidance advertises ready graph tools without making them mandatory", async () => {
   const repoPath = await fixture("guidance-graph");
@@ -260,7 +316,7 @@ test("Codex MCP configuration launches with a minimal PATH and clean JSON-RPC st
     await access(entry.command);
     await access(entry.args[0]);
     assert.equal(entry.args[1], "mcp");
-    assert.equal(isEphemeralCodeAtlasPath(entry.args[0]), false);
+    assert.equal(isEphemeralMcpPath(entry.args[0]), false);
     assert.equal(entry.cwd, undefined);
 
     const child = spawn(entry.command, entry.args, {
@@ -334,10 +390,10 @@ test("Codex refuses an ephemeral CLI path before writing persistent integration"
     await mkdir(path.dirname(modulePath), { recursive: true });
     await writeFile(path.join(repoPath, "dist", "cli.js"), "#!/usr/bin/env node\n");
     await assert.rejects(
-      () => resolveCodeAtlasMcpLaunch(pathToFileURL(modulePath).href),
+      () => resolveDurableMcpLaunch(pathToFileURL(modulePath).href),
       /ephemeral installation.*install CodeAtlas durably/,
     );
-    assert.equal(isEphemeralCodeAtlasPath(path.join(repoPath, "dist", "cli.js")), true);
+    assert.equal(isEphemeralMcpPath(path.join(repoPath, "dist", "cli.js")), true);
   } finally {
     await rm(repoPath, { recursive: true, force: true });
   }

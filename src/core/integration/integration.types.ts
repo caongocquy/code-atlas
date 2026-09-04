@@ -1,15 +1,32 @@
-export type AgentId = "codex" | "opencode" | "claude";
+export type IntegrationId = "codex" | "opencode" | "claude";
+
+/** @deprecated Use IntegrationId. */
+export type AgentId = IntegrationId;
 
 export type IntegrationScope = "user" | "project";
 
-export type IntegrationState =
-  | "available"
-  | "installed"
-  | "not_installed"
-  | "unavailable"
-  | "unsupported"
-  | "stale"
-  | "invalid_config";
+export type InstallationState = "installed" | "not_detected" | "unavailable";
+
+export type ConnectionState = "connected" | "disconnected" | "stale" | "invalid_config";
+
+export type IntegrationDescriptor = {
+  id: IntegrationId;
+  displayName: string;
+  scopes: readonly IntegrationScope[];
+  configFormat: "json" | "jsonc" | "toml";
+  supportsEnablement: boolean;
+};
+
+export type IntegrationContext = {
+  repoPath: string;
+};
+
+export type DurableMcpLaunch = {
+  command: string;
+  args: string[];
+};
+
+export type ResolveDurableMcpLaunch = () => Promise<DurableMcpLaunch>;
 
 export type IntegrationOptions = {
   repoPath: string;
@@ -18,14 +35,36 @@ export type IntegrationOptions = {
   noGuidance?: boolean;
 };
 
+export type InstallationDetection = {
+  state: InstallationState;
+  evidence?: string;
+};
+
+export type ConnectionStatus = {
+  state: ConnectionState;
+  configPath?: string;
+  scope?: IntegrationScope;
+  managedConfigPresent: boolean;
+  warnings: string[];
+};
+
 export type IntegrationStatus = {
-  id: AgentId;
+  id: IntegrationId;
   displayName: string;
-  state: IntegrationState;
+  installation: InstallationDetection;
+  connection: ConnectionStatus;
+
+  /** @deprecated Use installation.state and connection.state. */
+  state: "installed" | "not_installed" | "unavailable" | "stale" | "invalid_config";
+  /** @deprecated Use installation.state. */
   detected: boolean;
+  /** @deprecated Use connection.configPath. */
   configPath: string;
+  /** @deprecated Use connection.scope. */
   scope: IntegrationScope;
+  /** @deprecated Use connection.state. */
   codeAtlasMcpConfigured: boolean;
+  /** @deprecated Use connection.state. */
   configurationValid: boolean;
   command: string;
   args: string[];
@@ -34,7 +73,16 @@ export type IntegrationStatus = {
 };
 
 export type IntegrationChange = {
-  id: AgentId;
+  id: IntegrationId;
+  displayName: string;
+  operation: "connect" | "disconnect";
+  changed: boolean;
+  status: ConnectionStatus;
+  strictGuidanceChanged: boolean;
+};
+
+export type LegacyIntegrationChange = {
+  id: IntegrationId;
   displayName: string;
   operation: "install" | "uninstall";
   changed: boolean;
@@ -42,13 +90,16 @@ export type IntegrationChange = {
   strictGuidanceChanged: boolean;
 };
 
-export type AgentIntegration = {
-  id: AgentId;
-  displayName: string;
-  status(options: IntegrationOptions): Promise<IntegrationStatus>;
-  install(options: IntegrationOptions): Promise<IntegrationChange>;
-  uninstall(options: IntegrationOptions): Promise<IntegrationChange>;
+export type IntegrationAdapter = {
+  readonly descriptor: IntegrationDescriptor;
+  detect(context: IntegrationContext): Promise<InstallationDetection>;
+  status(options: IntegrationOptions): Promise<ConnectionStatus>;
+  connect(options: IntegrationOptions, launch: DurableMcpLaunch): Promise<IntegrationChange>;
+  disconnect(options: IntegrationOptions): Promise<IntegrationChange>;
 };
+
+/** @deprecated Use IntegrationAdapter. */
+export type AgentIntegration = IntegrationAdapter;
 
 export type HookName = "post-commit" | "post-checkout";
 

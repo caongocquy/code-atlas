@@ -3,8 +3,8 @@ import path from "node:path";
 import { createCliCommandReporter } from "./cli-command-reporter.js";
 import { formatInitResult, formatIntegrationChange } from "./cli-output.js";
 import { initializeRepository } from "../../core/repository/repository-init.service.js";
-import type { AgentId } from "../../core/integration/integration.types.js";
-import { createAgentIntegrationService, supportedAgentIds } from "../../infrastructure/integration/default-integrations.js";
+import type { IntegrationId } from "../../core/integration/integration.types.js";
+import { createAgentIntegrationService } from "../../infrastructure/integration/default-integrations.js";
 
 export async function runInitCommand(args: string[], repoPath = path.resolve(".")): Promise<void> {
   const agent = agentValue(args);
@@ -24,14 +24,17 @@ export async function runInitCommand(args: string[], repoPath = path.resolve("."
 
   if (agent) {
     const service = createAgentIntegrationService({ cwd: targetPath });
-    const ids = agent === "all" ? supportedAgentIds : [agent as AgentId];
+    if (agent !== "all" && !service.has(agent)) {
+      throw new Error(`Unknown integration id \`${agent}\`. Registered integrations: ${service.listDescriptors().map(({ id }) => id).join(", ")}.`);
+    }
+    const ids = agent === "all" ? service.listDescriptors().map(({ id }) => id) : [agent as IntegrationId];
     for (const id of ids) {
       const options = { repoPath: targetPath, strict: args.includes("--strict") };
       const status = await service.status(id, options);
-      if (agent === "all" && (status.state === "unavailable" || status.state === "invalid_config" || status.state === "stale")) continue;
+      if (agent === "all" && (status.installation.state !== "installed" || status.connection.state === "invalid_config" || status.connection.state === "stale")) continue;
       integrations.push(await reporter.run(
         `Connecting CodeAtlas to ${id}`,
-        () => service.install(id, { ...options, noGuidance }),
+        () => service.connect(id, { ...options, noGuidance }),
       ));
     }
   }
@@ -48,8 +51,6 @@ function agentValue(args: string[]): string | undefined {
   const index = args.indexOf("--agent");
   if (index < 0) return undefined;
   const value = args[index + 1];
-  if (!value || (value !== "all" && !(supportedAgentIds as string[]).includes(value))) {
-    throw new Error("Agent must be codex, opencode, claude, or all.");
-  }
+  if (!value) throw new Error("An integration id or `all` is required.");
   return value;
 }

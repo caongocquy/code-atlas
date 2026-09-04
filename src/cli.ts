@@ -7,6 +7,7 @@ import { runInitCommand } from "./adapters/cli/init.command.js";
 import { runMcpServer } from "./adapters/mcp/mcp-server.js";
 import { createCliCommandReporter } from "./adapters/cli/cli-command-reporter.js";
 import { formatCommandFailure } from "./adapters/cli/cli-output.js";
+import { createIntegrationRegistry } from "./infrastructure/integration/default-integrations.js";
 import path from "node:path";
 
 const [command, ...args] = process.argv.slice(2);
@@ -49,14 +50,16 @@ async function main(): Promise<void> {
       process.stdout.write([
         "Usage: code-atlas <command>",
         "",
-        "  init [path] [--agent codex|opencode|claude|all] [--strict] [--no-guidance]",
+        `  init [path] [--agent ${integrationIds()}|all] [--strict] [--no-guidance]`,
         "  index [path] [--skip-git]",
         "  sync [path] [--skip-git] [--quiet]",
         "  status [path]",
-        "  connect <agent> [--strict] [--no-guidance]",
-        "  disconnect <agent>",
+        "  connect [agent] [--all] [--strict] [--no-guidance]",
+        "  disconnect [agent] [--all]",
         "  integrations",
-        "  integration list|status|install|uninstall <agent> [--scope user|project] [--strict] [--no-guidance] [--json]",
+        `  integration list|status|install|uninstall <${integrationIds()}> [--scope user|project] [--strict] [--no-guidance] [--json]`,
+        "  integration config --format json",
+        "  (without an agent, connect/disconnect open a TTY selector; --all uses detected/managed integrations)",
         "  hook install|uninstall|status [--post-commit] [--post-checkout]",
         "  mcp",
         "  serve [path]",
@@ -66,6 +69,10 @@ async function main(): Promise<void> {
     default:
       throw new Error("Unknown command. Run `code-atlas --help`.");
   }
+}
+
+function integrationIds(): string {
+  return createIntegrationRegistry().list().map(({ descriptor }) => descriptor.id).join("|");
 }
 
 main().catch((error) => {

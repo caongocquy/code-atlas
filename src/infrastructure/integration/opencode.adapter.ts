@@ -2,78 +2,102 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import type {
-  AgentIntegration,
+  ConnectionStatus,
+  DurableMcpLaunch,
+  IntegrationAdapter,
   IntegrationChange,
+  IntegrationContext,
   IntegrationOptions,
   IntegrationScope,
-  IntegrationStatus,
 } from "../../core/integration/integration.types.js";
 import { CODE_ATLAS_ARGS, CODE_ATLAS_COMMAND, CODE_ATLAS_NAME, isCodeAtlasCommand } from "./agent-entry.js";
 import { openCodeConfigPath } from "./config-paths.js";
 import { isJsonObject, readJsoncConfig, removeJsoncValue, writeJsoncValue } from "./jsonc-config.js";
+import { validateConfiguredLaunch } from "./mcp-launcher.js";
 import { commandAvailable, type ResolvedIntegrationEnvironment } from "./integration-environment.js";
 
 const displayName = "OpenCode";
 
-export class OpenCodeIntegration implements AgentIntegration {
-  readonly id = "opencode" as const;
-  readonly displayName = displayName;
+export class OpenCodeIntegration implements IntegrationAdapter {
+  readonly descriptor = {
+    id: "opencode" as const,
+    displayName,
+    scopes: ["user", "project"] as const,
+    configFormat: "jsonc" as const,
+    supportsEnablement: true,
+  };
 
   constructor(private readonly environment: ResolvedIntegrationEnvironment) {}
 
-  async status(options: IntegrationOptions): Promise<IntegrationStatus> {
+  async detect(_context: IntegrationContext) {
+    return (await commandAvailable("opencode", this.environment))
+      ? { state: "installed" as const, evidence: "opencode executable found on PATH" }
+      : { state: "not_detected" as const, evidence: "opencode executable not found on PATH" };
+  }
+
+  async status(options: IntegrationOptions): Promise<ConnectionStatus> {
     const scope = options.scope ?? "user";
     const configPath = await existingPath(this.environment, scope);
-    const detected = await commandAvailable("opencode", this.environment);
     try {
       const config = await readJsoncConfig(configPath);
       const serverPath = mcpServerPath(config.value);
       const entry = serverPath ? valueAt(config.value, [...serverPath, CODE_ATLAS_NAME]) : undefined;
-      const configured = isOpenCodeEntry(entry);
-      const warnings = !configured && entry !== undefined
+      const disabled = isDisabledEntry(entry);
+      const launch = openCodeLaunchFromEntry(entry);
+      const validation = !disabled && launch ? await validateConfiguredLaunch(launch) : undefined;
+      const configured = !disabled && (isOpenCodeEntry(entry) || validation === "valid");
+      const stale = validation === "stale" || validation === "ephemeral";
+      const warnings = stale
+        ? ["The CodeAtlas MCP launcher is stale; run `code-atlas connect opencode` again."]
+        : !configured && entry !== undefined && !disabled
         ? ["A CodeAtlas-named entry exists but does not point to `code-atlas mcp`."]
         : [];
-      return statusValue(scope, detected || config.file.exists, configPath, configured, true, warnings);
+      return statusValue(scope, configPath, configured, warnings, stale ? "stale" : entry !== undefined && !configured && !disabled ? "invalid_config" : undefined, entry !== undefined);
     } catch (error) {
-      return statusValue(scope, detected || await exists(configPath), configPath, false, false, [error instanceof Error ? error.message : String(error)], "invalid_config");
+      return statusValue(scope, configPath, false, [error instanceof Error ? error.message : String(error)], "invalid_config", true);
     }
   }
 
-  async install(options: IntegrationOptions): Promise<IntegrationChange> {
+  async connect(options: IntegrationOptions, launch: DurableMcpLaunch): Promise<IntegrationChange> {
     const scope = options.scope ?? "user";
     const configPath = await existingPath(this.environment, scope);
     const current = await readJsoncConfig(configPath);
     const serverPath = mcpServerPath(current.value) ?? ["mcp"];
+    const existing = valueAt(current.value, [...serverPath, CODE_ATLAS_NAME]);
+    if (existing !== undefined && !isOpenCodeManagedEntry(existing)) {
+      throw new Error("Refusing to replace an unrelated CodeAtlas-named OpenCode configuration.");
+    }
     const nested = serverPath.at(-1) === "servers";
     const changed = await writeJsoncValue(
       configPath,
       [...serverPath, CODE_ATLAS_NAME],
       nested
-        ? { type: "local", command: [CODE_ATLAS_COMMAND, ...CODE_ATLAS_ARGS] }
-        : { type: "local", command: [CODE_ATLAS_COMMAND, ...CODE_ATLAS_ARGS], enabled: true },
+        ? { type: "local", command: [launch.command, ...launch.args] }
+        : { type: "local", command: [launch.command, ...launch.args], enabled: true },
     );
     return {
-      id: this.id,
-      displayName: this.displayName,
-      operation: "install",
+      id: this.descriptor.id,
+      displayName,
+      operation: "connect",
       changed,
       status: await this.status(options),
       strictGuidanceChanged: false,
     };
   }
 
-  async uninstall(options: IntegrationOptions): Promise<IntegrationChange> {
+  async disconnect(options: IntegrationOptions): Promise<IntegrationChange> {
     const scope = options.scope ?? "user";
     const configPath = await existingPath(this.environment, scope);
     const current = await readJsoncConfig(configPath);
     const serverPath = mcpServerPath(current.value);
-    const changed = serverPath
+    const entry = serverPath ? valueAt(current.value, [...serverPath, CODE_ATLAS_NAME]) : undefined;
+    const changed = serverPath && entry !== undefined && isOpenCodeManagedEntry(entry)
       ? await removeJsoncValue(configPath, [...serverPath, CODE_ATLAS_NAME])
       : false;
     return {
-      id: this.id,
-      displayName: this.displayName,
-      operation: "uninstall",
+      id: this.descriptor.id,
+      displayName,
+      operation: "disconnect",
       changed,
       status: await this.status(options),
       strictGuidanceChanged: false,
@@ -102,33 +126,47 @@ function valueAt(root: Record<string, unknown>, segments: string[]): unknown {
 }
 
 function isOpenCodeEntry(value: unknown): boolean {
+  return isOpenCodeLegacyEntry(value) && isJsonObject(value) && value.disabled !== true && value.enabled !== false;
+}
+
+function isOpenCodeLegacyEntry(value: unknown): boolean {
   if (!isJsonObject(value) || value.type !== "local") return false;
   return isCodeAtlasCommand(
     Array.isArray(value.command) ? value.command[0] : undefined,
     Array.isArray(value.command) ? value.command.slice(1) : undefined,
-  ) && value.disabled !== true && value.enabled !== false;
+  );
+}
+
+function openCodeLaunchFromEntry(value: unknown): DurableMcpLaunch | undefined {
+  if (!isJsonObject(value) || value.type !== "local" || !Array.isArray(value.command)) return undefined;
+  if (value.command.length !== 3 || !value.command.every((part): part is string => typeof part === "string")) return undefined;
+  const [command, cliPath, mode] = value.command;
+  return path.isAbsolute(command) && path.isAbsolute(cliPath) && mode === "mcp"
+    ? { command, args: [cliPath, mode] }
+    : undefined;
+}
+
+function isDisabledEntry(value: unknown): boolean {
+  return isJsonObject(value) && (value.disabled === true || value.enabled === false);
+}
+
+function isOpenCodeManagedEntry(value: unknown): boolean {
+  return isOpenCodeLegacyEntry(value) || openCodeLaunchFromEntry(value) !== undefined;
 }
 
 function statusValue(
   scope: IntegrationScope,
-  detected: boolean,
   configPath: string,
   configured: boolean,
-  valid: boolean,
   warnings: string[],
-  invalidState?: IntegrationStatus["state"],
-): IntegrationStatus {
+  invalidState?: ConnectionStatus["state"],
+  managedConfigPresent = configured,
+): ConnectionStatus {
   return {
-    id: "opencode",
-    displayName,
-    state: invalidState ?? (configured ? "installed" : detected ? "not_installed" : "unavailable"),
-    detected,
+    state: invalidState ?? (configured ? "connected" : "disconnected"),
     configPath,
     scope,
-    codeAtlasMcpConfigured: configured,
-    configurationValid: valid,
-    command: CODE_ATLAS_COMMAND,
-    args: [...CODE_ATLAS_ARGS],
+    managedConfigPresent,
     warnings,
   };
 }
