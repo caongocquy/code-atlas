@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 600" role="img" aria-labelledby="title desc">
+  <title id="title">CodeAtlas connect selector</title>
+  <desc id="desc">Actual CodeAtlas TTY selector output captured with an injected Codex installation; other clients are shown as unavailable.</desc>
+  <rect width="560" height="600" rx="16" fill="#0b1220"/>
+  <rect width="560" height="42" rx="16" fill="#172033"/>
+  <path d="M0 42H560" stroke="#263449"/>
+  <circle cx="24" cy="21" r="6" fill="#fb7185"/><circle cx="45" cy="21" r="6" fill="#fbbf24"/><circle cx="66" cy="21" r="6" fill="#34d399"/>
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="14">
+    <text x="28" y="78" fill="#67e8f9">$</text><text x="48" y="78" fill="#e2e8f0">code-atlas connect</text>
+    <text x="28" y="124" fill="#f8fafc">Connect CodeAtlas</text>
+    <text x="28" y="164" fill="#f8fafc">Select integrations:</text>
+    <text x="28" y="210" fill="#67e8f9">❯</text><text x="52" y="210" fill="#f8fafc">◯ Codex</text><text x="270" y="210" fill="#34d399">installed</text>
+    <text x="52" y="246" fill="#cbd5e1">◯ OpenCode</text><text x="270" y="246" fill="#64748b">not detected (unavailable)</text>
+    <text x="52" y="282" fill="#cbd5e1">◯ Claude Code</text><text x="270" y="282" fill="#64748b">not detected (unavailable)</text>
+    <text x="52" y="318" fill="#cbd5e1">◯ Gemini CLI</text><text x="270" y="318" fill="#64748b">not detected (unavailable)</text>
+    <text x="52" y="354" fill="#cbd5e1">◯ Cursor</text><text x="270" y="354" fill="#64748b">not detected (unavailable)</text>
+    <text x="52" y="390" fill="#cbd5e1">◯ Cline</text><text x="270" y="390" fill="#64748b">not detected (unavailable)</text>
+    <text x="52" y="426" fill="#cbd5e1">◯ Windsurf</text><text x="270" y="426" fill="#64748b">not detected (unavailable)</text>
+    <text x="52" y="462" fill="#cbd5e1">◯ Zoo Code</text><text x="270" y="462" fill="#64748b">not detected (unavailable)</text>
+    <text x="28" y="526" fill="#94a3b8">Space toggle · A select all detected · Enter confirm</text>
+    <text x="28" y="554" fill="#94a3b8">Esc cancel</text>
+  </g>
+</svg>
