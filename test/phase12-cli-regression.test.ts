@@ -38,6 +38,7 @@ async function runCli(repoPath: string, ...args: string[]): Promise<{ stdout: st
       ...process.env,
       CODEX_HOME: path.join(repoPath, ".codex-home"),
       XDG_CONFIG_HOME: path.join(repoPath, ".xdg"),
+      HOME: repoPath,
       NO_COLOR: "1",
     },
   });
@@ -92,6 +93,12 @@ test("default CLI output is human-readable while --json stays machine-readable",
     const init = await runCli(repoPath, "init");
     assert.match(init.stdout, /CodeAtlas initialized/);
     assert.doesNotMatch(init.stdout, /^\s*\{/);
+    const guidancePath = path.join(repoPath, "AGENTS.md");
+    const firstGuidance = await readFile(guidancePath, "utf8");
+    assert.match(firstGuidance, /### Reporting/);
+    await runCli(repoPath, "init");
+    const secondGuidance = await readFile(guidancePath, "utf8");
+    assert.equal(secondGuidance.match(/### Reporting/g)?.length, 1);
 
     const status = await runCli(repoPath, "status");
     assert.match(status.stdout, /CodeAtlas Status/);
@@ -120,7 +127,7 @@ test("connect configures Codex and default CodeAtlas guidance", async () => {
 });
 
 test("modern and legacy integration aliases produce equivalent config changes", async () => {
-  for (const id of ["codex", "opencode", "claude"] as const) {
+  for (const id of ["codex", "opencode", "claude", "gemini", "cursor", "cline", "windsurf", "zoo"] as const) {
     const modernRoot = await fixture(`alias-modern-${id}`);
     const legacyRoot = await fixture(`alias-legacy-${id}`);
     try {
@@ -156,7 +163,7 @@ test("modern and legacy integration aliases use the same unknown-id error", asyn
     }
     for (const error of errors) {
       assert.match(error, /Unknown integration id `missing`/);
-      assert.match(error, /codex\|opencode\|claude/);
+      assert.match(error, /codex\|opencode\|claude\|gemini\|cursor\|cline\|windsurf\|zoo/);
     }
   } finally {
     await rm(modernRoot, { recursive: true, force: true });
@@ -164,14 +171,19 @@ test("modern and legacy integration aliases use the same unknown-id error", asyn
   }
 });
 
-async function integrationConfig(root: string, id: "codex" | "opencode" | "claude"): Promise<unknown> {
+async function integrationConfig(root: string, id: "codex" | "opencode" | "claude" | "gemini" | "cursor" | "cline" | "windsurf" | "zoo"): Promise<unknown> {
   if (id === "codex") {
     return parseToml(await readFile(path.join(root, ".codex-home", "config.toml"), "utf8"));
   }
   if (id === "opencode") {
     return parseJsonc(await readFile(path.join(root, ".xdg", "opencode", "opencode.json"), "utf8"));
   }
-  return parseJsonc(await readFile(path.join(root, ".mcp.json"), "utf8"));
+  if (id === "gemini") return parseJsonc(await readFile(path.join(root, ".gemini", "settings.json"), "utf8"));
+  if (id === "cursor") return parseJsonc(await readFile(path.join(root, ".cursor", "mcp.json"), "utf8"));
+  if (id === "claude") return parseJsonc(await readFile(path.join(root, ".mcp.json"), "utf8"));
+  if (id === "windsurf") return parseJsonc(await readFile(path.join(root, ".codeium", "windsurf", "mcp_config.json"), "utf8"));
+  if (id === "zoo") return parseJsonc(await readFile(path.join(root, ".roo", "mcp.json"), "utf8"));
+  return parseJsonc(await readFile(path.join(root, ".cline", "mcp.json"), "utf8"));
 }
 
 test("generated guidance advertises ready graph tools without making them mandatory", async () => {
@@ -199,6 +211,12 @@ test("generated guidance advertises ready graph tools without making them mandat
     assert.match(guidance, /mayBeIncomplete=true/);
     assert.match(guidance, /risk=unknown/);
     assert.match(guidance, /negative results.*not authoritative/s);
+    assert.match(guidance, /### Reporting/);
+    assert.match(guidance, /materially contributes.*relevant findings/s);
+    assert.match(guidance, /analysis is unavailable.*why.*fallback/s);
+    assert.match(guidance, /mayBeIncomplete=true.*incomplete.*direct source verification/s);
+    assert.match(guidance, /trivial tasks.*not relevant.*concise/s);
+    assert.match(guidance, /CodeAtlas used.*boilerplate/);
     assert.doesNotMatch(guidance, /MUST|NEVER|strict, opt-in|indexed capabilities:|GitNexus|gitnexus|resources\/|skills\//);
     assert.equal(guidance.match(/<!-- code-atlas:start -->/g)?.length, 1);
     assert.equal(guidance.match(/<!-- code-atlas:end -->/g)?.length, 1);

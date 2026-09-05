@@ -70,8 +70,9 @@ test("default registry contains exactly the current integrations", () => {
     cwd: "/tmp/repo",
     env: { PATH: "/tmp/bin" },
   }).list().map((integration) => integration.descriptor.id);
-  assert.deepEqual(ids, ["codex", "opencode", "claude"]);
+  assert.deepEqual(ids, ["codex", "opencode", "claude", "gemini", "cursor", "cline", "windsurf", "zoo"]);
   assert.equal(ids.includes("mcp" as never), false);
+  assert.equal(ids.includes("roo" as never), false);
 });
 
 test("service combines independent installation detection and connection status", async () => {

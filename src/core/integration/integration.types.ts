@@ -1,4 +1,4 @@
-export type IntegrationId = "codex" | "opencode" | "claude";
+export type IntegrationId = "codex" | "opencode" | "claude" | "gemini" | "cursor" | "cline" | "windsurf" | "zoo";
 
 /** @deprecated Use IntegrationId. */
 export type AgentId = IntegrationId;

@@ -2,11 +2,22 @@ import path from "node:path";
 
 import { createCliCommandReporter } from "./cli-command-reporter.js";
 import { formatInitResult, formatIntegrationChange } from "./cli-output.js";
+import { indexRepository, syncRepository, type IndexPipelineResult } from "../../core/indexing/index-pipeline.service.js";
 import { initializeRepository } from "../../core/repository/repository-init.service.js";
+import { getRepositoryStatus } from "../../core/repository/repository-status.service.js";
 import type { IntegrationId } from "../../core/integration/integration.types.js";
 import { createAgentIntegrationService } from "../../infrastructure/integration/default-integrations.js";
+import { installGuidance } from "../../infrastructure/integration/strict-guidance.js";
 
-export async function runInitCommand(args: string[], repoPath = path.resolve(".")): Promise<void> {
+export type InitCommandDependencies = {
+  indexRepository?: (repoPath: string, options: { progress: ReturnType<typeof createCliCommandReporter>["progress"] }) => Promise<IndexPipelineResult>;
+};
+
+export async function runInitCommand(
+  args: string[],
+  repoPath = path.resolve("."),
+  dependencies: InitCommandDependencies = {},
+): Promise<void> {
   const agent = agentValue(args);
   const optionValues = new Set([agent, "user", "project"]);
   const explicitPath = args.find((arg, index) => {
@@ -18,9 +29,53 @@ export async function runInitCommand(args: string[], repoPath = path.resolve("."
   const reporter = createCliCommandReporter({ json: args.includes("--json") });
   reporter.start("CodeAtlas Init");
   const result = await reporter.run("Initializing repository", () => initializeRepository(targetPath));
-  const integrations = [];
   const json = args.includes("--json");
   const noGuidance = args.includes("--no-guidance");
+  const noIndex = args.includes("--no-index");
+  let indexResult: IndexPipelineResult | undefined;
+  let indexError: string | undefined;
+
+  if (!noIndex) {
+    try {
+      indexResult = await reporter.run(
+        "Indexing repository",
+        () => (dependencies.indexRepository ?? indexRepository)(targetPath, { progress: reporter.progress }),
+      );
+    } catch (error) {
+      indexError = error instanceof Error ? error.message : String(error);
+      process.exitCode = 1;
+    }
+  }
+
+  let guidanceChanged = !noGuidance
+    ? await installGuidance(targetPath, args.includes("--strict"))
+    : false;
+  if (guidanceChanged && indexResult) {
+    indexResult = await reporter.run(
+      "Refreshing index after guidance update",
+      () => syncRepository(targetPath, { progress: reporter.progress }),
+    );
+    const guidanceRefreshed = await installGuidance(targetPath, args.includes("--strict"));
+    guidanceChanged = guidanceChanged || guidanceRefreshed;
+    if (guidanceRefreshed) {
+      indexResult = await reporter.run(
+        "Refreshing index after guidance update",
+        () => syncRepository(targetPath, { progress: reporter.progress }),
+      );
+    }
+  }
+  const status = await getRepositoryStatus(targetPath);
+  const integrations = [];
+
+  if (indexError) {
+    if (json) {
+      reporter.output(initOutput(result, status, false, guidanceChanged, undefined, indexError));
+    } else {
+      reporter.failure(`Indexing failed: ${indexError}`);
+      reporter.success(formatInitResult(result, status, false, guidanceChanged));
+    }
+    return;
+  }
 
   if (agent) {
     const service = createAgentIntegrationService({ cwd: targetPath });
@@ -40,11 +95,33 @@ export async function runInitCommand(args: string[], repoPath = path.resolve("."
   }
 
   if (json) {
-    reporter.output({ ...result, integrations });
+    reporter.output(initOutput(result, status, indexResult !== undefined, guidanceChanged, integrations));
     return;
   }
-  reporter.success(formatInitResult(result));
+  reporter.success(formatInitResult(result, status, indexResult !== undefined, guidanceChanged, indexResult));
   for (const integration of integrations) reporter.success(`\n${formatIntegrationChange(integration)}`);
+}
+
+function initOutput(
+  result: Awaited<ReturnType<typeof initializeRepository>>,
+  status: Awaited<ReturnType<typeof getRepositoryStatus>>,
+  indexed: boolean,
+  guidanceChanged: boolean,
+  integrations?: unknown,
+  error?: string,
+): Record<string, unknown> {
+  return {
+    ...result,
+    indexed,
+    files: status.repository.sourceFiles,
+    symbols: status.graph.nodes,
+    relationships: status.graph.edges,
+    graph: { status: status.graph.status, indexedFiles: status.graph.indexedFiles, nodes: status.graph.nodes, edges: status.graph.edges },
+    lexical: { status: status.capabilities.lexical.state, indexedFiles: status.capabilities.lexical.indexedFiles },
+    guidance: { changed: guidanceChanged },
+    ...(integrations !== undefined ? { integrations } : {}),
+    ...(error !== undefined ? { error } : {}),
+  };
 }
 
 function agentValue(args: string[]): string | undefined {

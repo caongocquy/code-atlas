@@ -114,6 +114,13 @@ async function guidanceBody(repoPath: string): Promise<string> {
     "- For risky changes with incomplete coverage, combine CodeAtlas evidence with direct source verification.",
     "- Do not treat `risk=low` as authoritative when coverage is incomplete.",
     "- If CodeAtlas is unavailable, fall back to direct source inspection.",
+    "",
+    "### Reporting",
+    "",
+    "- When CodeAtlas materially contributes to a task, briefly report the relevant findings in the final task report.",
+    "- If relevant CodeAtlas analysis is unavailable, briefly state why and which fallback was used.",
+    "- When `mayBeIncomplete=true` materially affects confidence, mention the incomplete graph evidence and any direct source verification performed.",
+    "- Do not add CodeAtlas used boilerplate to trivial tasks where it was not relevant; keep final reports concise.",
   ].join("\n");
 }
 

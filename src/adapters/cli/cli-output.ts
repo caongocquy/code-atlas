@@ -195,17 +195,32 @@ export function formatRepositoryStatus(status: RepositoryStatus): string {
   ].join("\n");
 }
 
-export function formatInitResult(result: RepositoryInitResult): string {
+export function formatInitResult(
+  result: RepositoryInitResult,
+  status?: RepositoryStatus,
+  indexed = false,
+  guidanceChanged = false,
+  indexResult?: { totalMs: number },
+): string {
+  const graph = status?.graph;
+  const lexical = status?.capabilities.lexical;
   return [
     `${cliTheme.success(cliIcons.success)} ${cliTheme.success("CodeAtlas initialized")}`,
     "",
     `Repository   ${result.repoPath}`,
     `Git          ${result.gitRepository ? "detected" : "not detected"}`,
     "State        .codeatlas/",
-    "Index        not built",
-    "",
-    "Next:",
-    "  code-atlas index",
+    `Index        ${indexed ? "built" : "skipped (--no-index)"}`,
+    ...(status ? [
+      `Files        ${status.repository.sourceFiles}`,
+      `Symbols      ${graph?.nodes ?? 0}`,
+      `Relations    ${graph?.edges ?? 0}`,
+      `Graph        ${capabilityStatus(graph?.status ?? "not_indexed")}`,
+      `Lexical      ${capabilityStatus(lexical?.state ?? "not_indexed")}`,
+      `Guidance     ${guidanceChanged ? "updated" : "current"}`,
+    ] : []),
+    ...(indexResult ? [`Duration     ${formatDuration(indexResult.totalMs)}`] : []),
+    ...(!indexed ? ["", "Next:", "  code-atlas index"] : []),
   ].join("\n");
 }
 

@@ -54,11 +54,12 @@ test("generic config export is discoverable but is not a registered integration"
     delete env.NODE_PATH;
     const result = await execFile(process.execPath, ["--import", tsxLoader, cliPath, "--help"], { cwd, env });
     assert.match(result.stdout, /integration config --format json/);
+    assert.doesNotMatch(result.stdout, /roo/i);
     assert.deepEqual(
       createIntegrationRegistry({ platform: "linux", cwd, home: cwd, env: { PATH: "/usr/bin:/bin" } })
         .list()
         .map(({ descriptor }) => descriptor.id),
-      ["codex", "opencode", "claude"],
+      ["codex", "opencode", "claude", "gemini", "cursor", "cline", "windsurf", "zoo"],
     );
   } finally {
     await rm(cwd, { recursive: true, force: true });

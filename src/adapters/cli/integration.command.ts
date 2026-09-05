@@ -224,7 +224,9 @@ function connectable(status: IntegrationStatus): boolean {
 
 function managedCandidate(status: IntegrationStatus): boolean {
   return status.connection.managedConfigPresent
-    && (status.connection.state === "connected" || status.connection.state === "stale");
+    && (status.connection.state === "connected"
+      || status.connection.state === "stale"
+      || status.connection.state === "disconnected");
 }
 
 function displayState(status: IntegrationStatus): string {

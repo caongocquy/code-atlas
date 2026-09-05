@@ -21,16 +21,24 @@ test("connect --all configures only detected integrations in registry order", as
   const bin = path.join(root, "bin");
   try {
     await mkdir(bin);
-    for (const id of ["codex", "opencode"]) {
+    for (const id of ["codex", "opencode", "gemini", "cursor-agent", "cline", "windsurf"]) {
       await writeFile(path.join(bin, id), "#!/bin/sh\n");
       await chmod(path.join(bin, id), 0o755);
     }
+    const code = path.join(bin, "code");
+    await writeFile(code, "#!/bin/sh\nprintf 'zoocodeorganization.zoo-code\\n'\n");
+    await chmod(code, 0o755);
     const result = await runCli(root, ["connect", "--all", "--json", "--no-guidance"], bin);
     const output = JSON.parse(result.stdout) as { results: Array<{ id: string }>; skipped: Array<{ id: string }> };
-    assert.deepEqual(output.results.map(({ id }) => id), ["codex", "opencode"]);
+    assert.deepEqual(output.results.map(({ id }) => id), ["codex", "opencode", "gemini", "cursor", "cline", "windsurf", "zoo"]);
     assert.deepEqual(output.skipped.map(({ id }) => id), ["claude"]);
     assert.equal(await exists(path.join(root, ".codex-home", "config.toml")), true);
     assert.equal(await exists(path.join(root, ".xdg", "opencode", "opencode.json")), true);
+    assert.equal(await exists(path.join(root, ".gemini", "settings.json")), true);
+    assert.equal(await exists(path.join(root, ".cursor", "mcp.json")), true);
+    assert.equal(await exists(path.join(root, ".cline", "mcp.json")), true);
+    assert.equal(await exists(path.join(root, ".codeium", "windsurf", "mcp_config.json")), true);
+    assert.equal(await exists(path.join(root, ".roo", "mcp.json")), true);
     assert.equal(await exists(path.join(root, ".mcp.json")), false);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -54,6 +62,30 @@ test("disconnect --all removes managed entries and keeps unrelated client config
     const config = await readFile(path.join(root, ".mcp.json"), "utf8");
     assert.doesNotMatch(config, /code-atlas/);
     assert.match(config, /other-client/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("disconnect --all includes a managed disabled Cline entry", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-batch5-cline-disabled-"));
+  const bin = path.join(root, "bin");
+  try {
+    await mkdir(bin);
+    const cline = path.join(bin, "cline");
+    await writeFile(cline, "#!/bin/sh\n");
+    await chmod(cline, 0o755);
+    const configPath = path.join(root, ".cline", "mcp.json");
+    await mkdir(path.dirname(configPath), { recursive: true });
+    await writeFile(configPath, JSON.stringify({
+      mcpServers: {
+        "code-atlas": { command: process.execPath, args: [path.resolve("dist/cli.js"), "mcp"], disabled: true },
+      },
+    }));
+    const result = await runCli(root, ["disconnect", "--all", "--json", "--no-guidance"], bin);
+    const output = JSON.parse(result.stdout) as { results: Array<{ id: string }> };
+    assert.deepEqual(output.results.map(({ id }) => id), ["cline"]);
+    assert.doesNotMatch(await readFile(configPath, "utf8"), /code-atlas/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
