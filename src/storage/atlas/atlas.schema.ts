@@ -276,6 +276,28 @@ export function initializeAtlasSchema(database: DatabaseSync): void {
       FOREIGN KEY (generation_id) REFERENCES index_generations(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS generation_graph_resolution_files (
+      repository_id TEXT NOT NULL,
+      generation_id TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      calls INTEGER NOT NULL DEFAULT 0,
+      resolved_calls INTEGER NOT NULL DEFAULT 0,
+      unresolved_calls INTEGER NOT NULL DEFAULT 0,
+      ambiguous_calls INTEGER NOT NULL DEFAULT 0,
+      extends_count INTEGER NOT NULL DEFAULT 0,
+      resolved_extends INTEGER NOT NULL DEFAULT 0,
+      unresolved_extends INTEGER NOT NULL DEFAULT 0,
+      ambiguous_extends INTEGER NOT NULL DEFAULT 0,
+      parser_errors INTEGER NOT NULL DEFAULT 0,
+      unsupported_dynamic INTEGER NOT NULL DEFAULT 0,
+      may_be_incomplete INTEGER NOT NULL DEFAULT 0,
+      diagnostics_json TEXT NOT NULL DEFAULT '[]',
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (repository_id, generation_id, file_path),
+      FOREIGN KEY (generation_id) REFERENCES index_generations(id) ON DELETE CASCADE,
+      FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS generation_lexical_documents (
       repository_id TEXT NOT NULL,
       generation_id TEXT NOT NULL,
@@ -307,6 +329,8 @@ export function initializeAtlasSchema(database: DatabaseSync): void {
       ON generation_symbols (repository_id, generation_id, file_path);
     CREATE INDEX IF NOT EXISTS idx_generation_edges_active
       ON generation_edges (repository_id, generation_id, owner_file);
+    CREATE INDEX IF NOT EXISTS idx_generation_resolution_active
+      ON generation_graph_resolution_files (repository_id, generation_id, file_path);
     CREATE INDEX IF NOT EXISTS idx_generation_lexical_active
       ON generation_lexical_documents (repository_id, generation_id, file);
   `);

@@ -550,6 +550,47 @@ export class AtlasStore {
   }
 
   getGraphResolutionCoverage(repoId: string): ResolutionCoverage {
+    const activeGenerationId = this.getActiveGenerationId(repoId);
+    if (activeGenerationId && this.hasTable("generation_graph_resolution_files")) {
+      return this.aggregateGraphResolutionCoverage(repoId, activeGenerationId);
+    }
+
+    return this.aggregateLegacyGraphResolutionCoverage(repoId);
+  }
+
+  private aggregateGraphResolutionCoverage(repoId: string, generationId: string): ResolutionCoverage {
+    const row = this.database
+      .prepare(
+        `SELECT COALESCE(SUM(calls), 0) calls,
+                COALESCE(SUM(resolved_calls), 0) resolved_calls,
+                COALESCE(SUM(unresolved_calls), 0) unresolved_calls,
+                COALESCE(SUM(ambiguous_calls), 0) ambiguous_calls,
+                COALESCE(SUM(extends_count), 0) extends_count,
+                COALESCE(SUM(resolved_extends), 0) resolved_extends,
+                COALESCE(SUM(unresolved_extends), 0) unresolved_extends,
+                COALESCE(SUM(ambiguous_extends), 0) ambiguous_extends,
+                COALESCE(SUM(parser_errors), 0) parser_errors,
+                COALESCE(SUM(unsupported_dynamic), 0) unsupported_dynamic,
+                MAX(may_be_incomplete) may_be_incomplete
+         FROM generation_graph_resolution_files WHERE repository_id = ? AND generation_id = ?`,
+      )
+      .get(repoId, generationId) as GraphResolutionFileRow;
+    return {
+      calls: row.calls,
+      resolvedCalls: row.resolved_calls,
+      unresolvedCalls: row.unresolved_calls,
+      ambiguousCalls: row.ambiguous_calls,
+      extends: row.extends_count,
+      resolvedExtends: row.resolved_extends,
+      unresolvedExtends: row.unresolved_extends,
+      ambiguousExtends: row.ambiguous_extends,
+      parserErrors: row.parser_errors,
+      unsupportedDynamic: row.unsupported_dynamic,
+      mayBeIncomplete: row.may_be_incomplete === 1,
+    };
+  }
+
+  private aggregateLegacyGraphResolutionCoverage(repoId: string): ResolutionCoverage {
     const row = this.database
       .prepare(
         `SELECT COALESCE(SUM(calls), 0) calls,
@@ -582,14 +623,17 @@ export class AtlasStore {
   }
 
   getGraphResolutionDiagnostics(repoId: string): ResolutionDiagnostic[] {
+    const activeGenerationId = this.getActiveGenerationId(repoId);
+    const generationTable = activeGenerationId && this.hasTable("generation_graph_resolution_files");
+    const table = generationTable ? "generation_graph_resolution_files" : "graph_resolution_files";
     const rows = this.database
       .prepare(
         `SELECT diagnostics_json
-         FROM graph_resolution_files
-         WHERE repository_id = ?
+         FROM ${table}
+         WHERE repository_id = ? ${generationTable ? "AND generation_id = ?" : ""}
          ORDER BY file_path ASC`,
       )
-      .all(repoId) as Array<{ diagnostics_json: string }>;
+      .all(...(generationTable ? [repoId, activeGenerationId!] : [repoId])) as Array<{ diagnostics_json: string }>;
     return rows.flatMap((row) => JSON.parse(row.diagnostics_json) as ResolutionDiagnostic[]);
   }
 
@@ -625,6 +669,38 @@ export class AtlasStore {
          (repository_id, generation_id, point_id, vector, file_path, file_hash, payload_json)
          SELECT repository_id, ?, point_id, vector, file_path, file_hash, payload_json
          FROM generation_semantic_vectors
+         WHERE repository_id = ? AND generation_id = ?
+           AND file_path IN (
+             SELECT relative_path
+             FROM file_fact_bindings
+             WHERE repository_id = ? AND generation_id = ?
+           )`,
+      ).run(generationId, generation.repository_id, activeGenerationId, generation.repository_id, generationId);
+      this.database.exec("COMMIT;");
+    } catch (error) {
+      this.database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  copyActiveGraphResolutionToCandidate(generationId: string): void {
+    const generation = this.generationRepository(generationId);
+    const activeGenerationId = this.getActiveGenerationId(generation.repository_id);
+    if (!activeGenerationId || !this.hasTable("generation_graph_resolution_files")) return;
+
+    this.database.exec("BEGIN IMMEDIATE;");
+    try {
+      this.database.prepare(
+        `INSERT OR REPLACE INTO generation_graph_resolution_files
+         (repository_id, generation_id, file_path, calls, resolved_calls, unresolved_calls,
+          ambiguous_calls, extends_count, resolved_extends, unresolved_extends,
+          ambiguous_extends, parser_errors, unsupported_dynamic,
+          may_be_incomplete, diagnostics_json, updated_at)
+         SELECT repository_id, ?, file_path, calls, resolved_calls, unresolved_calls,
+                ambiguous_calls, extends_count, resolved_extends, unresolved_extends,
+                ambiguous_extends, parser_errors, unsupported_dynamic,
+                may_be_incomplete, diagnostics_json, updated_at
+         FROM generation_graph_resolution_files
          WHERE repository_id = ? AND generation_id = ?
            AND file_path IN (
              SELECT relative_path
@@ -699,12 +775,20 @@ export class AtlasStore {
     return id ? this.getGenerationManifestById(id) : undefined;
   }
 
-  writeCandidateGraph(generationId: string, graph: CodeGraph, fileHashes: Map<string, string>): void {
+  writeCandidateGraph(
+    generationId: string,
+    graph: CodeGraph,
+    fileHashes: Map<string, string>,
+    resolutionByFile?: Map<string, GraphResolutionFile>,
+  ): void {
     const generation = this.generationRepository(generationId);
     this.database.exec("BEGIN IMMEDIATE;");
     try {
       this.database.prepare("DELETE FROM generation_edges WHERE generation_id = ?").run(generationId);
       this.database.prepare("DELETE FROM generation_symbols WHERE generation_id = ?").run(generationId);
+      if (this.hasTable("generation_graph_resolution_files")) {
+        this.database.prepare("DELETE FROM generation_graph_resolution_files WHERE generation_id = ?").run(generationId);
+      }
       const insertNode = this.database.prepare(
         `INSERT INTO generation_symbols
          (repository_id, generation_id, id, type, name, qualified_name, file_path, start_line, end_line)
@@ -724,6 +808,11 @@ export class AtlasStore {
         const owner = nodes.get(edge.from)?.file;
         if (!owner) throw new Error(`Missing source node for edge: ${edge.from}`);
         insertEdge.run(generation.repository_id, generationId, owner, edge.from, edge.to, edge.type, edge.resolutionMethod ?? null, edge.evidenceKind ?? null, edge.confidence ?? null, edge.resolutionSource?.file ?? null, edge.resolutionSource?.line ?? null);
+      }
+      if (resolutionByFile && this.hasTable("generation_graph_resolution_files")) {
+        for (const [file, resolution] of resolutionByFile) {
+          this.upsertGenerationGraphResolutionFile(generation.repository_id, generationId, file, resolution);
+        }
       }
       void fileHashes;
       this.database.exec("COMMIT;");
@@ -1557,6 +1646,71 @@ export class AtlasStore {
       )
       .run(
         repoId,
+        file,
+        coverage.calls,
+        coverage.resolvedCalls,
+        coverage.unresolvedCalls,
+        coverage.ambiguousCalls,
+        coverage.extends,
+        coverage.resolvedExtends,
+        coverage.unresolvedExtends,
+        coverage.ambiguousExtends,
+        coverage.parserErrors,
+        coverage.unsupportedDynamic,
+        coverage.mayBeIncomplete ? 1 : 0,
+        JSON.stringify(diagnostics),
+        new Date().toISOString(),
+      );
+  }
+
+  private upsertGenerationGraphResolutionFile(
+    repoId: string,
+    generationId: string,
+    file: string,
+    resolution: GraphResolutionFile,
+  ): void {
+    const coverage = resolution.coverage;
+    const diagnostics = resolution.diagnostics.map((diagnostic) =>
+      diagnostic.kind === "ambiguous"
+        ? {
+            kind: diagnostic.kind,
+            candidates: [...diagnostic.candidates].sort(),
+            ambiguityReason: diagnostic.ambiguityReason,
+            source: diagnostic.source,
+          }
+        : {
+            kind: diagnostic.kind,
+            reason: diagnostic.reason,
+            source: diagnostic.source,
+            unsupportedDynamic: diagnostic.unsupportedDynamic ?? false,
+          },
+    );
+    this.database
+      .prepare(
+        `INSERT INTO generation_graph_resolution_files
+         (repository_id, generation_id, file_path, calls, resolved_calls, unresolved_calls,
+          ambiguous_calls, extends_count, resolved_extends, unresolved_extends,
+          ambiguous_extends, parser_errors, unsupported_dynamic,
+          may_be_incomplete, diagnostics_json, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (repository_id, generation_id, file_path)
+         DO UPDATE SET calls = excluded.calls,
+                       resolved_calls = excluded.resolved_calls,
+                       unresolved_calls = excluded.unresolved_calls,
+                       ambiguous_calls = excluded.ambiguous_calls,
+                       extends_count = excluded.extends_count,
+                       resolved_extends = excluded.resolved_extends,
+                       unresolved_extends = excluded.unresolved_extends,
+                       ambiguous_extends = excluded.ambiguous_extends,
+                       parser_errors = excluded.parser_errors,
+                       unsupported_dynamic = excluded.unsupported_dynamic,
+                       may_be_incomplete = excluded.may_be_incomplete,
+                       diagnostics_json = excluded.diagnostics_json,
+                       updated_at = excluded.updated_at`,
+      )
+      .run(
+        repoId,
+        generationId,
         file,
         coverage.calls,
         coverage.resolvedCalls,

@@ -32,6 +32,14 @@ The disabled-copy path now filters those preserved rows through the candidate's
 current `file_fact_bindings`, so deleted files cannot re-enter the published
 semantic generation.
 
+The final Task 7 cross-task fixes persist v2 graph resolution coverage and
+diagnostics in generation-scoped rows, and status/diagnostic readers select the
+active generation state while retaining legacy fallback. Reused graph state is
+copied into unchanged candidates so repeated syncs do not zero telemetry. Empty
+supported `.ts` and `.js` files now become complete zero-fact manifest units,
+and semantic lifecycle results report the candidate file count alongside vector
+counts.
+
 ## Impact analysis
 
 GitNexus impact analysis could not run: the worktree has no GitNexus index, and
@@ -43,10 +51,11 @@ sources.
 
 ## Validation
 
-- `node --import tsx/esm --test test/phase14a-indexing.test.ts test/phase4-index-pipeline.test.ts` — pass, 13/13.
-- `node --import tsx/esm --test test/phase10-mcp.test.ts test/phase11-integration.test.ts` — pass, 16/16.
+- `node --import tsx/esm --test test/phase14a-*.test.ts` — pass, 67/67.
+- `node --import tsx/esm --test test/phase14a-indexing.test.ts test/phase14a-generation.test.ts test/phase14a-equivalence.test.ts test/phase4-index-pipeline.test.ts test/coverage-diagnostics.test.ts test/phase5-provider-boundaries.test.ts` — pass, 41/41.
+- `node --import tsx/esm --test test/graph.test.ts test/phase14a-readonly.test.ts test/phase7-resolution-evidence.test.ts test/coverage-diagnostics.test.ts` — pass, 26/26.
+- `node --import tsx/esm --test test/phase10-mcp.test.ts test/phase11-integration.test.ts test/phase12-cli-regression.test.ts test/phase13-remediation.test.ts` — pass, 44/44.
 - `node --import tsx/esm --test test/phase5-provider-boundaries.test.ts` — pass, 6/6.
-- `node --import tsx/esm --test test/graph.test.ts test/phase3-lexical.test.ts test/phase12-cli-regression.test.ts test/phase13-remediation.test.ts` — pass, 36/36.
 - `npx tsc --noEmit` — pass.
 - `git diff --check` — pass.
 
@@ -65,3 +74,8 @@ Task 8 race handling and Tasks 9–11 were not started.
   boundary because the `VectorStore` contract has no atomic active-generation
   transaction; the existing standalone semantic path retains its copy-on-write
   cleanup behavior.
+- Broader standalone runs of `test/capability-state-regression.test.ts` and
+  `test/phase6-local-vector.test.ts` still fail on unrelated provider-state
+  expectations/legacy database setup (`no such table: repositories`); the
+  affected Phase 14A, graph/status, semantic provider, MCP, CLI, and Phase 13
+  suites pass when run in the focused commands above.

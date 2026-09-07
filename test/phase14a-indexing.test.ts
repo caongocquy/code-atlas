@@ -10,6 +10,7 @@ import type { VectorPoint, VectorStore } from "../src/core/semantic/vector-store
 import { getRepositoryIdentity } from "../src/core/repository/repository-identity.js";
 import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
 import { CURRENT_INDEX_VERSION_DOMAINS } from "../src/core/repository/index-version.js";
+import { getRepositoryStatusReadOnly } from "../src/core/repository/repository-status.service.js";
 
 function semanticFixtures(): { embeddingProvider: EmbeddingProvider & { calls: number; fail: boolean }; vectorStore: VectorStore; upsertCalls: number } {
   const points = new Map<string, VectorPoint>();
@@ -229,12 +230,77 @@ test("enabled semantic indexing embeds shared facts and publishes active semanti
     assert.equal(result.kind, "published");
     assert.equal(fixtures.embeddingProvider.calls > 0, true);
     assert.equal(fixtures.upsertCalls > 0, true);
+    assert.equal(result.semantic?.files, 1);
+    assert.equal(result.semantic?.points > 0, true);
 
     const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
     try {
       const repository = store.ensureRepository(getRepositoryIdentity(repoPath));
       assert.equal(store.countSemanticVectors(repository.id) > 0, true);
       assert.equal(await fixtures.vectorStore.count(repository.id) > 0, true);
+    } finally {
+      store.close();
+    }
+  } finally {
+    await rm(repoPath, { recursive: true, force: true });
+  }
+});
+
+test("v2 publication preserves graph resolution coverage and diagnostics for status readers", async () => {
+  const repoPath = await mkdtemp(path.join(tmpdir(), "code-atlas-phase14a-resolution-state-"));
+
+  try {
+    await writeFile(path.join(repoPath, "dynamic.ts"), "export function dynamic(obj: unknown, method: string) { return obj[method](); }\n");
+    const result = await indexRepository(repoPath, { skipGit: true });
+    assert.equal(result.kind, "published");
+
+    const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
+    try {
+      const repository = store.ensureRepository(getRepositoryIdentity(repoPath));
+      const coverage = store.getGraphResolutionCoverage(repository.id);
+      const diagnostics = store.getGraphResolutionDiagnostics(repository.id);
+      assert.equal(coverage.mayBeIncomplete, true);
+      assert.equal(coverage.unsupportedDynamic > 0, true);
+      assert.equal(diagnostics.some((item) => item.kind === "unresolved" && item.unsupportedDynamic === true), true);
+
+      const status = await getRepositoryStatusReadOnly(repoPath);
+      assert.deepEqual(status.graph.resolutionCoverage, coverage);
+      const second = await syncRepository(repoPath, { skipGit: true });
+      assert.equal(second.kind, "published");
+      const afterSync = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
+      try {
+        assert.deepEqual(afterSync.getGraphResolutionCoverage(repository.id), coverage);
+        assert.deepEqual(afterSync.getGraphResolutionDiagnostics(repository.id), diagnostics);
+      } finally {
+        afterSync.close();
+      }
+    } finally {
+      store.close();
+    }
+  } finally {
+    await rm(repoPath, { recursive: true, force: true });
+  }
+});
+
+test("supported empty source files publish as complete zero-fact units", async () => {
+  const repoPath = await mkdtemp(path.join(tmpdir(), "code-atlas-phase14a-empty-file-"));
+
+  try {
+    await writeFile(path.join(repoPath, "empty.ts"), "");
+    await writeFile(path.join(repoPath, "empty.js"), "");
+    await writeFile(path.join(repoPath, "notes.txt"), "");
+    const result = await indexRepository(repoPath, { skipGit: true });
+    assert.equal(result.kind, "published");
+
+    const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
+    try {
+      const repository = store.ensureRepository(getRepositoryIdentity(repoPath));
+      const manifest = store.getGenerationManifest(repository.id);
+      assert.deepEqual(manifest?.files.map((file) => file.relativePath), ["empty.js", "empty.ts"]);
+      const graph = store.loadGraph(repository.id);
+      assert.equal(graph.nodes.filter((node) => node.type === "file").length, 2);
+      assert.equal(graph.nodes.some((node) => node.type !== "file"), false);
+      assert.equal(store.getFileStates(repository.id).size, 2);
     } finally {
       store.close();
     }

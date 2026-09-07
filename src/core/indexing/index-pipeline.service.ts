@@ -61,7 +61,7 @@ function semanticResult(
 ): SemanticIndexResult {
   return {
     repoPath, repoId, status, version: VECTOR_INDEX_VERSION,
-    fullReindex: false, files: candidate ? 0 : 0, chunks: candidate?.chunks ?? 0,
+    fullReindex: false, files: candidate?.files ?? 0, chunks: candidate?.chunks ?? 0,
     points: candidate?.points.length ?? 0, embeddedSymbols: candidate?.embeddedSymbols ?? 0,
     cleanedOldPoints: 0, embeddingBatches: candidate?.embeddingBatches ?? 0,
     vectorBatches: candidate?.points.length ? 1 : 0, addedFiles: 0, updatedFiles: 0,
@@ -110,7 +110,7 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
     for (const [relativePath, current] of currentFiles) {
       let source = sources.get(relativePath);
       const adapter = getLanguageAdapter(relativePath);
-      if (!source || !adapter) continue;
+      if (source === undefined || !adapter) continue;
       const parserIdentity = parserMetadata(adapter);
       const expected = { contentHash: current.contentHash, language: current.language, parserIdentity, factsVersion: CURRENT_INDEX_VERSION_DOMAINS.factsVersion, factsSchemaVersion: CURRENT_INDEX_VERSION_DOMAINS.schemaVersion };
       let key = factBlobKey(expected);
@@ -197,7 +197,8 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       : await buildCodeGraphWithResolutionFromFacts(repoPath, units, undefined, repoId);
     recordIndexWork(counters, "filesResolved", graph.resolutionByFile.size);
     if (plan.fullGraphResolution && !graphCompatible) recordIndexWork(counters, "fullResolutionFallbacks");
-    store.writeCandidateGraph(generation.id, graph.graph, changes.fileHashes);
+    store.writeCandidateGraph(generation.id, graph.graph, changes.fileHashes, graphCompatible ? undefined : graph.resolutionByFile);
+    if (graphCompatible) store.copyActiveGraphResolutionToCandidate(generation.id);
     const lexical: LexicalFileUpdate[] = units.map((unit) => ({ file: unit.relativePath, fileHash: unit.facts.contentHash, documents: toLexicalDocumentsFromFacts(repoId, unit) }));
     store.writeCandidateLexicalDocuments(generation.id, lexical);
     const semanticStartedAt = performance.now();

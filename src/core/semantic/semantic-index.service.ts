@@ -43,6 +43,7 @@ import {
 import { codeChunksFromFacts, type IndexedSourceUnit } from "../indexing/indexing.types.js";
 
 export type SemanticCandidate = {
+  files: number;
   points: VectorPoint[];
   chunks: number;
   embeddedSymbols: number;
@@ -103,6 +104,7 @@ export async function prepareSemanticCandidateFromFacts(
   }
 
   return {
+    files: units.length,
     points,
     chunks: chunks.length,
     embeddedSymbols: points.length,
