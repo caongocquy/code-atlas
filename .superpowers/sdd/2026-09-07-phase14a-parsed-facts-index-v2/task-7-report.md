@@ -21,6 +21,13 @@ compatible and non-mandatory. Graph, lexical, semantic, file-capability, and
 version metadata writes are staged before one transactional active-generation
 pointer switch. Empty repositories publish valid zero-symbol generations.
 
+The remaining Task 7 review fixes now upsert embedded candidate points through
+the configured `VectorStore` API, while retaining generation-scoped SQLite
+staging. A provider preparation failure or unavailable provider fails the run
+when semantic capability is already active, retaining the previous generation;
+disabled semantic runs copy the active semantic rows into the new candidate so
+they do not hide existing semantic data.
+
 ## Impact analysis
 
 GitNexus impact analysis could not run: the worktree has no GitNexus index, and
@@ -32,9 +39,10 @@ sources.
 
 ## Validation
 
-- `node --import tsx/esm --test test/phase14a-indexing.test.ts test/phase4-index-pipeline.test.ts` — pass, 11/11.
+- `node --import tsx/esm --test test/phase14a-indexing.test.ts test/phase4-index-pipeline.test.ts` — pass, 13/13.
 - `node --import tsx/esm --test test/phase10-mcp.test.ts test/phase11-integration.test.ts` — pass, 16/16.
 - `node --import tsx/esm --test test/phase5-provider-boundaries.test.ts` — pass, 6/6.
+- `node --import tsx/esm --test test/graph.test.ts test/phase3-lexical.test.ts test/phase12-cli-regression.test.ts test/phase13-remediation.test.ts` — pass, 36/36.
 - `npx tsc --noEmit` — pass.
 - `git diff --check` — pass.
 
@@ -48,3 +56,8 @@ Task 8 race handling and Tasks 9–11 were not started.
   resources remain optional and are closed by the existing adapters.
 - Minimal CLI and MCP adapters narrow failed outcomes before formatting; progress
   UX remains unchanged.
+- The configured external vector store receives candidate upserts. External
+  stale-point cleanup is intentionally not performed by this generation
+  boundary because the `VectorStore` contract has no atomic active-generation
+  transaction; the existing standalone semantic path retains its copy-on-write
+  cleanup behavior.

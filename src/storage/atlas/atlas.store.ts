@@ -597,6 +597,39 @@ export class AtlasStore {
     return this.getRepositoryIndexState(repositoryId)?.activeGenerationId;
   }
 
+  hasActiveSemanticCapability(repositoryId: string): boolean {
+    const row = this.database
+      .prepare("SELECT active_provenance_metadata FROM repository_index_state WHERE repository_id = ?")
+      .get(repositoryId) as { active_provenance_metadata: string } | undefined;
+    if (!row) return false;
+    try {
+      return (JSON.parse(row.active_provenance_metadata) as { semanticEnabled?: boolean }).semanticEnabled === true;
+    } catch {
+      return false;
+    }
+  }
+
+  copyActiveSemanticVectorsToCandidate(generationId: string): void {
+    const generation = this.generationRepository(generationId);
+    const activeGenerationId = this.getActiveGenerationId(generation.repository_id);
+    if (!activeGenerationId) return;
+
+    this.database.exec("BEGIN IMMEDIATE;");
+    try {
+      this.database.prepare(
+        `INSERT OR REPLACE INTO generation_semantic_vectors
+         (repository_id, generation_id, point_id, vector, file_path, file_hash, payload_json)
+         SELECT repository_id, ?, point_id, vector, file_path, file_hash, payload_json
+         FROM generation_semantic_vectors
+         WHERE repository_id = ? AND generation_id = ?`,
+      ).run(generationId, generation.repository_id, activeGenerationId);
+      this.database.exec("COMMIT;");
+    } catch (error) {
+      this.database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
   beginCandidateGeneration(generation: IndexGeneration): void {
     this.ensureRepositoryId(generation.repositoryId);
     this.database.exec("BEGIN IMMEDIATE;");

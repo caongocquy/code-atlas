@@ -98,7 +98,17 @@ export async function prepareSemanticCandidateFromFacts(
     }
   }
 
-  return { points, chunks: chunks.length, embeddedSymbols: points.length, embeddingBatches: batches.length, providerIdentity };
+  for (const batch of chunkArray(points, UPSERT_BATCH_SIZE)) {
+    await vectorStore.upsert(batch);
+  }
+
+  return {
+    points,
+    chunks: chunks.length,
+    embeddedSymbols: points.length,
+    embeddingBatches: batches.length,
+    providerIdentity,
+  };
 }
 
 type PreparedFile = {

@@ -60,6 +60,7 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
   const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
   const repoId = store.ensureRepository(getRepositoryIdentity(repoPath)).id;
   let activeGenerationId = store.getActiveGenerationId(repoId);
+  let semanticCandidate: SemanticCandidate | undefined;
 
   try {
     const storedLexicalVersion = store.getVersion(repoId, "lexical");
@@ -111,38 +112,48 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
     const lexical: LexicalFileUpdate[] = units.map((unit) => ({ file: unit.relativePath, fileHash: unit.facts.contentHash, documents: toLexicalDocumentsFromFacts(repoId, unit) }));
     store.writeCandidateLexicalDocuments(generation.id, lexical);
     const semanticStartedAt = performance.now();
-    let semanticCandidate: SemanticCandidate | undefined;
     let semantic: SemanticIndexResult | undefined;
+    const activeSemanticEnabled = store.hasActiveSemanticCapability(repoId);
+    let semanticPreserved = false;
     if (options.includeSemantic) {
       const providers = options.semanticProviders;
       if (!providers) {
+        if (activeSemanticEnabled) throw new Error("Semantic provider is not configured while an active semantic capability exists");
         semantic = semanticResult(repoPath, repoId, "not-configured", semanticStartedAt);
       } else {
         try {
           const available = await providers.embeddingProvider.isAvailable() && await providers.vectorStore.isAvailable();
           if (!available) {
+            if (activeSemanticEnabled) throw new Error("Semantic provider is unavailable while an active semantic capability exists");
             semantic = semanticResult(repoPath, repoId, "unavailable", semanticStartedAt);
           } else {
             semanticCandidate = await prepareSemanticCandidateFromFacts(repoId, generation.id, units, providers.embeddingProvider, providers.vectorStore);
             semantic = semanticResult(repoPath, repoId, "indexed", semanticStartedAt, semanticCandidate);
-            store.writeCandidateSemanticVectors(generation.id, semanticCandidate.points);
           }
         } catch (error) {
+          if (activeSemanticEnabled) throw error;
           semantic = semanticResult(repoPath, repoId, "unavailable", semanticStartedAt, undefined, error instanceof Error ? error.message : String(error));
         }
       }
+    } else if (activeSemanticEnabled) {
+      store.copyActiveSemanticVectorsToCandidate(generation.id);
+      semanticPreserved = true;
     }
+    if (semanticCandidate) store.writeCandidateSemanticVectors(generation.id, semanticCandidate.points);
+    const previousSemanticStates = semanticPreserved ? store.getFileCapabilityStates(repoId, "semantic") : undefined;
     const fileStates = units.flatMap((unit) => {
       const graphCount = graph.graph.nodes.filter((node) => node.file === unit.relativePath).length;
       const lexicalCount = lexical.find((update) => update.file === unit.relativePath)?.documents.length ?? 0;
       const semanticCount = semanticCandidate?.points.filter((point) => point.payload.file === unit.relativePath).length ?? 0;
+      const preservedSemantic = previousSemanticStates?.get(unit.relativePath);
       return [
         { file: unit.relativePath, capability: "graph" as const, input: { fileHash: unit.facts.contentHash, version: GRAPH_INDEX_VERSION, state: "ready" as const, generation: generation.id, itemCount: graphCount } },
         { file: unit.relativePath, capability: "lexical" as const, input: { fileHash: unit.facts.contentHash, version: LEXICAL_INDEX_VERSION, state: "ready" as const, generation: generation.id, itemCount: lexicalCount } },
         ...(semanticCandidate ? [{ file: unit.relativePath, capability: "semantic" as const, input: { fileHash: unit.facts.contentHash, version: VECTOR_INDEX_VERSION, state: "ready" as const, generation: generation.id, providerIdentity: semanticCandidate.providerIdentity, itemCount: semanticCount } }] : []),
+        ...(preservedSemantic ? [{ file: unit.relativePath, capability: "semantic" as const, input: { fileHash: preservedSemantic.fileHash, version: preservedSemantic.version, state: preservedSemantic.state, generation: generation.id, providerIdentity: preservedSemantic.providerIdentity, itemCount: preservedSemantic.itemCount, lastError: preservedSemantic.lastError } }] : []),
       ];
     });
-    store.publishCandidateGeneration(generation.id, { requireGraph: true, requireLexical: true, semanticEnabled: semanticCandidate !== undefined, graphStaged: true, lexicalStaged: true, semanticStaged: semanticCandidate !== undefined, deletedFiles: plan.removedPaths, fileStates, versions: { graph: GRAPH_INDEX_VERSION, lexical: LEXICAL_INDEX_VERSION, ...(semanticCandidate ? { semantic: VECTOR_INDEX_VERSION } : {}) } });
+    store.publishCandidateGeneration(generation.id, { requireGraph: true, requireLexical: true, semanticEnabled: semanticCandidate !== undefined || semanticPreserved, graphStaged: true, lexicalStaged: true, semanticStaged: semanticCandidate !== undefined || semanticPreserved, deletedFiles: plan.removedPaths, fileStates, versions: { graph: GRAPH_INDEX_VERSION, lexical: LEXICAL_INDEX_VERSION, ...(semanticCandidate ? { semantic: VECTOR_INDEX_VERSION } : {}) } });
 
     const totalMs = performance.now() - startedAt;
     const graphCurrent = operation === "sync" && plan.parsePaths.length === 0 && plan.removedPaths.length === 0;

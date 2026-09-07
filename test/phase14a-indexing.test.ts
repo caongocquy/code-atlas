@@ -10,16 +10,19 @@ import type { VectorPoint, VectorStore } from "../src/core/semantic/vector-store
 import { getRepositoryIdentity } from "../src/core/repository/repository-identity.js";
 import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
 
-function semanticFixtures(): { embeddingProvider: EmbeddingProvider & { calls: number }; vectorStore: VectorStore } {
+function semanticFixtures(): { embeddingProvider: EmbeddingProvider & { calls: number; fail: boolean }; vectorStore: VectorStore; upsertCalls: number } {
   const points = new Map<string, VectorPoint>();
+  const counters = { upsertCalls: 0 };
   const provider = {
     id: "task7-embedding",
     version: "1",
     dimensions: 2,
     calls: 0,
+    fail: false,
     isAvailable: async () => true,
     embedBatch: async (texts: string[]) => {
       provider.calls += 1;
+      if (provider.fail) throw new Error("temporary embedding failure");
       return texts.map(() => [1, 0]);
     },
   };
@@ -32,9 +35,15 @@ function semanticFixtures(): { embeddingProvider: EmbeddingProvider & { calls: n
       search: async () => [],
       count: async () => points.size,
       getIndexedFileStates: async () => new Map(),
-      upsert: async (values) => values.forEach((point) => points.set(String(point.id), point)),
+      upsert: async (values) => {
+        counters.upsertCalls += 1;
+        values.forEach((point) => points.set(String(point.id), point));
+      },
       deletePointIds: async () => undefined,
       deleteFile: async () => undefined,
+    },
+    get upsertCalls() {
+      return counters.upsertCalls;
     },
   };
 }
@@ -108,11 +117,13 @@ test("enabled semantic indexing embeds shared facts and publishes active semanti
     });
     assert.equal(result.kind, "published");
     assert.equal(fixtures.embeddingProvider.calls > 0, true);
+    assert.equal(fixtures.upsertCalls > 0, true);
 
     const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
     try {
       const repository = store.ensureRepository(getRepositoryIdentity(repoPath));
       assert.equal(store.countSemanticVectors(repository.id) > 0, true);
+      assert.equal(await fixtures.vectorStore.count(repository.id) > 0, true);
     } finally {
       store.close();
     }
@@ -152,6 +163,79 @@ test("unavailable semantic indexing remains non-mandatory", async () => {
     });
     assert.equal(result.kind, "published");
     assert.equal(fixtures.embeddingProvider.calls, 0);
+  } finally {
+    await rm(repoPath, { recursive: true, force: true });
+  }
+});
+
+test("a temporary semantic preparation failure retains the active semantic generation", async () => {
+  const repoPath = await mkdtemp(path.join(tmpdir(), "code-atlas-phase14a-semantic-failure-"));
+  const fixtures = semanticFixtures();
+
+  try {
+    await writeFile(path.join(repoPath, "source.ts"), "export function source() { return true; }\n");
+    const first = await indexRepository(repoPath, {
+      skipGit: true,
+      includeSemantic: true,
+      semanticProviders: fixtures,
+    });
+    assert.equal(first.kind, "published");
+    const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
+    const repository = store.ensureRepository(getRepositoryIdentity(repoPath));
+    const activeBefore = store.getActiveGenerationId(repository.id);
+    const semanticRowsBefore = store.countSemanticVectors(repository.id);
+    store.close();
+
+    fixtures.embeddingProvider.fail = true;
+    const failed = await syncRepository(repoPath, {
+      skipGit: true,
+      includeSemantic: true,
+      semanticProviders: fixtures,
+    });
+    assert.equal(failed.kind, "failed");
+    assert.equal(failed.published, false);
+
+    const after = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
+    try {
+      assert.equal(after.getActiveGenerationId(repository.id), activeBefore);
+      assert.equal(after.countSemanticVectors(repository.id), semanticRowsBefore);
+    } finally {
+      after.close();
+    }
+  } finally {
+    await rm(repoPath, { recursive: true, force: true });
+  }
+});
+
+test("disabled semantic sync preserves active semantic rows", async () => {
+  const repoPath = await mkdtemp(path.join(tmpdir(), "code-atlas-phase14a-semantic-preserved-"));
+  const fixtures = semanticFixtures();
+
+  try {
+    await writeFile(path.join(repoPath, "source.ts"), "export function source() { return true; }\n");
+    const first = await indexRepository(repoPath, {
+      skipGit: true,
+      includeSemantic: true,
+      semanticProviders: fixtures,
+    });
+    assert.equal(first.kind, "published");
+
+    const before = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
+    const repository = before.ensureRepository(getRepositoryIdentity(repoPath));
+    const activeBefore = before.getActiveGenerationId(repository.id);
+    const semanticRowsBefore = before.countSemanticVectors(repository.id);
+    before.close();
+
+    const result = await syncRepository(repoPath, { skipGit: true });
+    assert.equal(result.kind, "published");
+
+    const after = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
+    try {
+      assert.notEqual(after.getActiveGenerationId(repository.id), activeBefore);
+      assert.equal(after.countSemanticVectors(repository.id), semanticRowsBefore);
+    } finally {
+      after.close();
+    }
   } finally {
     await rm(repoPath, { recursive: true, force: true });
   }
