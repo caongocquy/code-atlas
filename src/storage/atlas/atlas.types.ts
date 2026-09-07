@@ -105,4 +105,14 @@ export type AtlasFactBlob = {
   facts: ParsedFactsBlob;
 };
 
+export type AtlasFactBlobRow = {
+  fact_blob_key: FactBlobKey;
+  content_hash: string;
+  language: ParsedFactsBlob["language"];
+  parser_identity_json: string;
+  facts_version: string;
+  facts_schema_version: string;
+  payload_json: string;
+};
+
 export type AtlasFileFactBinding = FileFactBinding;

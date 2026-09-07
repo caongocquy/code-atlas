@@ -187,8 +187,21 @@ export function initializeAtlasSchema(database: DatabaseSync): void {
       FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS fact_blobs (
+      fact_blob_key TEXT PRIMARY KEY,
+      content_hash TEXT NOT NULL,
+      language TEXT NOT NULL,
+      parser_identity_json TEXT NOT NULL,
+      facts_version TEXT NOT NULL,
+      facts_schema_version TEXT NOT NULL,
+      payload_json TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_semantic_vectors_repo_file
       ON semantic_vectors (repository_id, file_path);
+
+    CREATE INDEX IF NOT EXISTS idx_fact_blobs_content_hash
+      ON fact_blobs (content_hash);
   `);
 
   const capabilityColumns = database

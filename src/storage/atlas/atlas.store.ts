@@ -4,11 +4,15 @@ import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 
 import { initializeAtlasSchema, ATLAS_SCHEMA_VERSION } from "./atlas.schema.js";
+import { decodeFacts, encodeFacts } from "../../core/facts/facts-codec.js";
+import { factBlobKey } from "../../core/facts/facts-identity.js";
+import type { FactBlobKey, ParsedFactsBlob, ParserIdentity } from "../../core/facts/facts.types.js";
 import type {
   AtlasCapability,
   AtlasFileCapabilityState,
   AtlasIndexAxis,
   AtlasRepository,
+  AtlasFactBlobRow,
   CapabilityState,
   FileCapabilityStateInput,
   GraphFileState,
@@ -892,6 +896,87 @@ export class AtlasStore {
     capability: AtlasCapability,
   ): AtlasFileCapabilityState | undefined {
     return this.getFileCapabilityStates(repoId, capability).get(file);
+  }
+
+  getFactBlob(key: FactBlobKey): string | undefined {
+    const row = this.database
+      .prepare("SELECT * FROM fact_blobs WHERE fact_blob_key = ?")
+      .get(key) as AtlasFactBlobRow | undefined;
+    if (!row) return undefined;
+
+    try {
+      const lookup = decodeFacts(row.payload_json, {
+        key: row.fact_blob_key,
+        contentHash: row.content_hash,
+        language: row.language,
+        parserIdentity: JSON.parse(row.parser_identity_json) as ParserIdentity,
+        factsVersion: row.facts_version,
+        factsSchemaVersion: row.facts_schema_version,
+      });
+      return lookup.kind === "hit" ? row.payload_json : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  putFactBlob(key: FactBlobKey, facts: ParsedFactsBlob): void {
+    if (factBlobKey(facts) !== key) {
+      throw new Error("Fact blob key does not match facts provenance");
+    }
+
+    const payload = encodeFacts(facts);
+    const parserIdentity = JSON.stringify(facts.parserIdentity);
+    const existing = this.database
+      .prepare("SELECT * FROM fact_blobs WHERE fact_blob_key = ?")
+      .get(key) as AtlasFactBlobRow | undefined;
+
+    if (existing) {
+      let valid = false;
+      try {
+        valid = decodeFacts(existing.payload_json, {
+          key: existing.fact_blob_key,
+          contentHash: existing.content_hash,
+          language: existing.language,
+          parserIdentity: JSON.parse(existing.parser_identity_json) as ParserIdentity,
+          factsVersion: existing.facts_version,
+          factsSchemaVersion: existing.facts_schema_version,
+        }).kind === "hit";
+      } catch {
+        valid = false;
+      }
+      if (valid) return;
+    }
+
+    this.database.exec("BEGIN IMMEDIATE;");
+    try {
+      this.database
+        .prepare(
+          `INSERT INTO fact_blobs
+           (fact_blob_key, content_hash, language, parser_identity_json,
+            facts_version, facts_schema_version, payload_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(fact_blob_key) DO UPDATE SET
+             content_hash = excluded.content_hash,
+             language = excluded.language,
+             parser_identity_json = excluded.parser_identity_json,
+             facts_version = excluded.facts_version,
+             facts_schema_version = excluded.facts_schema_version,
+             payload_json = excluded.payload_json`,
+        )
+        .run(
+          key,
+          facts.contentHash,
+          facts.language,
+          parserIdentity,
+          facts.factsVersion,
+          facts.factsSchemaVersion,
+          payload,
+        );
+      this.database.exec("COMMIT;");
+    } catch (error) {
+      this.database.exec("ROLLBACK;");
+      throw error;
+    }
   }
 
   setFileCapabilityState(
