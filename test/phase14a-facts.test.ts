@@ -8,7 +8,10 @@ import type {
   IndexVersionDomains,
   ParsedFactsBlob,
 } from "../src/core/facts/facts.types.js";
-import { CURRENT_INDEX_VERSION_DOMAINS } from "../src/core/repository/index-version.js";
+import {
+  CURRENT_INDEX_VERSION_DOMAINS,
+  INDEX_SCHEMA_VERSION,
+} from "../src/core/repository/index-version.js";
 
 const parserIdentity = {
   language: "typescript" as const,
@@ -101,19 +104,57 @@ test("resolution-only and derived-only version changes retain the facts domain",
   assert.equal(factBlobKey({ ...facts, factsVersion: derivedOnly.factsVersion }), factBlobKey(facts));
 });
 
-test("persisted facts fixture contains only path-neutral structural evidence", () => {
+test("storage schema version is independently owned from facts schema version", () => {
+  assert.equal(CURRENT_INDEX_VERSION_DOMAINS.schemaVersion, INDEX_SCHEMA_VERSION);
+});
+
+test("persisted facts exercise every path-neutral DTO and reject path state", () => {
   const facts = factInput({
+    parserDiagnostics: ["missing:semicolon"],
     symbols: [{
       localId: "symbol:1",
       name: "parse",
       kind: "function",
-      range: { startLine: 1, endLine: 1 },
+      range: { startLine: 1, endLine: 1, startColumn: 0, endColumn: 5 },
+      scopeId: "scope:1",
+      declaredQualifiedName: "Parser.parse",
+    }],
+    containmentScopes: [{
+      localId: "scope:1",
+      kind: "class",
+      name: "Parser",
+      parentId: "scope:0",
+      range: { startLine: 1, endLine: 10, startColumn: 0, endColumn: 1 },
     }],
     imports: [{
       localId: "import:1",
       moduleSpecifier: "./parser.js",
+      importedName: "parse",
+      localName: "parseSource",
       kind: "named",
       range: { startLine: 1, endLine: 1 },
+    }],
+    exports: [{
+      localId: "export:1",
+      exportedName: "parse",
+      localName: "parseSource",
+      moduleSpecifier: "./parser.js",
+      kind: "named",
+      range: { startLine: 2, endLine: 2 },
+    }],
+    references: [{
+      localId: "reference:1",
+      name: "parseSource",
+      ownerId: "symbol:1",
+      scopeId: "scope:1",
+      range: { startLine: 3, endLine: 3 },
+    }],
+    callSites: [{
+      localId: "call:1",
+      calleeText: "parseSource()",
+      callerId: "symbol:1",
+      scopeId: "scope:1",
+      range: { startLine: 4, endLine: 4 },
     }],
     bindingSeeds: [{
       localId: "binding:1",
@@ -121,10 +162,17 @@ test("persisted facts fixture contains only path-neutral structural evidence", (
       bindingKind: "import",
       sourceModule: "./parser.js",
       importedName: "parse",
+      ownerId: "symbol:1",
+      range: { startLine: 1, endLine: 1 },
+    }],
+    declaredTypeAnnotations: [{
+      localId: "type:1",
+      ownerId: "symbol:1",
+      text: "ParserResult",
       range: { startLine: 1, endLine: 1 },
     }],
   });
-  const forbidden = /(?:repository|relativePath|resolved|target|confidence|evidence|nodeId|edgeId)/i;
+  const forbidden = /(?:repository|path|filePath|sourcePath|resolved|target|confidence|evidence|nodeId|edgeId)/i;
 
   function assertPathNeutral(value: unknown): void {
     if (Array.isArray(value)) {
@@ -140,4 +188,6 @@ test("persisted facts fixture contains only path-neutral structural evidence", (
   }
 
   assertPathNeutral(facts);
+  assert.throws(() => assertPathNeutral({ filePath: "src/parser.ts" }));
+  assert.throws(() => assertPathNeutral({ sourcePath: "src/parser.ts" }));
 });
