@@ -61,9 +61,10 @@ test("MCP exposes the structured CodeAtlas capability surface", async () => {
 });
 
 test("MCP repository status does not initialize optional providers", async () => {
+  const repoPath = await mkdtemp(path.join(tmpdir(), "code-atlas-phase-10-status-"));
   const { client, server } = await connectedClient();
   try {
-    const result = await client.callTool({ name: "repository_status", arguments: {} });
+    const result = await client.callTool({ name: "repository_status", arguments: { repoPath } });
     assert.equal(result.isError, undefined);
     const text = result.content.find((item) => item.type === "text");
     assert.ok(text && text.type === "text");
@@ -73,6 +74,7 @@ test("MCP repository status does not initialize optional providers", async () =>
   } finally {
     await client.close();
     await server.close();
+    await rm(repoPath, { recursive: true, force: true });
   }
 });
 
