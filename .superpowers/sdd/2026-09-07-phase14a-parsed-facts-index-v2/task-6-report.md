@@ -15,13 +15,14 @@ Implemented only the single-parse facts seam for graph, lexical, and semantic co
 - Deduplicated facts-path import edges by module specifier, matching legacy `extractImports` behavior.
 - Added facts-path source-evidence adapters for member and extends resolution; these paths do not instantiate Tree-sitter. Legacy resolver calls remain unchanged.
 - Added position-preserving source masking for comments, quoted strings, and template literals before facts-path evidence regexes run; newlines remain intact for evidence lines and ranges.
+- Extended the mask with a deterministic regex-literal heuristic and recursive template interpolation scanning: template text is hidden while `${...}` executable code remains visible and gets the same comment/string/regex masking.
 - Made fact chunk materialization honor start/end columns for same-line symbols.
 
 GitNexus impact analysis and CodeGraph inspection were attempted for the task symbols. Both reported that this worktree is not indexed; no index was initialized, and direct source inspection was used as required.
 
 ## Validation
 
-- `node --import tsx/esm --test test/phase14a-single-parse.test.ts test/phase14a-equivalence.test.ts` — 7 passed.
+- `node --import tsx/esm --test test/phase14a-single-parse.test.ts test/phase14a-equivalence.test.ts` — 9 passed.
 - `node --import tsx/esm --test test/graph.test.ts test/phase3-lexical.test.ts test/phase5-provider-boundaries.test.ts test/phase6-local-vector.test.ts test/phase13-remediation.test.ts` — 32 passed.
 - `npx tsc --noEmit` — passed.
 - `git diff --check` — passed.

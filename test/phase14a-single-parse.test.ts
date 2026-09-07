@@ -4,6 +4,7 @@ import Parser from "tree-sitter";
 
 import { buildCodeGraphWithResolutionFromFacts } from "../src/core/graph/build-graph.js";
 import { extractExtendsFactEvidence } from "../src/core/graph/extends.js";
+import { maskSourceSyntax } from "../src/core/graph/source-mask.js";
 import { toLexicalDocumentsFromFacts } from "../src/core/lexical/lexical-index.service.js";
 import { extractParsedFacts } from "../src/core/facts/facts-extractor.js";
 import { CURRENT_INDEX_VERSION_DOMAINS } from "../src/core/repository/index-version.js";
@@ -117,4 +118,34 @@ test("facts source evidence ignores fake member and extends syntax in comments a
   assert.equal(resolution?.coverage.extends, 1);
   assert.equal(resolution?.coverage.unresolvedCalls, 1);
   assert.equal(extractExtendsFactEvidence(source)[0]?.line, 3);
+});
+
+test("facts extends evidence ignores regex literal contents", async () => {
+  const source = `
+    class Real {}
+    class Actual extends Real {}
+    const pattern = /class Fake extends Real/;
+  `;
+  const indexed = unit("regex.ts", source);
+  const result = await buildCodeGraphWithResolutionFromFacts("/tmp/repo", [indexed]);
+  const resolution = result.resolutionByFile.get("regex.ts");
+
+  assert.equal(result.graph.edges.filter((edge) => edge.type === "extends").length, 1);
+  assert.equal(resolution?.coverage.extends, 1);
+});
+
+test("facts member evidence preserves executable template interpolation", async () => {
+  const source = [
+    "class Real { work() {} }",
+    "class Holder { run(instance: Real) { return `${instance.work()}`; } }",
+  ].join("\n");
+  const indexed = unit("template.ts", source);
+  const result = await buildCodeGraphWithResolutionFromFacts("/tmp/repo", [indexed]);
+  const callEdges = result.graph.edges.filter((edge) => edge.type === "calls");
+  const resolution = result.resolutionByFile.get("template.ts");
+  const masked = maskSourceSyntax("const value = `label ${instance.work()}`;");
+
+  assert.match(masked, /instance\.work\(\)/);
+  assert.equal(callEdges.length, 1);
+  assert.equal(resolution?.coverage.resolvedCalls, 1);
 });
