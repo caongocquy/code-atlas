@@ -4,6 +4,14 @@ export const LANGUAGE_IDS = ["typescript", "tsx", "javascript"] as const;
 
 export type SupportedLanguage = (typeof LANGUAGE_IDS)[number];
 
+export type ParserAdapterMetadata = {
+  parserName: string;
+  parserVersion: string;
+  grammarName: string;
+  grammarVersion: string;
+  adapterVersion: string;
+};
+
 export type SymbolType =
   | "class"
   | "function"

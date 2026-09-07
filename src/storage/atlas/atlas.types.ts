@@ -1,6 +1,11 @@
 import type { GraphEdge, GraphNode } from "../../core/graph/types.js";
 import type { GraphResolutionFile, ResolutionCoverage } from "../../core/graph/resolution.types.js";
 import type { RepositoryIdentity } from "../../core/repository/repository-identity.js";
+import type {
+  FactBlobKey,
+  FileFactBinding,
+  ParsedFactsBlob,
+} from "../../core/facts/facts.types.js";
 
 export type AtlasIndexAxis =
   | "schema"
@@ -94,3 +99,10 @@ export type IndexMetadata = {
   version: string;
   updatedAt: string;
 };
+
+export type AtlasFactBlob = {
+  factBlobKey: FactBlobKey;
+  facts: ParsedFactsBlob;
+};
+
+export type AtlasFileFactBinding = FileFactBinding;
