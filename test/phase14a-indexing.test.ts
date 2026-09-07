@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -212,7 +212,8 @@ test("disabled semantic sync preserves active semantic rows", async () => {
   const fixtures = semanticFixtures();
 
   try {
-    await writeFile(path.join(repoPath, "source.ts"), "export function source() { return true; }\n");
+    await writeFile(path.join(repoPath, "kept.ts"), "export function kept() { return true; }\n");
+    await writeFile(path.join(repoPath, "removed.ts"), "export function removed() { return false; }\n");
     const first = await indexRepository(repoPath, {
       skipGit: true,
       includeSemantic: true,
@@ -223,8 +224,8 @@ test("disabled semantic sync preserves active semantic rows", async () => {
     const before = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
     const repository = before.ensureRepository(getRepositoryIdentity(repoPath));
     const activeBefore = before.getActiveGenerationId(repository.id);
-    const semanticRowsBefore = before.countSemanticVectors(repository.id);
     before.close();
+    await unlink(path.join(repoPath, "removed.ts"));
 
     const result = await syncRepository(repoPath, { skipGit: true });
     assert.equal(result.kind, "published");
@@ -232,7 +233,9 @@ test("disabled semantic sync preserves active semantic rows", async () => {
     const after = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
     try {
       assert.notEqual(after.getActiveGenerationId(repository.id), activeBefore);
-      assert.equal(after.countSemanticVectors(repository.id), semanticRowsBefore);
+      const semanticFiles = after.getSemanticIndexedFileStates(repository.id);
+      assert.equal(semanticFiles.has("kept.ts"), true);
+      assert.equal(semanticFiles.has("removed.ts"), false);
     } finally {
       after.close();
     }

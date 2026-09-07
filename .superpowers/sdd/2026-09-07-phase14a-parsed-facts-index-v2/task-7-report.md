@@ -28,6 +28,10 @@ when semantic capability is already active, retaining the previous generation;
 disabled semantic runs copy the active semantic rows into the new candidate so
 they do not hide existing semantic data.
 
+The disabled-copy path now filters those preserved rows through the candidate's
+current `file_fact_bindings`, so deleted files cannot re-enter the published
+semantic generation.
+
 ## Impact analysis
 
 GitNexus impact analysis could not run: the worktree has no GitNexus index, and

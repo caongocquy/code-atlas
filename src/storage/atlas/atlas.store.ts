@@ -621,8 +621,13 @@ export class AtlasStore {
          (repository_id, generation_id, point_id, vector, file_path, file_hash, payload_json)
          SELECT repository_id, ?, point_id, vector, file_path, file_hash, payload_json
          FROM generation_semantic_vectors
-         WHERE repository_id = ? AND generation_id = ?`,
-      ).run(generationId, generation.repository_id, activeGenerationId);
+         WHERE repository_id = ? AND generation_id = ?
+           AND file_path IN (
+             SELECT relative_path
+             FROM file_fact_bindings
+             WHERE repository_id = ? AND generation_id = ?
+           )`,
+      ).run(generationId, generation.repository_id, activeGenerationId, generation.repository_id, generationId);
       this.database.exec("COMMIT;");
     } catch (error) {
       this.database.exec("ROLLBACK;");
