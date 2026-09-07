@@ -2,7 +2,7 @@ import path from "node:path";
 
 import { createCliCommandReporter } from "./cli-command-reporter.js";
 import { formatIndexFailure, formatIndexResult, formatRepositoryStatus } from "./cli-output.js";
-import { getRepositoryStatus } from "../../core/repository/repository-status.service.js";
+import { getRepositoryStatusReadOnly } from "../../core/repository/repository-status.service.js";
 import { indexRepository, syncRepository, type IndexPipelineResult } from "../../core/indexing/index-pipeline.service.js";
 
 export async function runIndexingCommand(
@@ -14,7 +14,7 @@ export async function runIndexingCommand(
   const explicitPath = args.find((arg) => !arg.startsWith("--"));
   const targetPath = explicitPath ? path.resolve(repoPath, explicitPath) : repoPath;
   if (operation === "status") {
-    const result = await getRepositoryStatus(targetPath);
+    const result = await getRepositoryStatusReadOnly(targetPath);
     const reporter = createCliCommandReporter({ json });
     if (json) reporter.output(result);
     else reporter.success(formatRepositoryStatus(result));

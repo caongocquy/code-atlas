@@ -78,12 +78,14 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
     return { source, contentHash: createFileHash(source) };
   };
   let activeGenerationId = store.getActiveGenerationId(repoId);
+  const legacyRepository = !store.hasV2RepositoryState(repoId) &&
+    store.getFileCapabilityStates(repoId, "graph").size > 0;
   let semanticCandidate: SemanticCandidate | undefined;
 
   try {
     const storedLexicalVersion = store.getVersion(repoId, "lexical");
     const capabilities = options.includeSemantic ? ["graph", "lexical", "semantic"] as const : ["graph", "lexical"] as const;
-    const changes = await detectRepositoryChanges(repoPath, { store, repoId, capabilities: [...capabilities], versions: { graph: GRAPH_INDEX_VERSION, lexical: LEXICAL_INDEX_VERSION, semantic: VECTOR_INDEX_VERSION }, skipGit: options.skipGit, progress: options.progress, forceFullScan: operation === "index" });
+    const changes = await detectRepositoryChanges(repoPath, { store, repoId, capabilities: [...capabilities], versions: { graph: GRAPH_INDEX_VERSION, lexical: LEXICAL_INDEX_VERSION, semantic: VECTOR_INDEX_VERSION }, skipGit: options.skipGit, progress: options.progress, forceFullScan: operation === "index" || legacyRepository });
     const previousManifest = store.getGenerationManifest(repoId);
     const previousBindings = new Map(previousManifest?.files.map((file) => [file.relativePath, file]) ?? []);
     const currentFiles = new Map<string, { contentHash: string; language: "typescript" | "tsx" | "javascript" }>();
@@ -218,3 +220,6 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
 
 export function indexRepository(repoPath: string, options: IndexPipelineOptions = {}): Promise<IndexRunOutcome> { return runPipeline(repoPath, "index", options); }
 export function syncRepository(repoPath: string, options: IndexPipelineOptions = {}): Promise<IndexRunOutcome> { return runPipeline(repoPath, "sync", options); }
+export function migrateLegacyIndexOnMutation(repoPath: string, options: IndexPipelineOptions): Promise<IndexRunOutcome> {
+  return runPipeline(repoPath, "sync", options);
+}

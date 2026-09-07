@@ -334,7 +334,7 @@ async function getCapabilitySummaries(
 export async function getRepositoryStatus(
   inputPath = process.cwd(),
   providers: RepositoryStatusProviders = {},
-  options: { readOnly?: boolean } = {},
+  options: { readOnly?: boolean } = { readOnly: true },
 ): Promise<RepositoryStatus> {
   const repoPath = canonicalRepositoryPath(path.resolve(inputPath));
   const files = await scanRepo(repoPath);

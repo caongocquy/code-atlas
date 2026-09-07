@@ -597,6 +597,10 @@ export class AtlasStore {
     return this.getRepositoryIndexState(repositoryId)?.activeGenerationId;
   }
 
+  hasV2RepositoryState(repositoryId: string): boolean {
+    return this.getRepositoryIndexState(repositoryId) !== undefined;
+  }
+
   hasActiveSemanticCapability(repositoryId: string): boolean {
     const row = this.database
       .prepare("SELECT active_provenance_metadata FROM repository_index_state WHERE repository_id = ?")
