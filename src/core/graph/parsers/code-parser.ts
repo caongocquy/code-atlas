@@ -1,22 +1,61 @@
 import Parser from "tree-sitter";
 
 import { getLanguageAdapter } from "./registry.js";
-import type { CodeChunk } from "./types.js";
+import type {
+  CodeChunk,
+  LanguageAdapter,
+  ParserAdapterMetadata,
+  SupportedLanguage,
+} from "./types.js";
 
-export function parseCodeSymbols(
+export type ParsedSource = {
+  adapter: LanguageAdapter;
+  tree: Parser.Tree;
+};
+
+const LANGUAGE_FILE_NAMES: Record<SupportedLanguage, string> = {
+  typescript: "source.ts",
+  tsx: "source.tsx",
+  javascript: "source.js",
+};
+
+export function getLanguageAdapterForLanguage(
+  language: SupportedLanguage,
+): LanguageAdapter | null {
+  return getLanguageAdapter(LANGUAGE_FILE_NAMES[language]);
+}
+
+export function parseSource(
   source: string,
   filePath: string,
-): CodeChunk[] {
+): ParsedSource | undefined {
   const adapter = getLanguageAdapter(filePath);
 
   if (!adapter) {
-    return [];
+    return undefined;
   }
 
   const parser = new Parser();
   parser.setLanguage(adapter.grammar);
 
-  const tree = parser.parse(source);
+  return { adapter, tree: parser.parse(source) };
+}
 
-  return adapter.extractSymbols(tree.rootNode);
+export function parserMetadata(
+  adapter: LanguageAdapter,
+): ParserAdapterMetadata & { language: SupportedLanguage } {
+  return { language: adapter.language, ...adapter.metadata };
+}
+
+export function parseCodeSymbols(
+  source: string,
+  filePath: string,
+): CodeChunk[] {
+  const parsed = parseSource(source, filePath);
+
+  if (!parsed) {
+    return [];
+  }
+
+  return parsed.adapter.extractSymbols(parsed.tree.rootNode);
 }

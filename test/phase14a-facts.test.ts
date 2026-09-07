@@ -3,6 +3,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { factBlobKey } from "../src/core/facts/facts-identity.js";
+import {
+  extractParsedFacts,
+  materializeFileFacts,
+} from "../src/core/facts/facts-extractor.js";
 import type {
   FileFactBinding,
   IndexVersionDomains,
@@ -12,6 +16,7 @@ import {
   CURRENT_INDEX_VERSION_DOMAINS,
   INDEX_SCHEMA_VERSION,
 } from "../src/core/repository/index-version.js";
+import { parseCodeSymbols } from "../src/core/graph/parsers/code-parser.js";
 
 const parserIdentity = {
   language: "typescript" as const,
@@ -190,4 +195,81 @@ test("persisted facts exercise every path-neutral DTO and reject path state", ()
   assertPathNeutral(facts);
   assert.throws(() => assertPathNeutral({ filePath: "src/parser.ts" }));
   assert.throws(() => assertPathNeutral({ sourcePath: "src/parser.ts" }));
+});
+
+test("extracts one path-neutral fact blob from a TypeScript source snapshot", () => {
+  const source = `
+import { helper as alias } from "./dep.js";
+export const value: Result = helper();
+class Service {
+  run(input: Input): Result { return alias(input); }
+}
+function outer() {
+  const nested = () => value;
+  return nested();
+}
+export { Service };
+`;
+  const input = {
+    source,
+    language: "typescript" as const,
+    contentHash: "snapshot-hash",
+    factsVersion: CURRENT_INDEX_VERSION_DOMAINS.factsVersion,
+    factsSchemaVersion: "1.0.0",
+  };
+
+  const result = extractParsedFacts(input);
+
+  assert.equal(result.kind, "facts");
+  if (result.kind !== "facts") return;
+
+  assert.equal(result.facts.parseStatus, "complete");
+  assert.equal(result.facts.symbols.length, 4);
+  assert.deepEqual(
+    result.facts.symbols.map((fact) => fact.localId),
+    ["symbol:1", "symbol:2", "symbol:3", "symbol:4"],
+  );
+  assert.equal(result.facts.imports.length, 1);
+  assert.equal(result.facts.exports.length, 2);
+  assert.equal(result.facts.bindingSeeds.length, 3);
+  assert.equal(result.facts.callSites.length, 3);
+  assert.ok(result.facts.containmentScopes.length >= 4);
+  assert.equal(result.facts.references.length, 5);
+  assert.equal(result.facts.declaredTypeAnnotations.length, 3);
+  assert.ok(result.facts.parserIdentity.grammarName.includes("typescript"));
+
+  const materializedA = materializeFileFacts("src/first.ts", result.facts);
+  const materializedB = materializeFileFacts("src/renamed.ts", result.facts);
+  assert.deepEqual(materializedA.facts, materializedB.facts);
+  assert.equal(materializedA.relativePath, "src/first.ts");
+  assert.equal(materializedB.relativePath, "src/renamed.ts");
+  assert.equal(factBlobKey(materializedA.facts), factBlobKey(materializedB.facts));
+
+  const existingSymbols = parseCodeSymbols(source, "fixture.ts");
+  assert.deepEqual(
+    result.facts.symbols.map((fact) => [fact.name, fact.kind, fact.range.startLine]),
+    existingSymbols
+      .toSorted((left, right) => left.startLine - right.startLine)
+      .map((chunk) => [chunk.symbolName, chunk.symbolType, chunk.startLine]),
+  );
+});
+
+test("preserves side-effect imports and aliased export bindings", () => {
+  const result = extractParsedFacts({
+    source: 'import "./setup.js"; const local = value; export { local as published };',
+    language: "typescript",
+    contentHash: "snapshot-hash",
+    factsVersion: CURRENT_INDEX_VERSION_DOMAINS.factsVersion,
+    factsSchemaVersion: "1.0.0",
+  });
+
+  assert.equal(result.kind, "facts");
+  if (result.kind !== "facts") return;
+
+  assert.deepEqual(result.facts.imports.map(({ moduleSpecifier, kind }) => ({ moduleSpecifier, kind })), [
+    { moduleSpecifier: "./setup.js", kind: "side-effect" },
+  ]);
+  assert.deepEqual(result.facts.exports.map(({ exportedName, localName }) => ({ exportedName, localName })), [
+    { exportedName: "published", localName: "local" },
+  ]);
 });

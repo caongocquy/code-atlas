@@ -40,5 +40,6 @@ export type LanguageAdapter = {
   language: SupportedLanguage;
   extensions: string[];
   grammar: Parser.Language;
+  metadata: ParserAdapterMetadata;
   extractSymbols(root: Parser.SyntaxNode): CodeChunk[];
 };
