@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import test from "node:test";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -72,6 +72,22 @@ test("MCP repository status does not initialize optional providers", async () =>
     const value = JSON.parse(text.text) as { capabilities: { semantic: { state: string }; reranker: { state: string } } };
     assert.equal(value.capabilities.semantic.state, "not_configured");
     assert.equal(value.capabilities.reranker.state, "not_configured");
+  } finally {
+    await client.close();
+    await server.close();
+    await rm(repoPath, { recursive: true, force: true });
+  }
+});
+
+test("MCP graph access does not initialize an index while reporting index_required", async () => {
+  const repoPath = await mkdtemp(path.join(tmpdir(), "code-atlas-phase-10-readonly-graph-"));
+  await writeFile(path.join(repoPath, "source.ts"), "export const source = true;\n");
+  const { client, server } = await connectedClient();
+  try {
+    const result = await client.callTool({ name: "get_symbol", arguments: { repoPath, query: "source" } });
+    assert.equal(result.isError, true, JSON.stringify(result));
+    assert.match((result.content.find((item) => item.type === "text") as { text: string }).text, /error/);
+    await assert.rejects(() => access(path.join(repoPath, ".codeatlas", "atlas.db")));
   } finally {
     await client.close();
     await server.close();

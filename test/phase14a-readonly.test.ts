@@ -1,23 +1,53 @@
 import assert from "node:assert/strict";
+import { execFile as execFileCallback } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
-import { lstat, mkdir, mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
 import test from "node:test";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 
 import { loadIndexedGraphReadOnly } from "../src/core/graph/indexed-graph.service.js";
 import { migrateLegacyIndexOnMutation } from "../src/core/indexing/index-pipeline.service.js";
 import { getRepositoryIdentity } from "../src/core/repository/repository-identity.js";
+import { createFileHash } from "../src/core/repository/file-hash.js";
 import { getRepositoryStatus, getRepositoryStatusReadOnly } from "../src/core/repository/repository-status.service.js";
 import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
 
+const execFile = promisify(execFileCallback);
+
+function openImmutable(databasePath: string): DatabaseSync {
+  return new DatabaseSync(`file:${path.resolve(databasePath)}?immutable=1`, { readOnly: true });
+}
+
+async function git(repoPath: string, args: string[]): Promise<string> {
+  const result = await execFile("git", args, { cwd: repoPath, encoding: "utf8" });
+  return String(result.stdout);
+}
+
 async function legacyFixture(): Promise<string> {
   const repoPath = await mkdtemp(path.join(tmpdir(), "code-atlas-phase-14a-readonly-"));
-  await mkdir(path.join(repoPath, ".git"));
   await writeFile(path.join(repoPath, "source.ts"), "export function source() { return true; }\n");
+  await git(repoPath, ["init", "-q"]);
+  await git(repoPath, ["config", "user.email", "test@example.com"]);
+  await git(repoPath, ["config", "user.name", "CodeAtlas Test"]);
+  await git(repoPath, ["add", "."]);
+  await git(repoPath, ["commit", "-qm", "legacy fixture"]);
 
   const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
-  store.ensureRepository(getRepositoryIdentity(repoPath));
+  const repository = store.ensureRepository(getRepositoryIdentity(repoPath));
+  store.replaceGraph(
+    repository.id,
+    {
+      nodes: [
+        { id: "legacy-source", type: "function", name: "legacySource", file: "source.ts", startLine: 1, endLine: 1 },
+        { id: "legacy-target", type: "function", name: "legacyTarget", file: "source.ts", startLine: 1, endLine: 1 },
+      ],
+      edges: [{ from: "legacy-source", to: "legacy-target", type: "calls" }],
+    },
+    new Map([["source.ts", createFileHash("export function source() { return true; }\n")]]),
+    "legacy",
+  );
   store.close();
   const database = new DatabaseSync(path.join(repoPath, ".codeatlas", "atlas.db"));
   database.exec(`
@@ -52,16 +82,26 @@ test("legacy read-only status and graph loading do not create v2 state or mutate
   try {
     const databasePath = path.join(repoPath, ".codeatlas", "atlas.db");
     const before = await sidecarSnapshot(databasePath);
+    const beforeGitStatus = await git(repoPath, ["status", "--porcelain=v1"]);
+    const beforeGitConfig = await git(repoPath, ["config", "--local", "--list"]);
+    const beforeDatabase = openImmutable(databasePath);
+    const beforeUpdatedAt = (beforeDatabase.prepare("SELECT updated_at FROM repositories LIMIT 1").get() as { updated_at: string }).updated_at;
+    const beforeActiveState = beforeDatabase.prepare("SELECT name FROM sqlite_master WHERE name = 'repository_index_state'").get();
+    beforeDatabase.close();
     const status = await getRepositoryStatusReadOnly(repoPath);
-    const graph = await loadIndexedGraphReadOnly(repoPath).catch(() => undefined);
+    const graph = await loadIndexedGraphReadOnly(repoPath);
     const after = await sidecarSnapshot(databasePath);
 
     assert.equal(status.repository.path, await realpath(repoPath));
-    assert.equal(status.graph.status, "not_indexed");
-    assert.equal(graph, undefined);
+    assert.equal(status.graph.status, "stale");
+    assert.deepEqual(graph.graph.nodes.map((node) => node.name), ["legacySource", "legacyTarget"]);
+    assert.deepEqual(graph.graph.edges, [{ from: "legacy-source", to: "legacy-target", type: "calls" }]);
     assert.deepEqual(after, before);
-    const database = new DatabaseSync(databasePath, { readOnly: true });
-    assert.equal(database.prepare("SELECT 1 FROM sqlite_master WHERE name = 'repository_index_state'").get(), undefined);
+    assert.equal(await git(repoPath, ["status", "--porcelain=v1"]), beforeGitStatus);
+    assert.equal(await git(repoPath, ["config", "--local", "--list"]), beforeGitConfig);
+    const database = openImmutable(databasePath);
+    assert.equal((database.prepare("SELECT updated_at FROM repositories LIMIT 1").get() as { updated_at: string }).updated_at, beforeUpdatedAt);
+    assert.deepEqual(database.prepare("SELECT name FROM sqlite_master WHERE name = 'repository_index_state'").get(), beforeActiveState);
     database.close();
   } finally {
     await rm(repoPath, { recursive: true, force: true });
@@ -85,7 +125,7 @@ test("legacy mutation performs source indexing and publishes a v2 generation", a
     const outcome = await migrateLegacyIndexOnMutation(repoPath, { skipGit: true });
     assert.equal(outcome.kind, "published");
     if (outcome.kind !== "published") return;
-    const database = new DatabaseSync(path.join(repoPath, ".codeatlas", "atlas.db"), { readOnly: true });
+    const database = openImmutable(path.join(repoPath, ".codeatlas", "atlas.db"));
     const active = database.prepare("SELECT active_generation_id FROM repository_index_state WHERE repository_id = ?").get(outcome.repositoryId) as { active_generation_id: string };
     assert.equal(active.active_generation_id, outcome.generationId);
     assert.equal((database.prepare("SELECT COUNT(*) AS count FROM file_fact_bindings WHERE generation_id = ?").get(outcome.generationId) as { count: number }).count, 1);

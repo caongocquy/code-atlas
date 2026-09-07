@@ -7,7 +7,7 @@ import { z } from "zod";
 
 import { getRepositoryStatus } from "../../core/repository/repository-status.service.js";
 import { canonicalRepositoryPath } from "../../core/repository/repository-identity.js";
-import { loadIndexedGraph, type IndexedGraph } from "../../core/graph/indexed-graph.service.js";
+import { loadIndexedGraphReadOnly, type IndexedGraph } from "../../core/graph/indexed-graph.service.js";
 import { searchLexical } from "../../core/lexical/lexical-search.service.js";
 import {
   indexRepository,
@@ -133,7 +133,7 @@ async function withGraph<T>(
 ): Promise<T> {
   let graph: IndexedGraph;
   try {
-    graph = await loadIndexedGraph(repoPath);
+    graph = await loadIndexedGraphReadOnly(repoPath);
   } catch (error) {
     if (error instanceof Error && error.message === "Repository graph is not indexed.") {
       throw new McpToolError("index_required", error.message, {
