@@ -34,13 +34,72 @@ import { splitLargeSymbol } from "./split-symbol.js";
 import { runCopyOnWriteGeneration } from "./copy-on-write.js";
 import { vectorRefreshMode } from "../repository/index-version.js";
 import type { EmbeddingProvider } from "./embedding-provider.js";
-import type { VectorStore } from "./vector-store.js";
+import type { VectorPoint, VectorStore } from "./vector-store.js";
 import type { IndexedFileState } from "../repository/indexed-file-state.js";
 import {
   embeddingProviderIdentity,
   semanticGenerationIdentity,
 } from "./provider-identity.js";
 import { codeChunksFromFacts, type IndexedSourceUnit } from "../indexing/indexing.types.js";
+
+export type SemanticCandidate = {
+  points: VectorPoint[];
+  chunks: number;
+  embeddedSymbols: number;
+  embeddingBatches: number;
+  providerIdentity: string;
+};
+
+export async function prepareSemanticCandidateFromFacts(
+  repoId: string,
+  generationId: string,
+  units: IndexedSourceUnit[],
+  embeddingProvider: EmbeddingProvider,
+  vectorStore: VectorStore,
+): Promise<SemanticCandidate> {
+  const providerIdentity = embeddingProviderIdentity(embeddingProvider);
+  await vectorStore.ensureCollection(embeddingProvider.dimensions);
+  const chunks = units.flatMap((unit) => codeChunksFromFacts(unit).flatMap(splitLargeSymbol).map((chunk) => ({
+    repoId,
+    relativePath: unit.relativePath,
+    fileHash: unit.facts.contentHash,
+    generationId,
+    chunk,
+  })));
+  const batches = chunkArray(chunks, EMBEDDING_BATCH_SIZE);
+  const points: VectorPoint[] = [];
+
+  for (const batch of batches) {
+    const vectors = await embeddingProvider.embedBatch(batch.map(({ relativePath, chunk }) => buildEmbeddingText(relativePath, chunk)));
+    if (vectors.length !== batch.length) throw new Error(`Embedding batch mismatch: expected ${batch.length}, received ${vectors.length}`);
+    for (let index = 0; index < batch.length; index += 1) {
+      const item = batch[index];
+      const vector = vectors[index];
+      if (!item || !vector) throw new Error(`Missing embedding result at batch index ${index}`);
+      points.push({
+        id: createPointId(repoId, item.relativePath, item.chunk.symbolType, item.chunk.symbolName, item.chunk.part ?? 1, generationId),
+        vector,
+        payload: {
+          repoId,
+          file: item.relativePath,
+          fileHash: item.fileHash,
+          generationId,
+          indexVersion: VECTOR_INDEX_VERSION,
+          language: item.chunk.language,
+          symbolName: item.chunk.symbolName,
+          symbolType: item.chunk.symbolType,
+          startLine: item.chunk.startLine,
+          endLine: item.chunk.endLine,
+          content: item.chunk.content,
+          part: item.chunk.part,
+          totalParts: item.chunk.totalParts,
+        },
+      });
+    }
+  }
+
+  return { points, chunks: chunks.length, embeddedSymbols: points.length, embeddingBatches: batches.length, providerIdentity };
+}
 
 type PreparedFile = {
   relativePath: string;

@@ -691,7 +691,17 @@ export class AtlasStore {
     }
   }
 
-  publishCandidateGeneration(generationId: string, options: { requireGraph?: boolean; requireLexical?: boolean; semanticEnabled?: boolean } = {}): void {
+  publishCandidateGeneration(generationId: string, options: {
+    requireGraph?: boolean;
+    requireLexical?: boolean;
+    semanticEnabled?: boolean;
+    graphStaged?: boolean;
+    lexicalStaged?: boolean;
+    semanticStaged?: boolean;
+    deletedFiles?: string[];
+    fileStates?: Array<{ file: string; capability: AtlasCapability; input: FileCapabilityStateInput }>;
+    versions?: Partial<Record<AtlasIndexAxis, string>>;
+  } = {}): void {
     this.database.exec("BEGIN IMMEDIATE;");
     try {
       const generation = this.database.prepare(
@@ -699,10 +709,19 @@ export class AtlasStore {
       ).get(generationId) as { repository_id: string; status: string; versions_json: string } | undefined;
       if (!generation || generation.status !== "candidate") throw new Error("Candidate generation is missing or already published");
       if (!this.database.prepare("SELECT 1 FROM index_manifests WHERE generation_id = ?").get(generationId)) throw new Error("Candidate manifest is missing");
-      if (options.requireGraph && !this.database.prepare("SELECT 1 FROM generation_symbols WHERE generation_id = ? LIMIT 1").get(generationId)) throw new Error("Candidate graph is incomplete");
-      if (options.requireLexical && !this.database.prepare("SELECT 1 FROM generation_lexical_documents WHERE generation_id = ? LIMIT 1").get(generationId)) throw new Error("Candidate lexical index is incomplete");
-      if (options.semanticEnabled && !this.database.prepare("SELECT 1 FROM generation_semantic_vectors WHERE generation_id = ? LIMIT 1").get(generationId)) throw new Error("Candidate semantic index is incomplete");
+      if (options.requireGraph && !options.graphStaged && !this.database.prepare("SELECT 1 FROM generation_symbols WHERE generation_id = ? LIMIT 1").get(generationId)) throw new Error("Candidate graph is incomplete");
+      if (options.requireLexical && !options.lexicalStaged && !this.database.prepare("SELECT 1 FROM generation_lexical_documents WHERE generation_id = ? LIMIT 1").get(generationId)) throw new Error("Candidate lexical index is incomplete");
+      if (options.semanticEnabled && !options.semanticStaged && !this.database.prepare("SELECT 1 FROM generation_semantic_vectors WHERE generation_id = ? LIMIT 1").get(generationId)) throw new Error("Candidate semantic index is incomplete");
       const versions = JSON.parse(generation.versions_json) as IndexVersionDomains;
+      for (const file of options.deletedFiles ?? []) {
+        for (const capability of ["graph", "lexical", "semantic"] as const) this.deleteCapabilityState(generation.repository_id, file, capability);
+        this.deleteOrphanFile(generation.repository_id, file);
+      }
+      for (const state of options.fileStates ?? []) this.upsertCapabilityState(generation.repository_id, state.file, state.capability, state.input);
+      const updatedAt = new Date().toISOString();
+      for (const [axis, version] of Object.entries(options.versions ?? {})) {
+        if (version) this.setVersionRow(generation.repository_id, axis as AtlasIndexAxis, version, updatedAt);
+      }
       this.database.prepare("UPDATE index_generations SET status = 'committed' WHERE id = ?").run(generationId);
       this.database.prepare(
         `INSERT INTO repository_index_state

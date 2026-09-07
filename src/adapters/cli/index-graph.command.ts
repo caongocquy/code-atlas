@@ -8,7 +8,7 @@ import {
   type SummaryRow,
 } from "./cli-output.js";
 import { GRAPH_INDEX_VERSION } from "../../config/constants.js";
-import { syncRepository } from "../../core/indexing/index-pipeline.service.js";
+import { syncRepository, type IndexPipelineResult } from "../../core/indexing/index-pipeline.service.js";
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
@@ -18,7 +18,8 @@ async function main(): Promise<void> {
     progress: cliProgressRunner,
     skipGit: args.includes("--skip-git"),
   });
-  const graph = result.graph;
+  if (result.kind === "failed") throw new Error(result.failure.message);
+  const graph = (result as IndexPipelineResult).graph;
 
   if (graph.versionChanged) {
     console.log(

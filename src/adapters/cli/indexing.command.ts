@@ -3,7 +3,7 @@ import path from "node:path";
 import { createCliCommandReporter } from "./cli-command-reporter.js";
 import { formatIndexFailure, formatIndexResult, formatRepositoryStatus } from "./cli-output.js";
 import { getRepositoryStatus } from "../../core/repository/repository-status.service.js";
-import { indexRepository, syncRepository } from "../../core/indexing/index-pipeline.service.js";
+import { indexRepository, syncRepository, type IndexPipelineResult } from "../../core/indexing/index-pipeline.service.js";
 
 export async function runIndexingCommand(
   operation: "index" | "sync" | "status",
@@ -40,9 +40,16 @@ export async function runIndexingCommand(
       progress: reporter.progress,
       skipGit: args.includes("--skip-git"),
     });
+    if (result.kind === "failed") {
+      process.exitCode = 1;
+      const error = new Error(result.failure.message);
+      if (json) reporter.output({ error: error.message });
+      else reporter.failure(formatIndexFailure(operation, error));
+      return;
+    }
     if (cancelled || quiet) return;
     if (json) reporter.output(result);
-    else reporter.success(formatIndexResult(result));
+    else reporter.success(formatIndexResult(result as IndexPipelineResult));
   } catch (error) {
     if (cancelled) return;
     process.exitCode = 1;

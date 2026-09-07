@@ -10,8 +10,16 @@ candidate, and publishes one active generation. Deleted paths are absent from
 the next manifest and graph.
 
 Added the typed `PublishedIndexRun`, `FailedIndexRun`, and `IndexRunOutcome`
-contracts. Existing CLI-facing result fields remain available as a compatibility
-view because the CLI adapters are intentionally outside Task 7 scope.
+contracts. `indexRepository` and `syncRepository` now return the union at their
+public boundary; adapters narrow failed outcomes before formatting the existing
+success/error surfaces.
+
+The review fixes also wire optional semantic indexing into the shared fact-unit
+lifecycle. Enabled and available providers embed candidate facts and stage
+semantic rows; disabled, unconfigured, and unavailable providers remain
+compatible and non-mandatory. Graph, lexical, semantic, file-capability, and
+version metadata writes are staged before one transactional active-generation
+pointer switch. Empty repositories publish valid zero-symbol generations.
 
 ## Impact analysis
 
@@ -24,8 +32,9 @@ sources.
 
 ## Validation
 
-- `node --import tsx/esm --test test/phase14a-indexing.test.ts test/phase4-index-pipeline.test.ts` — pass, 6/6.
-- `node --import tsx/esm --test test/phase10-mcp.test.ts test/phase11-integration.test.ts` — pass, 15/15.
+- `node --import tsx/esm --test test/phase14a-indexing.test.ts test/phase4-index-pipeline.test.ts` — pass, 11/11.
+- `node --import tsx/esm --test test/phase10-mcp.test.ts test/phase11-integration.test.ts` — pass, 16/16.
+- `node --import tsx/esm --test test/phase5-provider-boundaries.test.ts` — pass, 6/6.
 - `npx tsc --noEmit` — pass.
 - `git diff --check` — pass.
 
@@ -33,8 +42,9 @@ Task 8 race handling and Tasks 9–11 were not started.
 
 ## Concerns
 
-- Optional semantic providers remain compatible when disabled/unavailable; this
-  Task 7 integration does not introduce a new mandatory semantic dependency.
-- CLI/MCP adapter files were not changed per the requested Task 7 file scope;
-  their existing compatibility surface is preserved by the pipeline result
-  view.
+- GitNexus impact analysis could not run without initializing a missing index;
+  direct caller inspection was used instead, as documented above.
+- The semantic path stages generation vectors in AtlasStore; external provider
+  resources remain optional and are closed by the existing adapters.
+- Minimal CLI and MCP adapters narrow failed outcomes before formatting; progress
+  UX remains unchanged.

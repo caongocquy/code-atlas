@@ -8,6 +8,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
 import { createMcpServer } from "../src/adapters/mcp/mcp-server.js";
+import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
 
 async function connectedClient() {
   const server = createMcpServer();
@@ -106,6 +107,28 @@ test("MCP lifecycle, lexical search, graph queries, and Phase 9 tools reuse core
     const inspection = await callJson(client, "inspect_retrieval", { repoPath, query: "AuthService", graphEnabled: false });
     assert.equal(Array.isArray(inspection.value.lexicalResults), true);
   } finally {
+    await client.close();
+    await server.close();
+    await rm(repoPath, { recursive: true, force: true });
+  }
+});
+
+test("MCP maps a failed index outcome to the existing error wire format", async () => {
+  const repoPath = await mkdtemp(path.join(tmpdir(), "code-atlas-phase-10-failed-index-"));
+  await mkdir(path.join(repoPath, "src"));
+  await writeFile(path.join(repoPath, "src", "source.ts"), "export const value = true;\n");
+  const originalWriteCandidateGraph = AtlasStore.prototype.writeCandidateGraph;
+  AtlasStore.prototype.writeCandidateGraph = () => {
+    throw new Error("injected candidate failure");
+  };
+
+  const { client, server } = await connectedClient();
+  try {
+    const failed = await callJson(client, "index_repository", { repoPath, skipGit: true });
+    assert.equal(failed.result.isError, true);
+    assert.equal((failed.value.error as { code: string }).code, "index_failed");
+  } finally {
+    AtlasStore.prototype.writeCandidateGraph = originalWriteCandidateGraph;
     await client.close();
     await server.close();
     await rm(repoPath, { recursive: true, force: true });

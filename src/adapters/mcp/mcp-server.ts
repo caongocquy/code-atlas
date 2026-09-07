@@ -590,7 +590,7 @@ export function createMcpServer(): McpServer {
       return withWriteLock(repoPath, async () => {
         const providers = await optionalProviders(repoPath, args.includeSemantic === true);
         try {
-          return await operation(repoPath, {
+          const outcome = await operation(repoPath, {
             skipGit: args.skipGit === true,
             includeSemantic: args.includeSemantic === true,
             semanticProviders: providers?.embeddingProvider ? {
@@ -598,6 +598,13 @@ export function createMcpServer(): McpServer {
               vectorStore: providers.vectorStore,
             } : undefined,
           });
+          if (outcome.kind === "failed") {
+            throw new McpToolError("index_failed", outcome.failure.message, {
+              activeGenerationId: outcome.activeGenerationId,
+              failure: outcome.failure,
+            });
+          }
+          return outcome;
         } finally {
           await closeProviders(providers);
         }
