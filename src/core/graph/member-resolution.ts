@@ -10,6 +10,7 @@ import {
   type ResolutionResult,
 } from "./resolution.types.js";
 import type { CodeGraph, GraphEdge, GraphNode } from "./types.js";
+import { maskSourceSyntax } from "./source-mask.js";
 
 export type ObjectBinding = { localName: string; className: string; targetFile?: string };
 export type ParameterBinding = { callerQualifiedName: string; localName: string; className: string; targetFile?: string };
@@ -55,10 +56,11 @@ function typedParameters(text: string): Array<{ localName: string; typeName: str
 }
 
 function extractFactsObjectBindings(source: string, filePath: string, importBindings: ImportBinding[]): ObjectBinding[] {
+  const maskedSource = maskSourceSyntax(source);
   const imports = bindingsByLocalName(importBindings);
   const results: ObjectBinding[] = [];
   const pattern = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*new\s+([A-Za-z_$][\w$]*)\s*\(/g;
-  for (const match of source.matchAll(pattern)) {
+  for (const match of maskedSource.matchAll(pattern)) {
     const localName = match[1];
     const typeName = match[2];
     if (!localName || !typeName) continue;
@@ -68,10 +70,11 @@ function extractFactsObjectBindings(source: string, filePath: string, importBind
 }
 
 function extractFactsParameterBindings(source: string, filePath: string, importBindings: ImportBinding[], calls: CallReference[]): ParameterBinding[] {
+  const maskedSource = maskSourceSyntax(source);
   const imports = bindingsByLocalName(importBindings);
   const results: ParameterBinding[] = [];
   const pattern = /(?:\bfunction\s+)?([A-Za-z_$][\w$]*)\s*\(([^)]*)\)/g;
-  for (const match of source.matchAll(pattern)) {
+  for (const match of maskedSource.matchAll(pattern)) {
     const name = match[1];
     const parameters = match[2];
     if (!name || parameters === undefined) continue;
@@ -89,25 +92,26 @@ function extractFactsParameterBindings(source: string, filePath: string, importB
 }
 
 function extractFactsClassFieldBindings(source: string, filePath: string, importBindings: ImportBinding[]): ClassFieldBinding[] {
+  const maskedSource = maskSourceSyntax(source);
   const imports = bindingsByLocalName(importBindings);
   const results: ClassFieldBinding[] = [];
   const classPattern = /\bclass\s+([A-Za-z_$][\w$]*)\b[^\{]*\{/g;
-  for (const match of source.matchAll(classPattern)) {
+  for (const match of maskedSource.matchAll(classPattern)) {
     const ownerClassName = match[1];
-    const openBrace = match.index === undefined ? -1 : source.indexOf("{", match.index);
+    const openBrace = match.index === undefined ? -1 : maskedSource.indexOf("{", match.index);
     if (!ownerClassName || openBrace < 0) continue;
     let depth = 0;
     let closeBrace = -1;
-    for (let index = openBrace; index < source.length; index += 1) {
-      if (source[index] === "{") depth += 1;
-      if (source[index] === "}") depth -= 1;
+    for (let index = openBrace; index < maskedSource.length; index += 1) {
+      if (maskedSource[index] === "{") depth += 1;
+      if (maskedSource[index] === "}") depth -= 1;
       if (depth === 0) {
         closeBrace = index;
         break;
       }
     }
     if (closeBrace < 0) continue;
-    const body = source.slice(openBrace + 1, closeBrace);
+    const body = maskedSource.slice(openBrace + 1, closeBrace);
     const constructor = body.match(/\bconstructor\s*\(([^)]*)\)/);
     const parameters = constructor?.[1];
     if (parameters === undefined) continue;

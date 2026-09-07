@@ -9,6 +9,7 @@ import {
   type ResolutionResult,
 } from "./resolution.types.js";
 import type { CodeGraph, GraphEdge, GraphNode } from "./types.js";
+import { maskSourceSyntax } from "./source-mask.js";
 
 export type ExtendsFactEvidence = {
   childName: string;
@@ -17,16 +18,17 @@ export type ExtendsFactEvidence = {
 };
 
 export function extractExtendsFactEvidence(source: string): ExtendsFactEvidence[] {
+  const maskedSource = maskSourceSyntax(source);
   const evidence: ExtendsFactEvidence[] = [];
   const pattern = /\bclass\s+([A-Za-z_$][\w$]*)\s+extends\s+([A-Za-z_$][\w$]*)/g;
-  for (const match of source.matchAll(pattern)) {
+  for (const match of maskedSource.matchAll(pattern)) {
     const childName = match[1];
     const targetName = match[2];
     if (!childName || !targetName || match.index === undefined) continue;
     evidence.push({
       childName,
       targetName,
-      line: source.slice(0, match.index).split("\n").length,
+      line: maskedSource.slice(0, match.index).split("\n").length,
     });
   }
   return evidence;

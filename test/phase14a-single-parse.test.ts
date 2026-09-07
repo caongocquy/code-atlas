@@ -3,6 +3,7 @@ import test from "node:test";
 import Parser from "tree-sitter";
 
 import { buildCodeGraphWithResolutionFromFacts } from "../src/core/graph/build-graph.js";
+import { extractExtendsFactEvidence } from "../src/core/graph/extends.js";
 import { toLexicalDocumentsFromFacts } from "../src/core/lexical/lexical-index.service.js";
 import { extractParsedFacts } from "../src/core/facts/facts-extractor.js";
 import { CURRENT_INDEX_VERSION_DOMAINS } from "../src/core/repository/index-version.js";
@@ -97,4 +98,23 @@ test("facts materialization preserves columns for same-line symbols", () => {
     "const first = 1;",
     "const second = 2;",
   ]);
+});
+
+test("facts source evidence ignores fake member and extends syntax in comments and strings", async () => {
+  const source = `
+    class Real { work() {} }
+    class Actual extends Real {}
+    class Holder { run() { fake.work(); } }
+    const text = "class Fake extends Real; const fake = new Real();";
+    /* class Commented extends Real; const fake = new Real(); */
+  `;
+  const indexed = unit("masked.ts", source);
+  const result = await buildCodeGraphWithResolutionFromFacts("/tmp/repo", [indexed]);
+  const resolution = result.resolutionByFile.get("masked.ts");
+
+  assert.equal(result.graph.edges.filter((edge) => edge.type === "extends").length, 1);
+  assert.equal(result.graph.edges.filter((edge) => edge.type === "calls").length, 0);
+  assert.equal(resolution?.coverage.extends, 1);
+  assert.equal(resolution?.coverage.unresolvedCalls, 1);
+  assert.equal(extractExtendsFactEvidence(source)[0]?.line, 3);
 });
