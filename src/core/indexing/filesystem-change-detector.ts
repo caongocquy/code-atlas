@@ -1,10 +1,11 @@
 import fs from "node:fs/promises";
-import path from "node:path";
 
 import type { AtlasCapability, AtlasFileCapabilityState } from "../../storage/atlas/atlas.types.js";
 import type { AtlasStore } from "../../storage/atlas/atlas.store.js";
 import type { ProgressRunner } from "../progress/progress.types.js";
 import { createFileHash } from "../repository/file-hash.js";
+import type { FactExtractionOutcome } from "../facts/facts-extractor.js";
+import type { ParsedFactsBlob } from "../facts/facts.types.js";
 import {
   repositoryRelativePath,
   scanRepo,
@@ -27,6 +28,39 @@ export type ChangeDetectorOptions = {
 };
 
 type FileStates = Map<IndexCapability, Map<string, AtlasFileCapabilityState>>;
+
+export type SourceRead = { source: string; contentHash: string };
+export type SourceReader = (relativePath: string) => Promise<SourceRead>;
+export type StableFactExtraction = { source: string; facts: ParsedFactsBlob };
+
+export class SourceRaceError extends Error {
+  constructor(relativePath: string) {
+    super(`Source changed during fact extraction: ${relativePath}`);
+    this.name = "SourceRaceError";
+  }
+}
+
+export async function extractStableFacts(
+  relativePath: string,
+  reader: SourceReader,
+  extractor: (read: SourceRead) => FactExtractionOutcome,
+  maxAttempts = 2,
+): Promise<StableFactExtraction> {
+  const attempts = Math.max(1, maxAttempts);
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const before = await reader(relativePath);
+    const extracted = extractor(before);
+    if (extracted.kind !== "facts") throw extracted.error;
+    const after = await reader(relativePath);
+
+    if (before.contentHash === after.contentHash) {
+      return { source: before.source, facts: extracted.facts };
+    }
+  }
+
+  throw new SourceRaceError(relativePath);
+}
 
 function statesByCapability(
   store: AtlasStore,

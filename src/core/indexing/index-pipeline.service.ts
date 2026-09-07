@@ -14,11 +14,13 @@ import { prepareSemanticCandidateFromFacts, type SemanticCandidate } from "../se
 import type { FactBlobKey } from "../facts/facts.types.js";
 import { AtlasStore } from "../../storage/atlas/atlas.store.js";
 import { getRepositoryIdentity, canonicalRepositoryPath } from "../repository/repository-identity.js";
+import { createFileHash } from "../repository/file-hash.js";
 import { toLexicalDocumentsFromFacts } from "../lexical/lexical-index.service.js";
 import { CURRENT_INDEX_VERSION_DOMAINS } from "../repository/index-version.js";
 import { detectRepositoryChanges } from "./change-detector.js";
 import { createCandidateGeneration } from "./index-manifest.js";
 import { planInvalidation } from "./invalidation-planner.js";
+import { extractStableFacts, SourceRaceError } from "./filesystem-change-detector.js";
 import type { IndexPipelineOptions, IndexingChanges, IndexRunOutcome, IndexFailure, IndexedSourceUnit, PublishedIndexRun } from "./indexing.types.js";
 
 type LegacyIndexResult = {
@@ -32,7 +34,7 @@ type LegacyIndexResult = {
 export type IndexPipelineResult = PublishedIndexRun & LegacyIndexResult;
 
 function failure(error: unknown, activeGenerationId?: string): IndexFailure {
-  return { kind: "infrastructure_failure", message: error instanceof Error ? error.message : String(error), ...(activeGenerationId ? { activeGenerationId } : {}) };
+  return { kind: error instanceof SourceRaceError ? "source_race" : "infrastructure_failure", message: error instanceof Error ? error.message : String(error), ...(activeGenerationId ? { activeGenerationId } : {}) };
 }
 
 function semanticResult(
@@ -84,24 +86,32 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
     const bindings: Array<{ repositoryId: string; relativePath: string; generationId: string; factBlobKey: FactBlobKey; contentHash: string; language: "typescript" | "tsx" | "javascript" }> = [];
 
     for (const [relativePath, current] of currentFiles) {
-      const source = sources.get(relativePath);
+      let source = sources.get(relativePath);
       const adapter = getLanguageAdapter(relativePath);
       if (!source || !adapter) continue;
       const parserIdentity = parserMetadata(adapter);
       const expected = { contentHash: current.contentHash, language: current.language, parserIdentity, factsVersion: CURRENT_INDEX_VERSION_DOMAINS.factsVersion, factsSchemaVersion: CURRENT_INDEX_VERSION_DOMAINS.schemaVersion };
-      const key = factBlobKey(expected);
+      let key = factBlobKey(expected);
       const cached = decodeFacts(store.getFactBlob(key), { key, ...expected });
       let facts;
       if (cached.kind === "hit") {
         facts = cached.facts;
       } else {
-        const extracted = extractParsedFacts({ source, language: current.language, contentHash: current.contentHash, factsVersion: CURRENT_INDEX_VERSION_DOMAINS.factsVersion, factsSchemaVersion: CURRENT_INDEX_VERSION_DOMAINS.schemaVersion });
-        if (extracted.kind !== "facts") throw extracted.error;
-        facts = extracted.facts;
+        const stable = await extractStableFacts(
+          relativePath,
+          async (filePath) => {
+            const stableSource = await fs.readFile(path.join(repoPath, filePath), "utf8");
+            return { source: stableSource, contentHash: createFileHash(stableSource) };
+          },
+          (read) => extractParsedFacts({ source: read.source, language: current.language, contentHash: read.contentHash, factsVersion: CURRENT_INDEX_VERSION_DOMAINS.factsVersion, factsSchemaVersion: CURRENT_INDEX_VERSION_DOMAINS.schemaVersion }),
+        );
+        source = stable.source;
+        facts = stable.facts;
+        key = factBlobKey({ ...expected, contentHash: facts.contentHash });
         try { store.putFactBlob(key, facts); } catch (error) { throw new Error(`Fact cache write failed for ${relativePath}: ${error instanceof Error ? error.message : String(error)}`); }
       }
       units.push({ relativePath, source, facts });
-      bindings.push({ repositoryId: repoId, relativePath, generationId: "pending", factBlobKey: key, contentHash: current.contentHash, language: current.language });
+      bindings.push({ repositoryId: repoId, relativePath, generationId: "pending", factBlobKey: key, contentHash: facts.contentHash, language: current.language });
     }
 
     const generation = createCandidateGeneration(repoId, activeGenerationId, CURRENT_INDEX_VERSION_DOMAINS, bindings);
