@@ -92,3 +92,41 @@ test("aborts after the second mismatch without producing candidate facts", async
   );
   assert.deepEqual(order, ["read:one", "extract:one", "read:two", "read:three", "extract:three", "read:four"]);
 });
+
+test("caps maxAttempts at two attempts", async () => {
+  const order: string[] = [];
+  const reader = readerFromSequence([
+    { source: "one", contentHash: "one" },
+    { source: "two", contentHash: "two" },
+    { source: "three", contentHash: "three" },
+    { source: "four", contentHash: "four" },
+    { source: "five", contentHash: "five" },
+    { source: "six", contentHash: "six" },
+  ], order);
+
+  await assert.rejects(
+    extractStableFacts("file.ts", reader, extractorThatRecords(order), 3),
+    (error: unknown) => error instanceof Error && error.name === "SourceRaceError",
+  );
+  assert.deepEqual(order, ["read:one", "extract:one", "read:two", "read:three", "extract:three", "read:four"]);
+});
+
+test("protects cached facts with the stability boundary without parsing again", async () => {
+  const order: string[] = [];
+  const cached = parsedFacts("stable");
+  const reader = readerFromSequence([
+    { source: "stable", contentHash: "stable" },
+    { source: "stable", contentHash: "stable" },
+  ], order);
+  let cachedFactReads = 0;
+
+  const result = await extractStableFacts("file.ts", reader, (read) => {
+    cachedFactReads += 1;
+    order.push(`cached:${read.contentHash}`);
+    return { kind: "facts", facts: cached };
+  });
+
+  assert.equal(cachedFactReads, 1);
+  assert.deepEqual(order, ["read:stable", "cached:stable", "read:stable"]);
+  assert.deepEqual(result, { source: "stable", facts: cached });
+});

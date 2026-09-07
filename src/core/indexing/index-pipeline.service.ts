@@ -20,7 +20,7 @@ import { CURRENT_INDEX_VERSION_DOMAINS } from "../repository/index-version.js";
 import { detectRepositoryChanges } from "./change-detector.js";
 import { createCandidateGeneration } from "./index-manifest.js";
 import { planInvalidation } from "./invalidation-planner.js";
-import { extractStableFacts, SourceRaceError } from "./filesystem-change-detector.js";
+import { extractStableFacts, SourceRaceError, type SourceReader } from "./filesystem-change-detector.js";
 import type { IndexPipelineOptions, IndexingChanges, IndexRunOutcome, IndexFailure, IndexedSourceUnit, PublishedIndexRun } from "./indexing.types.js";
 
 type LegacyIndexResult = {
@@ -61,6 +61,10 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
   const repoPath = canonicalRepositoryPath(path.resolve(inputPath));
   const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
   const repoId = store.ensureRepository(getRepositoryIdentity(repoPath)).id;
+  const readSource: SourceReader = async (relativePath) => {
+    const source = await fs.readFile(path.join(repoPath, relativePath), "utf8");
+    return { source, contentHash: createFileHash(source) };
+  };
   let activeGenerationId = store.getActiveGenerationId(repoId);
   let semanticCandidate: SemanticCandidate | undefined;
 
@@ -95,14 +99,29 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       const cached = decodeFacts(store.getFactBlob(key), { key, ...expected });
       let facts;
       if (cached.kind === "hit") {
-        facts = cached.facts;
+        const stableCached = await extractStableFacts(
+          relativePath,
+          readSource,
+          () => ({ kind: "facts", facts: cached.facts }),
+        );
+        if (createFileHash(stableCached.source) === cached.facts.contentHash) {
+          source = stableCached.source;
+          facts = cached.facts;
+        } else {
+          const stable = await extractStableFacts(
+            relativePath,
+            readSource,
+            (read) => extractParsedFacts({ source: read.source, language: current.language, contentHash: read.contentHash, factsVersion: CURRENT_INDEX_VERSION_DOMAINS.factsVersion, factsSchemaVersion: CURRENT_INDEX_VERSION_DOMAINS.schemaVersion }),
+          );
+          source = stable.source;
+          facts = stable.facts;
+          key = factBlobKey({ ...expected, contentHash: facts.contentHash });
+          try { store.putFactBlob(key, facts); } catch (error) { throw new Error(`Fact cache write failed for ${relativePath}: ${error instanceof Error ? error.message : String(error)}`); }
+        }
       } else {
         const stable = await extractStableFacts(
           relativePath,
-          async (filePath) => {
-            const stableSource = await fs.readFile(path.join(repoPath, filePath), "utf8");
-            return { source: stableSource, contentHash: createFileHash(stableSource) };
-          },
+          readSource,
           (read) => extractParsedFacts({ source: read.source, language: current.language, contentHash: read.contentHash, factsVersion: CURRENT_INDEX_VERSION_DOMAINS.factsVersion, factsSchemaVersion: CURRENT_INDEX_VERSION_DOMAINS.schemaVersion }),
         );
         source = stable.source;

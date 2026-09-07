@@ -46,7 +46,7 @@ export async function extractStableFacts(
   extractor: (read: SourceRead) => FactExtractionOutcome,
   maxAttempts = 2,
 ): Promise<StableFactExtraction> {
-  const attempts = Math.max(1, maxAttempts);
+  const attempts = Math.min(2, Math.max(1, maxAttempts));
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const before = await reader(relativePath);
