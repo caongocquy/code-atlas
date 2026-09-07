@@ -18,11 +18,11 @@
 - Keep fact blobs path-neutral; repository/path ownership belongs to `FileFactBinding`.
 - Keep `factsSchemaVersion`, `factsVersion`, `parserIdentity`, `schemaVersion`, `resolutionVersion`, and `derivedVersion` as separate domains.
 - Keep content hashes as the correctness source. Git status may remain only a candidate discovery optimization.
-- Reuse the existing unique-or-drop resolver behavior. Do not add TypeEnvironment work, semantic invalidation, framework resolution, stable symbol identity redesign, embeddings, a native SQLite rewrite, a watcher, a daemon, or public fact/cache commands.
+- Reuse the existing unique-or-drop resolver behavior. Do not add TypeEnvironment work, semantic invalidation, framework resolution, stable symbol identity redesign, embedding expansion, a native SQLite rewrite, a watcher, a daemon, or public fact/cache commands. Existing semantic indexing remains optional and must preserve its current enabled/disabled/unavailable capability semantics.
 - Read-only Phase 13 commands remain non-mutating, including database, WAL/SHM, Git status/config, and repository timestamp behavior.
 - Do not alter `package.json`; its existing dirty changes are unrelated and must remain unstaged.
 - Every mutating lifecycle builds candidate state first, validates it, and publishes it atomically. A failed candidate leaves the active generation unchanged.
-- Do not commit, push, merge, or change branches while implementing this plan unless separately authorized.
+- Once the user explicitly authorizes execution of this plan, the task-scoped local commits described below are authorized. Never push, merge, or change branches unless separately authorized. `package.json` remains excluded unless a later Phase 14A change is separately justified and approved.
 
 ---
 
@@ -78,7 +78,7 @@ scanRepo / Git candidate hints
 - `src/core/repository/index-version.ts` and `src/core/repository/repository-status.service.ts` — map four version domains and keep status read-only.
 - `src/core/lexical/lexical-index.service.ts` and `src/core/semantic/semantic-index.service.ts` — consume materialized facts/source text without a second Tree-sitter parse.
 - `src/core/graph/indexed-graph.service.ts` and `src/adapters/cli/indexing.command.ts` — read only the active generation and route status through the non-mutating service.
-- `src/storage/atlas/atlas.schema.ts`, `src/storage/atlas/atlas.types.ts`, and `src/storage/atlas/atlas.store.ts` — add v2 generation/fact tables, validation-aware persistence, and atomic publication while retaining the existing SQLite engine.
+- `src/storage/atlas/atlas.schema.ts`, `src/storage/atlas/atlas.types.ts`, and `src/storage/atlas/atlas.store.ts` — add immutable fact-blob storage first, then generation-scoped bindings/graph/derived ownership plus atomic active-generation publication while retaining the existing SQLite engine and legacy read path.
 
 ### Test
 
@@ -91,7 +91,7 @@ scanRepo / Git candidate hints
 
 **Purpose**
 
-Create the shared type boundary before changing any indexer. Reuse `SupportedLanguage`, `SymbolType`, `CodeChunk`, `ImportReference`, `ImportBinding`, `GraphNode`, and existing resolution evidence types where their meaning is unchanged; add only path-neutral fact fields that the current extraction already proves.
+Create the shared type boundary before changing any indexer. Audit every candidate reused type (`CodeChunk`, `ImportReference`, `ImportBinding`, and related parser DTOs) before reuse. Reuse a type only when all persisted fields are syntax-derived and path-neutral; if it carries repository path, repository ID, resolved target, confidence, graph identity, or other materialized state, define a dedicated fact DTO that copies only the structural fields the parser directly proves.
 
 **Files**
 
@@ -106,7 +106,7 @@ Create the shared type boundary before changing any indexer. Reuse `SupportedLan
 
   ```ts
   export type ParseStatus = "complete" | "deterministic_partial";
-  export type FactLocalId = `symbol:${number}` | `scope:${number}` | `reference:${number}` | `call:${number}` | `binding:${number}`;
+  export type FactLocalId = `symbol:${number}` | `scope:${number}` | `import:${number}` | `export:${number}` | `reference:${number}` | `call:${number}` | `binding:${number}` | `type:${number}`;
   export type ParserIdentity = {
     language: SupportedLanguage;
     parserName: string;
@@ -115,13 +115,16 @@ Create the shared type boundary before changing any indexer. Reuse `SupportedLan
     grammarVersion: string;
     adapterVersion: string;
   };
-  export type ParsedSymbolFact = CodeChunk & { localId: FactLocalId; qualifiedName?: string; scopeId?: FactLocalId };
-  export type ContainmentScopeFact = { localId: FactLocalId; kind: string; name?: string; parentId?: FactLocalId; startLine: number; endLine: number };
-  export type ReferenceFact = { localId: FactLocalId; name: string; ownerId?: FactLocalId; scopeId?: FactLocalId; startLine: number; startColumn?: number };
-  export type CallSiteFact = { localId: FactLocalId; calleeText: string; callerId?: FactLocalId; scopeId?: FactLocalId; startLine: number; startColumn?: number };
-  export type BindingSeedFact = ImportBinding & { localId: FactLocalId; ownerId?: FactLocalId };
-  export type DeclaredTypeAnnotationFact = { localId: FactLocalId; ownerId: FactLocalId; text: string; startLine: number; endLine: number };
-  export type ParsedFactsBlob = { factsSchemaVersion: string; factsVersion: string; contentHash: string; language: SupportedLanguage; parserIdentity: ParserIdentity; parseStatus: ParseStatus; parserDiagnostics: string[]; symbols: ParsedSymbolFact[]; containmentScopes: ContainmentScopeFact[]; imports: ImportReference[]; exports: ImportReference[]; references: ReferenceFact[]; callSites: CallSiteFact[]; bindingSeeds: BindingSeedFact[]; declaredTypeAnnotations: DeclaredTypeAnnotationFact[] };
+  export type SourceRangeFact = { startLine: number; endLine: number; startColumn?: number; endColumn?: number };
+  export type ParsedSymbolFact = { localId: FactLocalId; name: string; kind: SymbolType; range: SourceRangeFact; scopeId?: FactLocalId; declaredQualifiedName?: string };
+  export type ContainmentScopeFact = { localId: FactLocalId; kind: string; name?: string; parentId?: FactLocalId; range: SourceRangeFact };
+  export type ImportFact = { localId: FactLocalId; moduleSpecifier: string; importedName?: string; localName?: string; kind: string; range: SourceRangeFact };
+  export type ExportFact = { localId: FactLocalId; exportedName?: string; localName?: string; moduleSpecifier?: string; kind: string; range: SourceRangeFact };
+  export type ReferenceFact = { localId: FactLocalId; name: string; ownerId?: FactLocalId; scopeId?: FactLocalId; range: SourceRangeFact };
+  export type CallSiteFact = { localId: FactLocalId; calleeText: string; callerId?: FactLocalId; scopeId?: FactLocalId; range: SourceRangeFact };
+  export type BindingSeedFact = { localId: FactLocalId; name: string; bindingKind: string; sourceModule?: string; importedName?: string; ownerId?: FactLocalId; range: SourceRangeFact };
+  export type DeclaredTypeAnnotationFact = { localId: FactLocalId; ownerId: FactLocalId; text: string; range: SourceRangeFact };
+  export type ParsedFactsBlob = { factsSchemaVersion: string; factsVersion: string; contentHash: string; language: SupportedLanguage; parserIdentity: ParserIdentity; parseStatus: ParseStatus; parserDiagnostics: string[]; symbols: ParsedSymbolFact[]; containmentScopes: ContainmentScopeFact[]; imports: ImportFact[]; exports: ExportFact[]; references: ReferenceFact[]; callSites: CallSiteFact[]; bindingSeeds: BindingSeedFact[]; declaredTypeAnnotations: DeclaredTypeAnnotationFact[] };
   export type FactBlobKey = string & { readonly __brand: "FactBlobKey" };
   export type FileFactBinding = { repositoryId: string; relativePath: string; generationId: string; factBlobKey: FactBlobKey; contentHash: string; language: SupportedLanguage };
   export type MaterializedFileFacts = { relativePath: string; facts: ParsedFactsBlob };
@@ -135,9 +138,10 @@ Create the shared type boundary before changing any indexer. Reuse `SupportedLan
 
 - `factsSchemaVersion` changes when serialized shape or validation changes; `factsVersion` changes when extraction semantics change; `parserIdentity` records concrete parser/runtime/grammar provenance and remains independently comparable.
 - Parser identity mismatch and facts-version mismatch are fact cache misses; resolution-version changes do not require parsing; derived-version changes do not require parsing or resolver rebuild when the graph is compatible.
-- Resolved node IDs, resolved edges, confidence, and resolver evidence are not fields in ParsedFactsBlob.
+- Resolved node IDs, resolved edges, confidence, repository IDs, repository-relative paths, and resolver evidence are not fields in ParsedFactsBlob.
+- Before reusing any existing parser/graph DTO, add an assertion or type-level check proving the selected persisted fields are path-neutral structural evidence. Do not persist a whole `CodeChunk`, `ImportReference`, or `ImportBinding` object merely for convenience.
 
-- [ ] Step 1: Add `test/phase14a-facts.test.ts` with assertions for path-independent keys, parser-identity mismatch, facts-version mismatch, resolution-only change, and derived-only change.
+- [ ] Step 1: Add `test/phase14a-facts.test.ts` with assertions for path-independent keys, parser-identity mismatch, facts-version mismatch, resolution-only change, derived-only change, and a path-neutral DTO audit fixture showing no persisted fact field owns repository/path/resolved state.
 - [ ] Step 2: Run `node --import tsx/esm --test test/phase14a-facts.test.ts`; confirm it fails because the facts modules and version-domain mapping do not exist.
 - [ ] Step 3: Add the contracts and key function above; update existing version types without changing current graph/vector refresh behavior yet.
 - [ ] Step 4: Rerun the focused test and confirm all contract/key assertions pass.
@@ -159,11 +163,11 @@ Turn the current structural extraction into one call per source snapshot. The ex
 
 **Interfaces**
 
-- Consumes: source text, relative path only for extraction context, `contentHash`, `factsVersion`, `factsSchemaVersion`, and the current `LanguageAdapter` selected by extension.
+- Consumes: source text, explicit `language`, `contentHash`, `factsVersion`, `factsSchemaVersion`, and the current `LanguageAdapter` selected before extraction. Repository-relative path is not an extractor input; path enters only at `materializeFileFacts`.
 - Produces:
 
   ```ts
-  export type FactExtractionInput = { source: string; relativePath: string; contentHash: string; factsVersion: string; factsSchemaVersion: string };
+  export type FactExtractionInput = { source: string; language: SupportedLanguage; contentHash: string; factsVersion: string; factsSchemaVersion: string };
   export type FactExtractionOutcome = { kind: "facts"; facts: ParsedFactsBlob } | { kind: "infrastructure_failure"; error: Error };
   export function extractParsedFacts(input: FactExtractionInput): FactExtractionOutcome;
   export function materializeFileFacts(relativePath: string, facts: ParsedFactsBlob): MaterializedFileFacts;
@@ -174,10 +178,11 @@ Turn the current structural extraction into one call per source snapshot. The ex
 **Behavioral invariants**
 
 - A fresh extraction followed by the existing resolver produces the same graph semantics as the current clean build after normalizing only intentionally nondeterministic metadata.
-- Fact arrays use path-neutral local IDs and preserve source order; imports and exports preserve the current module-source strings; diagnostics distinguish a deterministic partial tree from an infrastructure exception.
+- Fact arrays use path-neutral local IDs and preserve source order; imports and exports preserve source-level module specifiers; diagnostics distinguish a deterministic partial tree from an infrastructure exception.
+- The same source text, language, parser identity, facts version, and schema version extracted under two different repository-relative paths MUST produce semantically identical `ParsedFactsBlob` values and the same `FactBlobKey`; only `MaterializedFileFacts`/resolution may differ by path.
 - No type propagation, framework registry, semantic body/signature dependency, or resolver-v2 inference is added.
 
-- [ ] Step 1: Add a test fixture with a TypeScript file containing a class, method, function call, import/export, local binding, nested scope, and declared type; assert exact fact family counts and local-ID shapes.
+- [ ] Step 1: Add a test fixture with a TypeScript file containing a class, method, function call, import/export, local binding, nested scope, and declared type; assert exact fact family counts/local-ID shapes, then materialize the same extracted blob at two different paths and assert the blob/key stay identical while only the materialized path differs.
 - [ ] Step 2: Run `node --import tsx/esm --test test/phase14a-facts.test.ts test/graph.test.ts`; confirm the new extraction test fails before the canonical extractor exists.
 - [ ] Step 3: Implement `extractParsedFacts` by adapting the current parser adapter visitor and feeding existing structural extractors from the one parsed tree; add the adapter/parser identity returned by `code-parser.ts`.
 - [ ] Step 4: Add a test adapter that converts `ParsedFactsBlob` into the existing graph builder input and compare nodes/edges with the current clean fixture graph.
@@ -189,7 +194,7 @@ Turn the current structural extraction into one call per source snapshot. The ex
 
 **Purpose**
 
-Add content-addressed fact storage to the existing Atlas SQLite database and keep path ownership in generation-scoped bindings. Corrupt or incompatible data must be treated as a miss and repaired only through the normal mutating index lifecycle.
+Add immutable content-addressed fact-blob storage to the existing Atlas SQLite database. Task 3 deliberately does NOT create generation-scoped path bindings or GC; those depend on the active/candidate generation model and are owned by Task 4. Corrupt or incompatible blob data is treated as a miss and repaired only through the normal mutating index lifecycle.
 
 **Files**
 
@@ -209,16 +214,16 @@ Add content-addressed fact storage to the existing Atlas SQLite database and kee
   export function decodeFacts(payload: string, expected: FactCacheExpectation): FactCacheLookup;
   ```
 
-- Add store methods `getFactBlob(key: FactBlobKey): string | undefined`, `putFactBlob(key: FactBlobKey, facts: ParsedFactsBlob): void`, and `deleteUnreferencedFactBlobs(repositoryId: string, retainedGenerationIds: string[]): number`; the store calls `decodeFacts` after loading raw JSON and the facts core remains independent of SQLite.
+- Add store methods `getFactBlob(key: FactBlobKey): string | undefined` and `putFactBlob(key: FactBlobKey, facts: ParsedFactsBlob): void`; the store calls `decodeFacts` after loading raw JSON and the facts core remains independent of SQLite. A valid content-addressed row is immutable; replacing a corrupted row with freshly validated payload is an explicit repair path in a mutating lifecycle.
 
 **Behavioral invariants**
 
-- `fact_blobs` is immutable/content-addressed and stores compact deterministic JSON plus key/version/hash metadata; it stores no full source, AST, embeddings, or path-owned binding.
-- `file_fact_bindings` is generation-scoped and points from repository/path to FactBlobKey. Same content at a renamed path reuses the blob; reverting to a previously seen hash reuses it too.
+- `fact_blobs` is immutable/content-addressed and stores compact deterministic JSON plus key/version/hash metadata; it stores no full source, AST, embeddings, repository path, or generation-owned binding.
+- Same content plus compatible parser/facts provenance produces the same `FactBlobKey` regardless of repository/path. Binding-based rename/revert reuse is exercised after Task 4 introduces `file_fact_bindings`.
 - Invalid JSON, schema mismatch, facts-version mismatch, parser-identity mismatch, or hash/key mismatch yields MISS, then reparse and safe repair in the mutating lifecycle.
-- Garbage collection removes only blobs not referenced by committed active bindings or the explicitly retained generation policy; there is no LRU, TTL, daemon, or public browsing feature.
+- Task 3 adds no GC API. Global reference-safe GC is introduced only after Task 4 has generation-scoped bindings and active-generation semantics.
 
-- [ ] Step 1: Add cache tests for put/get, deterministic round-trip, each miss reason, same-content rename, revert reuse, and unreferenced blob collection; corrupt payloads via a test-only direct SQLite fixture update, not a production API.
+- [ ] Step 1: Add cache tests for put/get, deterministic round-trip, each miss reason, cross-path/cross-repository identical-key reuse, and corrupt-row repair; corrupt payloads via a test-only direct SQLite fixture update, not a production API.
 - [ ] Step 2: Run `node --import tsx/esm --test test/phase14a-cache.test.ts`; confirm failures identify missing tables/store methods/codec behavior.
 - [ ] Step 3: Add schema v2 tables and indexes using the existing `initializeAtlasSchema`/migration convention; implement codec validation and the narrow store methods inside existing SQLite transactions.
 - [ ] Step 4: Rerun `node --import tsx/esm --test test/phase14a-cache.test.ts`; confirm all hit/miss/repair assertions pass.
@@ -240,7 +245,7 @@ Give every mutating index run an isolated generation and make `active_generation
 
 **Interfaces**
 
-- Consumes: `FileFactBinding`, current repository identity, current `IndexVersionDomains`, graph/lexical/semantic candidate payloads.
+- Consumes: `FileFactBinding`, current repository identity, current `IndexVersionDomains`, graph/lexical candidate payloads, and semantic candidate payloads only when the semantic capability is enabled for the run.
 - Produces:
 
   ```ts
@@ -249,18 +254,24 @@ Give every mutating index run an isolated generation and make `active_generation
   export function createCandidateGeneration(repositoryId: string, parentGenerationId: string | undefined, versions: IndexVersionDomains, files: FileFactBinding[]): IndexGeneration;
   ```
 
-- Add store methods `getActiveGenerationId(repositoryId: string): string | undefined`, `beginCandidateGeneration(...)`, `writeCandidateManifest(...)`, `publishCandidateGeneration(...)`, and generation-aware graph/derived readers. `publishCandidateGeneration` must atomically update `repository_index_state.active_generation_id` after validating candidate completeness.
+- Add store methods `getActiveGenerationId(repositoryId: string): string | undefined`, `beginCandidateGeneration(...)`, `writeCandidateManifest(...)`, generation-scoped binding/graph/derived writers, `publishCandidateGeneration(...)`, and generation-aware readers.
+- Lock the v2 persistence model to generation-owned rows: `file_fact_bindings`, graph nodes/edges, lexical documents, and semantic rows (when semantic is enabled) carry `repository_id + generation_id` ownership. Existing keys/indexes must be extended or v2 shadow tables introduced so N+1 rows never overwrite N rows in place. Normal v2 readers first resolve `repository_index_state.active_generation_id` and then read only rows for that generation.
+- Legacy rows remain readable through an explicit dual read path: if the database has no v2 repository generation state, read the existing legacy graph/status rows without creating tables, migrating, or synthesizing an active generation. Task 10 later owns the mutating upgrade.
+- `publishCandidateGeneration` validates only capabilities that are enabled/required by the current run, then atomically switches `repository_index_state.active_generation_id` (plus the minimum consistent metadata) from N to N+1. A disabled or currently unavailable optional semantic capability must preserve its existing capability semantics and must not become a new mandatory publication dependency.
+- Add global reference-safe GC after successful publication: `deleteUnreferencedFactBlobs(): number` may delete a blob only when no `file_fact_bindings` row in any repository/generation still references its key. Candidate cleanup may remove abandoned bindings first; GC must never use a repository-local reference check for a globally content-addressed blob.
 
 **Behavioral invariants**
 
 - `repository_index_state` owns the active pointer and version/provenance metadata; candidate state is never written into active rows in place.
-- Readers select only the active generation. No historical browsing, rollback, or public generation selection is added.
+- For v2 state, readers select only the active generation. For legacy state, readers use the pre-v2 read path without mutation until an explicit mutating lifecycle upgrades it. No historical browsing, rollback, or public generation selection is added.
 - If candidate validation, graph writes, derived writes, cache writes, or process interruption fails before publication, the prior generation remains active and the candidate is not readable.
+- Graph, lexical, and enabled-semantic candidate rows remain physically/logically isolated by `generation_id`; no capability-specific writer may overwrite the currently active generation before publication.
+- Global fact GC is reference-safe across repositories and generations. There is no LRU, TTL, background daemon, or public cache browser.
 - Existing SQLite `BEGIN IMMEDIATE`/commit/rollback helpers are reused; publication is one atomic database operation, not a sequence of capability-specific visible commits.
 
-- [ ] Step 1: Test cold candidate creation, active-reader selection, atomic pointer switch, failed candidate retention of N, and no candidate visibility through `loadIndexedGraphReadOnly`.
+- [ ] Step 1: Test cold candidate creation, generation-scoped graph/lexical visibility, optional-semantic disabled behavior, active-reader selection, atomic pointer switch, failed candidate retention of N, no candidate visibility through `loadIndexedGraphReadOnly`, legacy read fallback without schema mutation, same-content rename/revert binding reuse, and cross-repository GC safety for a shared FactBlobKey.
 - [ ] Step 2: Run `node --import tsx/esm --test test/phase14a-generation.test.ts`; confirm missing generation tables and pointer APIs fail.
-- [ ] Step 3: Add generation tables/columns, manifest codec usage, candidate writes, completeness validation, and one transaction that switches `active_generation_id`.
+- [ ] Step 3: Add `repository_index_state`, generation metadata/manifest storage, generation-scoped `file_fact_bindings`, and generation ownership for graph/lexical/enabled-semantic rows; add dual legacy/v2 read selection, global reference-safe fact GC, candidate completeness validation, and one transaction that switches `active_generation_id`.
 - [ ] Step 4: Rerun the generation test and confirm readers see N before publication and N+1 only after publication.
 - [ ] Step 5: Run `node --import tsx/esm --test test/phase4-index-pipeline.test.ts test/phase13-remediation.test.ts`; confirm existing graph loading and read-only tests remain green.
 - [ ] Step 6: Run `npx tsc --noEmit` and inspect all SQL paths to confirm active and candidate bindings cannot overlap through an active-row update.
@@ -357,17 +368,27 @@ Replace separate capability publication with one repository lifecycle: capture/h
 **Interfaces**
 
 - Consumes: `IndexPipelineOptions`, current source files/hashes, `IndexVersionDomains`, and `planInvalidation`.
-- Produces: `IndexRunResult = { repositoryId: string; generationId: string; plan: InvalidationPlan; published: true }`; `indexRepository(repoPath: string, options?: IndexPipelineOptions): Promise<IndexRunResult>`; and `syncRepository(repoPath: string, options?: IndexPipelineOptions): Promise<IndexRunResult>`.
+- Produces:
+
+  ```ts
+  export type PublishedIndexRun = { kind: "published"; repositoryId: string; generationId: string; plan: InvalidationPlan; published: true };
+  export type FailedIndexRun = { kind: "failed"; repositoryId: string; activeGenerationId?: string; published: false; failure: IndexFailure };
+  export type IndexRunOutcome = PublishedIndexRun | FailedIndexRun;
+  export async function indexRepository(repoPath: string, options?: IndexPipelineOptions): Promise<IndexRunOutcome>;
+  export async function syncRepository(repoPath: string, options?: IndexPipelineOptions): Promise<IndexRunOutcome>;
+  ```
+
+- CLI/MCP wrappers map `kind="failed"` into the existing exit/error/wire behavior. Do not mix typed throws for expected index lifecycle failures with result unions; unexpected programmer errors may still throw.
 
 **Behavioral invariants**
 
 - `init`, `index`, and `sync` retain existing arguments, exit behavior, progress reporter, colors, icons, TTY handling, and `NO_COLOR` behavior.
 - Deleted paths remove stale graph nodes/edges and bindings. Repeated indexing with no source changes performs no fact parsing.
-- No capability-specific transaction publishes before candidate validation.
+- No capability-specific transaction publishes before candidate validation. Candidate validation requires graph/lexical and only those optional capabilities enabled/required by the current run; semantic disabled/unavailable behavior remains compatible with the existing capability model and never becomes a new mandatory runtime dependency.
 
 - [ ] Step 1: Add cold, unchanged, leaf-change, dependency-change, deletion, repeated-sync, and CLI/MCP completion tests.
 - [ ] Step 2: Run `node --import tsx/esm --test test/phase14a-indexing.test.ts test/phase4-index-pipeline.test.ts`; confirm the old lifecycle lacks one generation/result.
-- [ ] Step 3: Orchestrate the pipeline-owned `IndexRunResult` and stage all candidate outputs through generation store APIs.
+- [ ] Step 3: Orchestrate the pipeline-owned `IndexRunOutcome` and stage all candidate outputs through generation store APIs.
 - [ ] Step 4: Rerun focused integration tests and assert one active-pointer change per successful run.
 - [ ] Step 5: Run `node --import tsx/esm --test test/phase4-index-pipeline.test.ts test/phase10-mcp.test.ts test/phase11-integration.test.ts`.
 - [ ] Step 6: Run `npx tsc --noEmit` and inspect capability publication boundaries.
@@ -387,18 +408,27 @@ Prevent a mutable working tree from producing mixed-generation state by comparin
 
 **Interfaces**
 
-- Consumes: existing source reader/hash logic through an injected seam.
-- Produces: `SourceRead = { source: string; contentHash: string }`; `SourceReader = (relativePath: string) => Promise<SourceRead>`; and `readStableSource(relativePath: string, reader: SourceReader, maxAttempts?: 2): Promise<SourceRead>`.
+- Consumes: existing source reader/hash logic and `extractParsedFacts` through injected seams.
+- Produces:
+
+  ```ts
+  export type SourceRead = { source: string; contentHash: string };
+  export type SourceReader = (relativePath: string) => Promise<SourceRead>;
+  export type StableFactExtraction = { source: string; facts: ParsedFactsBlob };
+  export async function extractStableFacts(relativePath: string, reader: SourceReader, extractor: (read: SourceRead) => FactExtractionOutcome, maxAttempts?: number): Promise<StableFactExtraction>;
+  ```
+
+- Each attempt MUST execute in this order: `before = reader(path)` -> `extractor(before)` -> `after = reader(path)` -> compare `before.contentHash` with `after.contentHash`. The second capture therefore occurs after Tree-sitter extraction, closing the source-read/parse TOCTOU window.
 
 **Behavioral invariants**
 
-- A first mismatch discards the candidate and retries once. A second mismatch aborts N+1 and retains N as active.
+- A first post-extraction hash mismatch discards both source/facts and retries once. A second mismatch aborts N+1 and retains N as active.
 - Candidate bindings, manifest, graph, and derived outputs stay isolated until the atomic pointer transaction.
 - Fault injection uses deterministic reader sequences and transaction errors, never timing or polling.
 
-- [ ] Step 1: Add old/new reader sequences for one retry and two retries; assert retry count, active ID, and typed failure.
-- [ ] Step 2: Run `node --import tsx/esm --test test/phase14a-races.test.ts`; confirm the stable-source seam is absent.
-- [ ] Step 3: Implement the seam and route extraction through it; refuse publication on a race/error outcome.
+- [ ] Step 1: Add deterministic before/extract/after sequences proving the second hash read happens after extraction; cover one mismatch followed by a stable retry and two mismatches, and assert extraction count, retry count, active ID, and typed failure. Include a regression where the file is stable for two pre-parse reads but changes during extraction; the test must fail unless the post-extraction read catches it.
+- [ ] Step 2: Run `node --import tsx/esm --test test/phase14a-races.test.ts`; confirm the post-extraction stability seam is absent.
+- [ ] Step 3: Implement `extractStableFacts` and route mutating fact extraction through it; refuse publication on a source-race or infrastructure-failure outcome.
 - [ ] Step 4: Rerun race/generation tests and assert ordinary runs still publish.
 - [ ] Step 5: Run `node --import tsx/esm --test test/phase14a-indexing.test.ts test/phase14a-generation.test.ts`.
 - [ ] Step 6: Run `npx tsc --noEmit` and inspect rollback paths around pointer writes.
@@ -419,7 +449,7 @@ Separate deterministic partial parsing from infrastructure failure. Partial fact
 **Interfaces**
 
 - Consumes: `FactExtractionOutcome`, parser diagnostics, `FactCacheLookup`, and candidate transaction errors.
-- Produces: `IndexFailure = { kind: "source_race" | "infrastructure_failure" | "cache_write_failure"; message: string; activeGenerationId?: string }`; refine `extractParsedFacts` so parser/adapter exceptions return `infrastructure_failure` while deterministic parser diagnostics remain in `ParsedFactsBlob`.
+- Produces: `IndexFailure = { kind: "source_race" | "infrastructure_failure" | "cache_write_failure"; message: string; activeGenerationId?: string }`; refine `extractParsedFacts` so parser/adapter exceptions return `infrastructure_failure` while deterministic parser diagnostics remain in `ParsedFactsBlob`. The pipeline returns `IndexRunOutcome` with `kind="failed"` for these expected lifecycle failures; CLI/MCP wrappers preserve existing external failure semantics.
 
 **Behavioral invariants**
 
@@ -438,7 +468,7 @@ Separate deterministic partial parsing from infrastructure failure. Partial fact
 
 **Purpose**
 
-Make old databases safe to read and explicit to upgrade. A legacy read-only command reports the existing state without migration; the first mutating `init`, `index`, or `sync` performs one full source extraction into facts, resolves a candidate, and publishes it.
+Make old databases safe to read and explicit to upgrade. Read-only access must first detect legacy versus v2 storage without initializing schema: v2 reads through `active_generation_id`, while legacy reads the existing pre-v2 graph/status rows directly. The first mutating `init`, `index`, or `sync` performs one full source extraction into facts, resolves a v2 candidate, and publishes it.
 
 **Files**
 
@@ -451,17 +481,17 @@ Make old databases safe to read and explicit to upgrade. A legacy read-only comm
 - Produces:
 
   ```ts
-  export async function migrateLegacyIndexOnMutation(repositoryPath: string, options: IndexPipelineOptions): Promise<IndexRunResult>;
+  export async function migrateLegacyIndexOnMutation(repositoryPath: string, options: IndexPipelineOptions): Promise<IndexRunOutcome>;
   export async function getRepositoryStatusReadOnly(inputPath: string, providers?: RepositoryStatusProviders): Promise<RepositoryStatus>;
   ```
 
-- The status CLI branch must call `getRepositoryStatusReadOnly`; read-only services must open `AtlasStore` with `{ readOnly: true }` and select only the active generation.
+- The status CLI branch must call `getRepositoryStatusReadOnly`; read-only services open `AtlasStore` with `{ readOnly: true }`, probe v2 state without schema creation, select `active_generation_id` only for v2 repositories, and fall back to the existing legacy read path when v2 generation state is absent.
 
 **Behavioral invariants**
 
 - `status`, `inspect_change`, `affected_tests`, `explain_incomplete`, `graph_delta`, `architecture_drift`, and `change_gate` do not migrate, populate cache, update timestamps, repair bindings, index/sync, or publish a generation.
 - Read-only assertions include SQLite DB, WAL/SHM, Git status/config, and repository metadata timestamp stability.
-- Legacy upgrade never reconstructs facts from graph rows. It performs full source extraction once, then facts -> existing resolver -> candidate -> publication under `init`, `index`, or `sync` only.
+- Legacy upgrade never reconstructs facts from graph rows. It performs full source extraction once, then facts -> existing resolver -> candidate -> publication under `init`, `index`, or `sync` only. Until that mutation succeeds, legacy read-only commands continue using the legacy rows and do not require `repository_index_state` to exist.
 - Existing MCP route names, CLI output shape, progress reporter behavior, icons/colors, TTY/non-TTY behavior, and `NO_COLOR` behavior remain compatible.
 
 - [ ] Step 1: Add tests that snapshot DB/WAL/SHM mtimes, Git status/config, repository timestamp, and active generation before each read-only command; add a legacy database fixture and assert it changes only under mutating index.
@@ -496,7 +526,7 @@ Expose internal test-facing counters and make the correctness oracle executable 
   export function freezeIndexWorkCounters(counters: IndexWorkCounters): Readonly<IndexWorkCounters>;
   ```
 
-- `IndexPipelineResult`/`IndexRunResult` carries counters internally for tests and progress diagnostics; no new public command or stable external telemetry contract is added.
+- `IndexPipelineResult`/`PublishedIndexRun` carries counters internally for tests and progress diagnostics; no new public command or stable external telemetry contract is added.
 
 **Behavioral invariants**
 
@@ -545,6 +575,19 @@ Close the implementation with fresh evidence across targeted behavior, existing 
 - [ ] Step 6: Run `git diff --check`, inspect `git diff`, `git diff --cached`, `git status --short`, and verify the final implementation diff contains no out-of-scope resolver, semantic invalidation, service, or public CLI changes.
 - [ ] Step 7: Commit any final test-only adjustment with a focused message, then rerun all failed gates; do not amend unrelated commits and do not push.
 
+## Reviewer clarifications incorporated before execution
+
+- Source-race safety is post-extraction: every mutable-source attempt reads/hash-captures before extraction, extracts facts, then reads/hashes again before accepting the facts. Two pre-parse reads are insufficient.
+- V2 candidate isolation is generation-scoped for bindings, graph rows, lexical rows, and enabled semantic rows. `active_generation_id` is the only visibility switch for v2 readers.
+- Read-only storage has an explicit dual path: v2 repositories read the active generation; legacy repositories read legacy rows without schema initialization or migration.
+- `fact_blobs` are global content-addressed blobs. GC is global-reference-safe across every repository/generation binding, never repository-local.
+- Plan execution authorization covers the focused local commits listed in the tasks; push/merge/branch changes remain separately gated.
+- Existing DTOs are reused only after proving their persisted fields are path-neutral syntax evidence; otherwise dedicated fact DTOs are required.
+- Expected indexing failures use one internal `IndexRunOutcome` union rather than a mixture of expected typed throws and success-only results.
+- Existing semantic indexing remains optional; Phase 14A does not make embeddings or a semantic provider mandatory for successful graph/lexical publication.
+- `file_fact_bindings` and fact-blob GC are Task 4 responsibilities because their correctness depends on generation state; Task 3 owns blob codec/storage only.
+- Path-neutrality is tested end-to-end: same source + language + provenance at two repository paths produces the same facts/blob key, while materialization/resolution may differ.
+
 ## Spec coverage checklist
 
 The approved design sections map to these tasks:
@@ -555,8 +598,8 @@ The approved design sections map to these tasks:
 | `factsSchemaVersion`, `factsVersion`, parser identity, and FactBlobKey | 1, 3 |
 | Path-neutral blobs and FileFactBinding ownership | 1, 3, 4 |
 | Four version domains and rebuild matrix | 1, 5, 11 |
-| SQLite fact storage, validation, corruption, repair, and GC | 3, 9 |
-| Active pointer, candidate generation, manifest, and atomic publication | 4, 7, 8, 9 |
+| SQLite fact-blob storage, validation, corruption, and repair | 3, 9 |
+| Generation-scoped bindings, global reference-safe GC, active pointer, candidate generation, manifest, and atomic publication | 4, 7, 8, 9 |
 | Current source capture, hash, and parser duplication removal | 2, 6, 7, 8 |
 | Pure invalidation and reverse direct-importer relation | 5, 7 |
 | Uncertain dependency impact broadens resolution only | 5, 11 |
@@ -577,7 +620,7 @@ The matrix covers the spec's cold, unchanged, modified leaf/dependency, delete, 
 
 ## Type, scope, and ordering review
 
-- Task 1 introduces every shared fact/version type used by Tasks 2–11. Task 3 introduces cache expectation/lookup contracts before store use. Task 4 introduces generation/manifest contracts before Task 7 publication. Task 5 introduces `InvalidationPlan` before pipeline integration. Task 11 introduces `IndexWorkCounters` before final result assertions.
+- Task 1 introduces every shared fact/version type used by Tasks 2–11 and forbids blind reuse of path-owned graph DTOs. Task 3 introduces blob codec/cache contracts only. Task 4 introduces generation-scoped bindings/graph/derived ownership, global reference-safe GC, dual legacy/v2 reads, and generation/manifest contracts before Task 7 publication. Task 5 introduces `InvalidationPlan` before pipeline integration. Task 7 introduces the unified `IndexRunOutcome` before Tasks 8–10 add expected failure branches. Task 11 introduces `IndexWorkCounters` before final result assertions.
 - Existing option types remain the base for graph, lexical, semantic, and pipeline APIs; adapters add facts as explicit inputs rather than creating parallel capability-specific contracts.
 - The only new persistence is in existing Atlas SQLite schema/store conventions. No new engine, binary codec, background service, or public command is planned.
 - `src/core/change/transient-graph.ts` is not a production modification target. Its Phase 13 source snapshot behavior remains independently testable.
@@ -585,7 +628,7 @@ The matrix covers the spec's cold, unchanged, modified leaf/dependency, delete, 
 
 ## Commit strategy and execution boundary
 
-Each task ends with one focused local commit, using the intent shown in its final step. A later implementation agent must stage only the task-owned paths and inspect `git diff --cached --name-only` before committing. The existing dirty `package.json` must never be staged with Phase 14A work.
+After the user authorizes execution of this plan, each task ends with one focused local commit using the intent shown in its final step; that execution authorization covers these task-scoped local commits only. The implementation agent must stage only task-owned paths and inspect `git diff --cached --name-only` before committing. The existing dirty `package.json` must never be staged with Phase 14A work. Push, merge, branch changes, amend/rewrite, and any unrelated commit remain unauthorized unless separately requested.
 
 This document is the only requested artifact for the current turn. The implementation tasks above are not being started by this planning task; execution can later use `superpowers:subagent-driven-development` or `superpowers:executing-plans`.
 
@@ -652,22 +695,24 @@ Replace the current capability-by-capability lifecycle with one mutating reposit
 - Produces:
 
   ```ts
-  export type IndexRunResult = { repositoryId: string; generationId: string; plan: InvalidationPlan; published: true };
-  export async function indexRepository(repoPath: string, options?: IndexPipelineOptions): Promise<IndexRunResult>;
-  export async function syncRepository(repoPath: string, options?: IndexPipelineOptions): Promise<IndexRunResult>;
+  export type PublishedIndexRun = { kind: "published"; repositoryId: string; generationId: string; plan: InvalidationPlan; published: true };
+  export type FailedIndexRun = { kind: "failed"; repositoryId: string; activeGenerationId?: string; published: false; failure: IndexFailure };
+  export type IndexRunOutcome = PublishedIndexRun | FailedIndexRun;
+  export async function indexRepository(repoPath: string, options?: IndexPipelineOptions): Promise<IndexRunOutcome>;
+  export async function syncRepository(repoPath: string, options?: IndexPipelineOptions): Promise<IndexRunOutcome>;
   ```
 
-- Preserve the existing `init`, `index`, and `sync` CLI/MCP argument and exit behavior. Add counters to internal results/progress data only; do not add a public fact/cache command.
+- Preserve the existing `init`, `index`, and `sync` CLI/MCP argument and exit behavior. Expected lifecycle failures use the `IndexRunOutcome` failure branch internally and are mapped back to existing external error/exit behavior. Add counters to internal results/progress data only; do not add a public fact/cache command.
 
 **Behavioral invariants**
 
-- Lifecycle order is capture/hash -> invalidation plan -> cache lookup/reparse -> candidate fact bindings -> planned or broad resolution -> derived updates -> candidate validation -> atomic publication.
+- Lifecycle order is capture/hash -> invalidation plan -> cache lookup/reparse -> candidate fact bindings -> planned or broad resolution -> graph/lexical plus enabled optional derived updates -> candidate validation -> atomic publication. Disabled/unavailable semantic indexing retains existing capability semantics and is not promoted to a mandatory publication dependency.
 - Deleted paths remove stale graph nodes/edges and their fact bindings from the candidate. Repeated indexing with no source change has no fact parse work.
 - A graph version/resolution compatibility decision never causes lexical or semantic code to bypass the shared fact materialization.
 
 - [ ] Step 1: Add integration tests for cold `init`, unchanged second `index`, modified leaf, modified dependency, deletion, repeated `sync`, and CLI/MCP-compatible completion fields.
 - [ ] Step 2: Run `node --import tsx/esm --test test/phase14a-indexing.test.ts test/phase4-index-pipeline.test.ts`; confirm the old separate lifecycle does not yet produce one generation/result.
-- [ ] Step 3: Orchestrate one pipeline-owned `IndexRunResult`; pass one `IndexedSourceUnit` set to graph, lexical, and semantic consumers and stage all candidate outputs through the generation store APIs.
+- [ ] Step 3: Orchestrate one pipeline-owned `IndexRunOutcome`; pass one `IndexedSourceUnit` set to graph, lexical, and semantic consumers and stage all candidate outputs through the generation store APIs.
 - [ ] Step 4: Rerun the integration tests and confirm active generation changes once per successful run and deleted paths disappear from the candidate graph.
 - [ ] Step 5: Run `node --import tsx/esm --test test/phase4-index-pipeline.test.ts test/phase10-mcp.test.ts test/phase11-integration.test.ts`; confirm existing surface contracts remain green.
 - [ ] Step 6: Run `npx tsc --noEmit`; inspect that no pipeline path calls a capability-specific publish before candidate validation.
@@ -686,16 +731,17 @@ Ensure a mutable working tree cannot produce a mixed-generation graph. Capture/h
 
 **Interfaces**
 
-- Consumes: the existing filesystem reader/hash mechanism and an injectable source reader.
+- Consumes: the existing filesystem reader/hash mechanism, an injectable source reader, and the canonical fact extractor.
 - Produces:
 
   ```ts
   export type SourceRead = { source: string; contentHash: string };
   export type SourceReader = (relativePath: string) => Promise<SourceRead>;
-  export async function readStableSource(relativePath: string, reader: SourceReader, maxAttempts?: 2): Promise<SourceRead>;
+  export type StableFactExtraction = { source: string; facts: ParsedFactsBlob };
+  export async function extractStableFacts(relativePath: string, reader: SourceReader, extractor: (read: SourceRead) => FactExtractionOutcome, maxAttempts?: number): Promise<StableFactExtraction>;
   ```
 
-- `readStableSource` compares the first and second capture for each attempt; a mismatch discards that candidate. After the second mismatch it throws a typed source-race error that the pipeline maps to an unpublished run result/failure without touching the active pointer.
+- `extractStableFacts` performs `before read -> extraction -> after read` on every attempt and compares the before/after content hashes only after extraction completes. A mismatch discards both the source/facts candidate and retries once. After the second mismatch it returns/maps a typed source-race failure through `IndexRunOutcome` without touching the active pointer.
 
 **Behavioral invariants**
 
@@ -703,9 +749,9 @@ Ensure a mutable working tree cannot produce a mixed-generation graph. Capture/h
 - Candidate bindings, manifest, graph, and derived outputs are isolated from the active generation until the atomic pointer transaction.
 - Tests use deterministic reader sequences and transaction fault injection; no sleep, wall-clock polling, or file-watcher behavior is introduced.
 
-- [ ] Step 1: Add deterministic tests where a reader returns old/new content on the first attempt and stable new content on the retry, then two changing pairs; assert retry count, active ID, and error classification.
-- [ ] Step 2: Run `node --import tsx/esm --test test/phase14a-races.test.ts`; confirm no stable-source seam and no typed race outcome exist.
-- [ ] Step 3: Implement the injectable reader seam and route pipeline extraction through it; make publication refuse a candidate with any race/error outcome.
+- [ ] Step 1: Add deterministic tests where the reader/extractor sequence proves the after-hash read occurs after extraction: one mismatch followed by a stable retry, two mismatches, and a TOCTOU regression where two pre-extraction reads would appear stable but content changes during extraction. Assert extraction count, retry count, active ID, and error classification.
+- [ ] Step 2: Run `node --import tsx/esm --test test/phase14a-races.test.ts`; confirm no post-extraction stability seam and no typed race outcome exist.
+- [ ] Step 3: Implement `extractStableFacts` and route pipeline extraction through it; make publication refuse a candidate with any source-race/infrastructure failure outcome.
 - [ ] Step 4: Rerun race and generation tests; confirm the first race retries and the second race preserves N.
 - [ ] Step 5: Run `node --import tsx/esm --test test/phase14a-indexing.test.ts test/phase14a-generation.test.ts`; confirm ordinary runs still publish.
 - [ ] Step 6: Run `npx tsc --noEmit` and inspect transaction rollback paths for active-pointer writes.
@@ -731,6 +777,7 @@ Make failure classes explicit. A deterministic partial parse may be cached with 
   export type FactExtractionOutcome = { kind: "facts"; facts: ParsedFactsBlob } | { kind: "infrastructure_failure"; error: Error };
   export type IndexFailure = { kind: "source_race" | "infrastructure_failure" | "cache_write_failure"; message: string; activeGenerationId?: string };
   export function extractParsedFacts(input: FactExtractionInput): FactExtractionOutcome;
+  // Expected lifecycle failures are returned by IndexRunOutcome.kind === "failed"; CLI/MCP adapt them to existing external failure behavior.
   ```
 
 - Preserve the existing parser-error check as diagnostics on a deterministic partial result; reserve `infrastructure_failure` for parser/adapter/extractor exceptions or impossible fact validation.
