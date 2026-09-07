@@ -10,6 +10,28 @@ import {
 } from "./resolution.types.js";
 import type { CodeGraph, GraphEdge, GraphNode } from "./types.js";
 
+export type ExtendsFactEvidence = {
+  childName: string;
+  targetName: string;
+  line: number;
+};
+
+export function extractExtendsFactEvidence(source: string): ExtendsFactEvidence[] {
+  const evidence: ExtendsFactEvidence[] = [];
+  const pattern = /\bclass\s+([A-Za-z_$][\w$]*)\s+extends\s+([A-Za-z_$][\w$]*)/g;
+  for (const match of source.matchAll(pattern)) {
+    const childName = match[1];
+    const targetName = match[2];
+    if (!childName || !targetName || match.index === undefined) continue;
+    evidence.push({
+      childName,
+      targetName,
+      line: source.slice(0, match.index).split("\n").length,
+    });
+  }
+  return evidence;
+}
+
 function createParser(filePath: string): Parser | undefined {
   const adapter = getLanguageAdapter(filePath);
   if (!adapter) return undefined;
@@ -41,23 +63,18 @@ export function resolveExtendsResults(
   file: string,
   source: string,
   importBindings: ImportBinding[],
+  factEvidence?: ExtendsFactEvidence[],
 ): ResolutionBatch {
-  const parser = createParser(file);
   const coverage = emptyResolutionCoverage();
-  if (!parser) return { edges: [], results: [], coverage };
+  const parser = factEvidence ? undefined : createParser(file);
+  if (!parser && !factEvidence) return { edges: [], results: [], coverage };
   const imports = importsByName(importBindings);
   const edges: GraphEdge[] = [];
   const results: ResolutionResult[] = [];
-  const tree = parser.parse(source);
   const seen = new Set<string>();
 
-  function walk(node: Parser.SyntaxNode): void {
-    if (node.type === "class_declaration") {
-      const childName = node.childForFieldName("name")?.text;
-      const targetName = parentName(node);
-      if (childName && targetName) {
+  function resolveDeclaration(childName: string, targetName: string, line: number): void {
         coverage.extends += 1;
-        const line = node.startPosition.row + 1;
         const childCandidates = findNodes(graph, file, childName);
         const bindings = imports.get(targetName);
         const parentCandidates = bindings
@@ -85,11 +102,22 @@ export function resolveExtendsResults(
         else if (result.kind === "ambiguous") coverage.ambiguousExtends += 1;
         else coverage.unresolvedExtends += 1;
         results.push(result);
-      }
+  }
+
+  function walk(node: Parser.SyntaxNode): void {
+    if (node.type === "class_declaration") {
+      const childName = node.childForFieldName("name")?.text;
+      const targetName = parentName(node);
+      if (childName && targetName) resolveDeclaration(childName, targetName, node.startPosition.row + 1);
     }
     for (const child of node.namedChildren) walk(child);
   }
-  walk(tree.rootNode);
+
+  if (factEvidence) {
+    for (const declaration of factEvidence) resolveDeclaration(declaration.childName, declaration.targetName, declaration.line);
+  } else {
+    walk(parser!.parse(source).rootNode);
+  }
   return { edges, results, coverage };
 }
 

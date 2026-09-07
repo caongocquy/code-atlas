@@ -6,7 +6,7 @@ import { buildCodeGraphWithResolutionFromFacts } from "../src/core/graph/build-g
 import { toLexicalDocumentsFromFacts } from "../src/core/lexical/lexical-index.service.js";
 import { extractParsedFacts } from "../src/core/facts/facts-extractor.js";
 import { CURRENT_INDEX_VERSION_DOMAINS } from "../src/core/repository/index-version.js";
-import type { IndexedSourceUnit } from "../src/core/indexing/indexing.types.js";
+import { codeChunksFromFacts, type IndexedSourceUnit } from "../src/core/indexing/indexing.types.js";
 
 function unit(relativePath: string, source: string): IndexedSourceUnit {
   const extracted = extractParsedFacts({
@@ -58,4 +58,43 @@ test("parser calls equal cold and modified fact misses, while unchanged units re
   } finally {
     Parser.prototype.parse = originalParse;
   }
+});
+
+test("facts graph does not parse again for member and extends resolution", async () => {
+  const originalParse = Parser.prototype.parse;
+  let parserCalls = 0;
+  Parser.prototype.parse = function (...args: Parameters<typeof originalParse>) {
+    parserCalls += 1;
+    return originalParse.apply(this, args);
+  };
+
+  try {
+    const source = `
+      class Parent { work() {} }
+      class Child extends Parent {
+        constructor(private parent: Parent) {}
+        run() { this.parent.work(); }
+      }
+    `;
+    const indexed = unit("child.ts", source);
+    assert.equal(parserCalls, 1);
+
+    const result = await buildCodeGraphWithResolutionFromFacts("/tmp/repo", [indexed]);
+
+    assert.equal(parserCalls, 1);
+    assert.equal(result.graph.edges.filter((edge) => edge.type === "extends").length, 1);
+    assert.equal(result.graph.edges.filter((edge) => edge.type === "calls").length, 1);
+  } finally {
+    Parser.prototype.parse = originalParse;
+  }
+});
+
+test("facts materialization preserves columns for same-line symbols", () => {
+  const indexed = unit("same-line.ts", "export const first = 1; export const second = 2;\n");
+  const chunks = codeChunksFromFacts(indexed);
+
+  assert.deepEqual(chunks.map((chunk) => chunk.content), [
+    "const first = 1;",
+    "const second = 2;",
+  ]);
 });

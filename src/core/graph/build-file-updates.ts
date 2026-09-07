@@ -19,7 +19,7 @@ import type {
   GraphNodeType,
 } from "./types.js";
 import { resolveMemberCallResults } from "./member-resolution.js";
-import { resolveExtendsResults } from "./extends.js";
+import { extractExtendsFactEvidence, resolveExtendsResults } from "./extends.js";
 import { emptyResolutionCoverage, mergeResolutionCoverage, type GraphResolutionFile } from "./resolution.types.js";
 import type { ProgressReporter } from "../progress/progress.types.js";
 import { codeChunksFromFacts, type IndexedSourceUnit } from "../indexing/indexing.types.js";
@@ -204,8 +204,11 @@ async function buildFileGraphsInternal(
     const imports = local.facts
       ? local.facts.facts.imports.map((entry) => ({ source: entry.moduleSpecifier }))
       : extractImports(local.source);
+    const seenImportSources = new Set<string>();
 
     for (const importReference of imports) {
+      if (seenImportSources.has(importReference.source)) continue;
+      seenImportSources.add(importReference.source);
       if (!isRelativeImport(importReference.source)) {
         continue;
       }
@@ -263,11 +266,11 @@ async function buildFileGraphsInternal(
     );
 
     const memberResults = calls.some((call) => call.calleeName.includes("."))
-      ? resolveMemberCallResults(temporaryGraph, relativePath, local.source, calls, bindings)
+      ? resolveMemberCallResults(temporaryGraph, relativePath, local.source, calls, bindings, true)
       : { edges: [], results: [], coverage: emptyResolutionCoverage() };
 
     const extendsResults = /\bextends\b/.test(local.source)
-      ? resolveExtendsResults(workingGraph, relativePath, local.source, bindings)
+      ? resolveExtendsResults(workingGraph, relativePath, local.source, bindings, extractExtendsFactEvidence(local.source))
       : { edges: [], results: [], coverage: emptyResolutionCoverage() };
     local.edges.push(...callResults.edges, ...memberResults.edges, ...extendsResults.edges);
     const coverage = mergeResolutionCoverage(

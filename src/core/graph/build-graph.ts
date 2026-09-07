@@ -15,7 +15,7 @@ import { extractImportBindings } from "./import-bindings.js";
 import { extractCalls, hasParserErrors, type CallReference } from "./calls.js";
 import { resolveCallResults } from "./call-resolution.js";
 import { resolveMemberCallResults } from "./member-resolution.js";
-import { resolveExtendsResults } from "./extends.js";
+import { extractExtendsFactEvidence, resolveExtendsResults } from "./extends.js";
 import { emptyResolutionCoverage, mergeResolutionCoverage, type GraphResolutionFile } from "./resolution.types.js";
 import type { ProgressReporter } from "../progress/progress.types.js";
 import type { ImportBinding } from "./import-bindings.js";
@@ -200,7 +200,10 @@ export async function buildCodeGraphWithResolutionFromFacts(
   for (const unit of units) {
     const importerNodeId = fileNodeIds.get(unit.relativePath);
     if (!importerNodeId) continue;
+    const seenImportSpecifiers = new Set<string>();
     for (const importReference of unit.facts.imports) {
+      if (seenImportSpecifiers.has(importReference.moduleSpecifier)) continue;
+      seenImportSpecifiers.add(importReference.moduleSpecifier);
       if (!isRelativeImport(importReference.moduleSpecifier)) continue;
       const targetFile = resolveImportCandidates(unit.relativePath, importReference.moduleSpecifier).find((candidate) => fileSet.has(candidate));
       const targetNodeId = targetFile ? fileNodeIds.get(targetFile) : undefined;
@@ -214,10 +217,10 @@ export async function buildCodeGraphWithResolutionFromFacts(
     const calls = factsCalls(unit, chunks);
     const callResults = resolveCallResults(graph, unit.relativePath, calls, bindings);
     const memberResults = calls.some((call) => call.calleeName.includes("."))
-      ? resolveMemberCallResults(graph, unit.relativePath, unit.source, calls, bindings)
+      ? resolveMemberCallResults(graph, unit.relativePath, unit.source, calls, bindings, true)
       : { edges: [], results: [], coverage: emptyResolutionCoverage() };
     const extendsResults = /\bextends\b/.test(unit.source)
-      ? resolveExtendsResults(graph, unit.relativePath, unit.source, bindings)
+      ? resolveExtendsResults(graph, unit.relativePath, unit.source, bindings, extractExtendsFactEvidence(unit.source))
       : { edges: [], results: [], coverage: emptyResolutionCoverage() };
     graph.edges.push(...callResults.edges, ...memberResults.edges, ...extendsResults.edges);
     const coverage = mergeResolutionCoverage(mergeResolutionCoverage(callResults.coverage, memberResults.coverage), extendsResults.coverage);

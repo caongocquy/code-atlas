@@ -43,3 +43,33 @@ test("facts graph preserves clean-fixture graph nodes and edges", async () => {
     await rm(repoPath, { recursive: true, force: true });
   }
 });
+
+test("facts import edges deduplicate bindings from the same module", async () => {
+  const repoPath = await mkdtemp(path.join(tmpdir(), "code-atlas-phase14a-import-dedupe-"));
+  const dependency = "export const first = 1; export const second = 2;\n";
+  const source = 'import { first, second } from "./dep.js"; export const run = first + second;\n';
+  await writeFile(path.join(repoPath, "dep.ts"), dependency);
+  await writeFile(path.join(repoPath, "run.ts"), source);
+
+  try {
+    const units = ["dep.ts", "run.ts"].map((relativePath) => {
+      const content = relativePath === "dep.ts" ? dependency : source;
+      const extracted = extractParsedFacts({
+        source: content,
+        language: "typescript",
+        contentHash: relativePath,
+        factsVersion: CURRENT_INDEX_VERSION_DOMAINS.factsVersion,
+        factsSchemaVersion: "1.0.0",
+      });
+      assert.equal(extracted.kind, "facts");
+      if (extracted.kind !== "facts") throw extracted.error;
+      return { relativePath, source: content, facts: extracted.facts } satisfies IndexedSourceUnit;
+    });
+    const actual = await buildCodeGraphWithResolutionFromFacts(repoPath, units, undefined, "repo");
+    const importEdges = actual.graph.edges.filter((edge) => edge.type === "imports");
+
+    assert.equal(importEdges.length, 1);
+  } finally {
+    await rm(repoPath, { recursive: true, force: true });
+  }
+});

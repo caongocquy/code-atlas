@@ -13,11 +13,20 @@ export type IndexedSourceUnit = {
 export function codeChunksFromFacts(unit: IndexedSourceUnit): CodeChunk[] {
   const lines = unit.source.split("\n");
 
+  function sourceSlice(startLine: number, endLine: number, startColumn?: number, endColumn?: number): string {
+    const selected = lines.slice(startLine - 1, endLine);
+    if (selected.length === 0) return "";
+    if (selected.length === 1) return selected[0]?.slice(startColumn ?? 0, endColumn) ?? "";
+    const first = selected[0]?.slice(startColumn ?? 0) ?? "";
+    const last = selected.at(-1)?.slice(0, endColumn) ?? "";
+    return [first, ...selected.slice(1, -1), last].join("\n");
+  }
+
   return unit.facts.symbols.map((symbol) => ({
     symbolName: symbol.name,
     symbolType: symbol.kind,
     language: unit.facts.language,
-    content: lines.slice(symbol.range.startLine - 1, symbol.range.endLine).join("\n"),
+    content: sourceSlice(symbol.range.startLine, symbol.range.endLine, symbol.range.startColumn, symbol.range.endColumn),
     startLine: symbol.range.startLine,
     endLine: symbol.range.endLine,
     startColumn: symbol.range.startColumn,
