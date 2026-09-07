@@ -417,8 +417,12 @@ export class AtlasStore {
   }
 
   loadGraph(repoId: string): CodeGraph {
-    const activeGenerationId = this.getActiveGenerationId(repoId);
-    if (activeGenerationId) return this.loadGenerationGraph(repoId, activeGenerationId);
+    const indexState = this.getRepositoryIndexState(repoId);
+    if (indexState) {
+      return indexState.activeGenerationId
+        ? this.loadGenerationGraph(repoId, indexState.activeGenerationId)
+        : { nodes: [], edges: [] };
+    }
     const nodeRows = this.database
       .prepare(
         `SELECT id, type, name, qualified_name, file_path, start_line, end_line
@@ -519,12 +523,12 @@ export class AtlasStore {
     }
   }
 
-  deleteUnreferencedFactBlobs(afterPublishedGenerationId: string): number {
+  deleteUnreferencedFactBlobs(): number {
     if (!this.hasTable("repository_index_state")) return 0;
-    const published = Boolean(this.database.prepare(
-      "SELECT 1 FROM repository_index_state WHERE active_generation_id = ?",
-    ).get(afterPublishedGenerationId));
-    if (!published) throw new Error("Fact-blob GC requires a successfully published generation");
+    const hasPublishedGeneration = Boolean(this.database.prepare(
+      "SELECT 1 FROM repository_index_state WHERE active_generation_id IS NOT NULL",
+    ).get());
+    if (!hasPublishedGeneration) return 0;
     this.database.exec("BEGIN IMMEDIATE;");
     try {
       const result = this.database.prepare(
@@ -587,11 +591,7 @@ export class AtlasStore {
   }
 
   getActiveGenerationId(repositoryId: string): string | undefined {
-    if (!this.hasTable("repository_index_state")) return undefined;
-    const row = this.database
-      .prepare("SELECT active_generation_id FROM repository_index_state WHERE repository_id = ?")
-      .get(repositoryId) as { active_generation_id: string | null } | undefined;
-    return row?.active_generation_id ?? undefined;
+    return this.getRepositoryIndexState(repositoryId)?.activeGenerationId;
   }
 
   beginCandidateGeneration(generation: IndexGeneration): void {
@@ -794,19 +794,22 @@ export class AtlasStore {
       return [];
     }
 
-    const activeGenerationId = this.getActiveGenerationId(repoId);
-    if (activeGenerationId) {
+    const indexState = this.getRepositoryIndexState(repoId);
+    if (indexState) {
+      if (!indexState.activeGenerationId) return [];
+      const activeGenerationId = indexState.activeGenerationId;
       const pattern = `%${matchQuery.replace(/[\\%_]/g, "\\$&")}%`;
       const rows = this.database.prepare(
         `SELECT document_id, file, symbol_name, qualified_name, symbol_type,
                 content, start_line, end_line
          FROM generation_lexical_documents
          WHERE repository_id = ? AND generation_id = ?
+           AND (? IS NULL OR file LIKE ?)
            AND (content LIKE ? ESCAPE '\\' OR file LIKE ? ESCAPE '\\'
                 OR COALESCE(symbol_name, '') LIKE ? ESCAPE '\\'
                 OR COALESCE(qualified_name, '') LIKE ? ESCAPE '\\')
          ORDER BY file ASC, start_line ASC, document_id ASC LIMIT ?`,
-      ).all(repoId, activeGenerationId, pattern, pattern, pattern, pattern, limit) as Array<{
+      ).all(repoId, activeGenerationId, filePrefix ?? null, filePrefix ? `${filePrefix}%` : null, pattern, pattern, pattern, pattern, limit) as Array<{
         document_id: string; file: string; symbol_name: string | null; qualified_name: string | null;
         symbol_type: string | null; content: string; start_line: number | null; end_line: number | null;
       }>;
@@ -906,17 +909,20 @@ export class AtlasStore {
       return [];
     }
 
-    const rows = this.database
-      .prepare(
+    const indexState = this.getRepositoryIndexState(repoId);
+    const rows: Array<{ point_id: string; vector: Uint8Array; payload_json: string }> = indexState
+      ? (indexState.activeGenerationId
+        ? this.database.prepare(
+          `SELECT point_id, vector, payload_json
+           FROM generation_semantic_vectors
+           WHERE repository_id = ? AND generation_id = ?`,
+        ).all(repoId, indexState.activeGenerationId) as Array<{ point_id: string; vector: Uint8Array; payload_json: string }>
+        : [])
+      : this.database.prepare(
         `SELECT point_id, vector, payload_json
          FROM semantic_vectors
          WHERE repository_id = ?`,
-      )
-      .all(repoId) as Array<{
-      point_id: string;
-      vector: Uint8Array;
-      payload_json: string;
-    }>;
+      ).all(repoId) as Array<{ point_id: string; vector: Uint8Array; payload_json: string }>;
     const results: Array<VectorSearchResult & { pointId: string }> = [];
 
     // ponytail: O(n) scan keeps the built-in backend dependency-free; replace behind VectorStore if repository scale requires ANN.
@@ -958,26 +964,33 @@ export class AtlasStore {
   }
 
   countSemanticVectors(repoId: string): number {
-    const row = this.database
-      .prepare("SELECT count(*) AS count FROM semantic_vectors WHERE repository_id = ?")
-      .get(repoId) as { count: number };
+    const indexState = this.getRepositoryIndexState(repoId);
+    const row: { count: number } = indexState
+      ? (indexState.activeGenerationId
+        ? this.database.prepare("SELECT count(*) AS count FROM generation_semantic_vectors WHERE repository_id = ? AND generation_id = ?").get(repoId, indexState.activeGenerationId) as { count: number }
+        : { count: 0 })
+      : this.database.prepare("SELECT count(*) AS count FROM semantic_vectors WHERE repository_id = ?").get(repoId) as { count: number };
 
     return row.count;
   }
 
   getSemanticIndexedFileStates(repoId: string): Map<string, IndexedFileState> {
-    const rows = this.database
-      .prepare(
+    const indexState = this.getRepositoryIndexState(repoId);
+    const rows: Array<{ point_id: string; file_path: string; file_hash: string }> = indexState
+      ? (indexState.activeGenerationId
+        ? this.database.prepare(
+          `SELECT point_id, file_path, file_hash
+           FROM generation_semantic_vectors
+           WHERE repository_id = ? AND generation_id = ?
+           ORDER BY file_path ASC, point_id ASC`,
+        ).all(repoId, indexState.activeGenerationId) as Array<{ point_id: string; file_path: string; file_hash: string }>
+        : [])
+      : this.database.prepare(
         `SELECT point_id, file_path, file_hash
          FROM semantic_vectors
          WHERE repository_id = ?
          ORDER BY file_path ASC, point_id ASC`,
-      )
-      .all(repoId) as Array<{
-      point_id: string;
-      file_path: string;
-      file_hash: string;
-    }>;
+      ).all(repoId) as Array<{ point_id: string; file_path: string; file_hash: string }>;
     const states = new Map<string, IndexedFileState>();
 
     for (const row of rows) {
@@ -1505,6 +1518,15 @@ export class AtlasStore {
     return Boolean(this.database.prepare(
       "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
     ).get(name));
+  }
+
+  private getRepositoryIndexState(repositoryId: string): { activeGenerationId: string | undefined } | undefined {
+    if (!this.hasTable("repository_index_state")) return undefined;
+    const row = this.database.prepare(
+      "SELECT active_generation_id FROM repository_index_state WHERE repository_id = ?",
+    ).get(repositoryId) as { active_generation_id: string | null } | undefined;
+    if (!row) return undefined;
+    return { activeGenerationId: row.active_generation_id ?? undefined };
   }
 
   private generationRepository(generationId: string): { repository_id: string } {
