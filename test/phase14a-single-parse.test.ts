@@ -134,6 +134,43 @@ test("facts extends evidence ignores regex literal contents", async () => {
   assert.equal(resolution?.coverage.extends, 1);
 });
 
+test("facts evidence masks regex literals after control-flow parentheses", async () => {
+  const source = [
+    "class Real {}",
+    "class Actual extends Real {}",
+    "function check(ok: boolean, value: string) {",
+    "  if (ok) /class Fake extends Real; fake.work()/.test(value);",
+    "}",
+  ].join("\n");
+  const indexed = unit("control-regex.ts", source);
+  const result = await buildCodeGraphWithResolutionFromFacts("/tmp/repo", [indexed]);
+  const resolution = result.resolutionByFile.get("control-regex.ts");
+  const masked = maskSourceSyntax(source);
+
+  assert.equal(result.graph.edges.filter((edge) => edge.type === "extends").length, 1);
+  assert.equal(result.graph.edges.filter((edge) => edge.type === "calls").length, 0);
+  assert.equal(resolution?.coverage.extends, 1);
+  assert.equal(resolution?.coverage.unresolvedCalls, 1);
+  assert.doesNotMatch(masked, /Fake extends Real/);
+  assert.doesNotMatch(masked, /fake\.work/);
+});
+
+test("facts evidence masks regex character classes containing fake syntax", async () => {
+  const source = [
+    "class Real {}",
+    "class Actual extends Real {}",
+    "if (ok) /[\\/class Fake extends Real]/.test(value);",
+  ].join("\n");
+  const indexed = unit("regex-class.ts", source);
+  const result = await buildCodeGraphWithResolutionFromFacts("/tmp/repo", [indexed]);
+  const resolution = result.resolutionByFile.get("regex-class.ts");
+  const masked = maskSourceSyntax(source);
+
+  assert.equal(result.graph.edges.filter((edge) => edge.type === "extends").length, 1);
+  assert.equal(resolution?.coverage.extends, 1);
+  assert.doesNotMatch(masked, /Fake extends Real/);
+});
+
 test("facts member evidence preserves executable template interpolation", async () => {
   const source = [
     "class Real { work() {} }",
@@ -147,5 +184,29 @@ test("facts member evidence preserves executable template interpolation", async 
 
   assert.match(masked, /instance\.work\(\)/);
   assert.equal(callEdges.length, 1);
+  assert.equal(resolution?.coverage.resolvedCalls, 1);
+});
+
+test("facts evidence handles nested template interpolation and masks nested regex literals", async () => {
+  const source = [
+    "class Real { work() {} }",
+    "class Actual extends Real {}",
+    "class Holder {",
+    "  run(instance: Real) {",
+    "    return `${`inner ${/class Fake extends Real/.source} ${instance.work()}`}`;",
+    "  }",
+    "}",
+  ].join("\n");
+  const indexed = unit("nested-template.ts", source);
+  const result = await buildCodeGraphWithResolutionFromFacts("/tmp/repo", [indexed]);
+  const callEdges = result.graph.edges.filter((edge) => edge.type === "calls");
+  const resolution = result.resolutionByFile.get("nested-template.ts");
+  const masked = maskSourceSyntax("const value = `${`inner ${/class Fake extends Real/.source} ${instance.work()}`}`;");
+
+  assert.match(masked, /instance\.work\(\)/);
+  assert.doesNotMatch(masked, /class Fake extends Real/);
+  assert.equal(result.graph.edges.filter((edge) => edge.type === "extends").length, 1);
+  assert.equal(callEdges.length, 1);
+  assert.equal(resolution?.coverage.extends, 1);
   assert.equal(resolution?.coverage.resolvedCalls, 1);
 });
