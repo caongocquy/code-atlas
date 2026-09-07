@@ -95,7 +95,7 @@ function extractFactsClassFieldBindings(source: string, filePath: string, import
   const maskedSource = maskSourceSyntax(source);
   const imports = bindingsByLocalName(importBindings);
   const results: ClassFieldBinding[] = [];
-  const classPattern = /\bclass\s+([A-Za-z_$][\w$]*)\b[^\{]*\{/g;
+  const classPattern = /\bclass\s+([A-Za-z_$][\w$]*)\b[^{]*\{/g;
   for (const match of maskedSource.matchAll(classPattern)) {
     const ownerClassName = match[1];
     const openBrace = match.index === undefined ? -1 : maskedSource.indexOf("{", match.index);
