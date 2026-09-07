@@ -1,5 +1,7 @@
 import type { CallReference } from "./calls.js";
 import type { ImportBinding } from "./import-bindings.js";
+import { builtinModules } from "node:module";
+import { isRelativeImport } from "./imports.js";
 import {
   emptyResolutionCoverage,
   type ResolutionBatch,
@@ -59,6 +61,15 @@ function edgeFor(caller: GraphNode, callee: GraphNode, result: Extract<Resolutio
 
 function isUnsupportedDynamic(name: string): boolean {
   return name.includes("[") || name.includes("]") || name.includes("?");
+}
+
+function unresolvedImportReason(bindings: ImportBinding[]): string {
+  const sources = bindings.map((binding) => binding.source);
+  const builtins = new Set([...builtinModules, ...builtinModules.map((name) => `node:${name}`)]);
+  if (sources.length > 0 && sources.every((source) => builtins.has(source))) return "builtin dependency is not indexed";
+  if (sources.length > 0 && sources.every((source) => !isRelativeImport(source))) return "external dependency is not indexed";
+  if (sources.length > 0 && sources.every((source) => isRelativeImport(source))) return "broken internal import target is unavailable";
+  return "import binding target is unavailable";
 }
 
 export function resolveCallResults(
@@ -141,7 +152,7 @@ export function resolveCallResults(
         result = {
           kind: "unresolved",
           evidence: [evidence(file, call.line, method)],
-          reason: hasBinding ? "import binding target is unavailable" : "no unique same-file callee candidate",
+          reason: hasBinding ? unresolvedImportReason(bindingsByName.get(call.calleeName) ?? []) : "no unique same-file callee candidate",
           source: { file, line: call.line },
           unsupportedDynamic: isUnsupportedDynamic(call.calleeName),
         };

@@ -208,6 +208,12 @@ start the persisted stdio launcher.
 | Find imports | `find_imports` | Inspect module dependencies |
 | Find reverse imports | `find_imported_by` | Find modules depending on a file |
 | Assess impact | `impact` | Estimate direct and transitive blast radius |
+| Inspect changes | `inspect_change` | Map Git changes to changed symbols and structural impact |
+| Find affected tests | `affected_tests` | Select structural test evidence and identify test gaps |
+| Explain incomplete evidence | `explain_incomplete` | Explain coverage gaps and direct-verification targets |
+| Compare structural changes | `graph_delta` | Compare structural relationships before and after Git changes |
+| Detect architecture drift | `architecture_drift` | Detect introduced/resolved policy violations and import cycles |
+| Evaluate change policy | `change_gate` | Evaluate a Git change against deterministic repository policy |
 | Trace a path | `trace` | Follow a bounded relationship path |
 | Inspect retrieval | `inspect_retrieval` | Understand search and context stages |
 
@@ -225,9 +231,59 @@ In particular:
 No callers found + mayBeIncomplete=true ≠ no callers exist
 ```
 
+CodeAtlas does not infer architecture from folders. With an optional tracked
+`codeatlas.config.json`, `architecture_drift` compares baseline and target
+relationships, reports newly introduced or resolved dependency-policy violations,
+and detects newly introduced import cycles even without policy configuration. The
+analysis versions the policy with the Git source being inspected, so findings can
+be attributed to `code_change`, `policy_change`, or `both`; formatting and
+presentation-only policy edits do not create drift.
+
+<details>
+<summary>Architecture policy example</summary>
+
+```json
+{
+  "version": 1,
+  "architecture": {
+    "groups": [
+      { "id": "ui", "include": ["src/ui/**"] },
+      { "id": "domain", "include": ["src/domain/**"] },
+      { "id": "data", "include": ["src/data/**"] }
+    ],
+    "defaultCrossGroupAction": "allow",
+    "rules": [
+      {
+        "id": "ui-no-data",
+        "from": "ui",
+        "to": "data",
+        "action": "deny",
+        "edgeKinds": ["imports", "calls"],
+        "severity": "high"
+      }
+    ],
+    "cycles": { "enabled": true, "severity": "medium" }
+  }
+}
+```
+
+Groups use repository-relative include/exclude globs. Ambiguous membership is
+reported as incomplete evidence rather than resolved by rule order.
+</details>
+
+An optional `gate` section turns the same structured evidence into deterministic
+CI policy. Gate policy is always read from the repository-root `codeatlas.config.json`
+so a change cannot select another policy file to bypass the committed Gate. For example:
+`{ "gate": { "risk": { "maxAllowed": "medium" } } }`.
+Gate evaluates the trusted baseline policy first; a newly added policy is checked
+as a target bootstrap, so a change cannot weaken its own enforcement.
+
 When coverage is incomplete, agents are guided to verify important negative
 findings directly in the source. This keeps CodeAtlas useful without pretending
 that a partial index is complete.
+
+For test intelligence, “no indexed structural test evidence” means no indexed
+relationship was found; it does not prove that no test exists.
 
 ## Agent reporting
 
@@ -264,6 +320,12 @@ Run `code-atlas --help` for the live command surface.
 | Area | Commands |
 | --- | --- |
 | Repository | `init`, `index`, `sync`, `status` |
+| Change intelligence | `inspect-change` |
+| Test intelligence | `affected-tests` |
+| Structural graph delta | `graph-delta` |
+| Coverage diagnostics | `explain-incomplete` |
+| Architecture drift | `architecture-drift` |
+| Change Gate | `gate` |
 | Integrations | `connect`, `disconnect`, `integrations`, `integration ...` |
 | Hooks | `hook install`, `hook uninstall`, `hook status` |
 | Runtime | `mcp`, `serve` |

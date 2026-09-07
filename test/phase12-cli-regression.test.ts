@@ -200,6 +200,7 @@ test("generated guidance advertises ready graph tools without making them mandat
     assert.match(guidance, /find_callees/);
     assert.match(guidance, /find_imports/);
     assert.match(guidance, /impact/);
+    assert.match(guidance, /explain_incomplete/);
     assert.match(guidance, /trace/);
     assert.match(guidance, /not required for trivial or isolated edits/);
     assert.match(guidance, /Check index freshness\/capabilities.*repository_status/s);

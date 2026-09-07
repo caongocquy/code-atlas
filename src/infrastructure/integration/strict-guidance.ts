@@ -60,10 +60,18 @@ async function guidanceBody(repoPath: string): Promise<string> {
       "| Inspect module dependencies | `find_imports`, `find_imported_by` |",
       "| Assess blast radius | `impact` |",
       "| Trace execution paths | `trace` |",
+      "| Explain incomplete evidence | `explain_incomplete` |",
+      "| Compare structural changes | `graph_delta` |",
+      "| Check architecture drift | `architecture_drift` |",
+      "| Evaluate change policy | `change_gate` |",
     ]
     : [
       "| Check index freshness/capabilities | `repository_status` |",
       "| Find code or symbols | `search_code`, `get_symbol` |",
+      "| Explain incomplete evidence | `explain_incomplete` |",
+      "| Compare structural changes | `graph_delta` |",
+      "| Check architecture drift | `architecture_drift` |",
+      "| Evaluate change policy | `change_gate` |",
     ];
   const graphWorkflow = capabilities.graphReady
     ? [

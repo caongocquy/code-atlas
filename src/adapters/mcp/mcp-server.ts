@@ -36,7 +36,17 @@ import {
   getCommunityById,
 } from "../../core/graph/intelligence/communities.service.js";
 import { detectStructuralCycles } from "../../core/graph/intelligence/cycles.service.js";
+import { inspectChange } from "../../core/change/inspect-change.service.js";
+import type { InspectChangeInput } from "../../core/change/change.types.js";
+import { affectedTests } from "../../core/change/affected-tests.service.js";
 import type { DefaultProviderSet } from "../../infrastructure/provider-defaults.js";
+import { explainIncomplete } from "../../core/diagnostics/explain-incomplete.service.js";
+import { graphDelta } from "../../core/change/graph-delta.service.js";
+import type { GraphDeltaInput } from "../../core/change/graph-delta.types.js";
+import { architectureDrift } from "../../core/architecture/architecture-drift.service.js";
+import type { ArchitectureDriftInput } from "../../core/architecture/architecture-drift.types.js";
+import { changeGate } from "../../core/gate/change-gate.service.js";
+import type { ChangeGateInput } from "../../core/gate/change-gate.types.js";
 
 const MAX_LIMIT = 1_000;
 const MAX_CANDIDATES = 20;
@@ -365,6 +375,113 @@ export function createMcpServer(): McpServer {
     }),
     capabilityState: context.capabilityState,
   })));
+
+  const changeSourceShape = {
+    repoPath: repoInput,
+    mode: z.enum(["working", "staged", "commit", "range"]).optional().default("working"),
+    commit: z.string().min(1).optional(),
+    base: z.string().min(1).optional(),
+    head: z.string().min(1).optional(),
+  };
+  function validateChangeSource(value: { mode?: string; commit?: string; base?: string; head?: string }, context: { addIssue(issue: { code: "custom"; path: string[]; message: string }): void }): void {
+    const mode = value.mode ?? "working";
+    const has = (name: "commit" | "base" | "head") => value[name] !== undefined;
+    if (mode === "commit" && !has("commit")) context.addIssue({ code: "custom", path: ["commit"], message: "commit is required for commit mode" });
+    if (mode === "range" && (!has("base") || !has("head"))) context.addIssue({ code: "custom", path: ["base"], message: "base and head are required for range mode" });
+    if (mode !== "commit" && has("commit")) context.addIssue({ code: "custom", path: ["commit"], message: "commit is only valid in commit mode" });
+    if (mode !== "range" && (has("base") || has("head"))) context.addIssue({ code: "custom", path: ["base"], message: "base and head are only valid in range mode" });
+  }
+  const inspectChangeSchema = z.object({
+    ...changeSourceShape,
+    maxDepth: z.number().int().min(0).max(10).optional(),
+  }).strict().superRefine(validateChangeSource);
+  registerJsonTool(server, "inspect_change", "Inspect Git changes and map changed symbols to their structural blast radius.", inspectChangeSchema, async (args) => {
+    const mode = (args.mode as InspectChangeInput["mode"] | undefined) ?? "working";
+    if (mode === "commit") return inspectChange(resolveRepo(args.repoPath as string | undefined), { mode, commit: args.commit as string, maxDepth: args.maxDepth as number | undefined });
+    if (mode === "range") return inspectChange(resolveRepo(args.repoPath as string | undefined), { mode, base: args.base as string, head: args.head as string, maxDepth: args.maxDepth as number | undefined });
+    return inspectChange(resolveRepo(args.repoPath as string | undefined), { mode, maxDepth: args.maxDepth as number | undefined });
+  });
+
+  const affectedTestsSchema = inspectChangeSchema.extend({
+    maxTests: z.number().int().min(1).max(1_000).optional(),
+  });
+  registerJsonTool(server, "affected_tests", "Find tests structurally affected by Git changes and identify affected code with no indexed test evidence.", affectedTestsSchema, async (args) => {
+    const mode = (args.mode as InspectChangeInput["mode"] | undefined) ?? "working";
+    const options = { maxDepth: args.maxDepth as number | undefined, maxTests: args.maxTests as number | undefined };
+    if (mode === "commit") return affectedTests(resolveRepo(args.repoPath as string | undefined), { mode, commit: args.commit as string, ...options });
+    if (mode === "range") return affectedTests(resolveRepo(args.repoPath as string | undefined), { mode, base: args.base as string, head: args.head as string, ...options });
+    return affectedTests(resolveRepo(args.repoPath as string | undefined), { mode, ...options });
+  });
+
+  const explainIncompleteSchema = z.object({
+    repoPath: repoInput,
+    scope: z.enum(["repository", "change", "tests"]).optional().default("repository"),
+    mode: z.enum(["working", "staged", "commit", "range"]).optional(),
+    commit: z.string().min(1).optional(),
+    base: z.string().min(1).optional(),
+    head: z.string().min(1).optional(),
+    maxDepth: z.number().int().min(0).max(10).optional(),
+  }).strict().superRefine((value, context) => {
+    const mode = value.mode ?? "working";
+    const has = (name: "commit" | "base" | "head") => value[name] !== undefined;
+    if (value.scope === "repository" && (value.mode || has("commit") || has("base") || has("head") || value.maxDepth !== undefined)) {
+      context.addIssue({ code: "custom", path: ["scope"], message: "change source options require change or tests scope" });
+    }
+    if (value.scope !== "repository" && mode === "commit" && !has("commit")) context.addIssue({ code: "custom", path: ["commit"], message: "commit is required for commit mode" });
+    if (value.scope !== "repository" && mode === "range" && (!has("base") || !has("head"))) context.addIssue({ code: "custom", path: ["base"], message: "base and head are required for range mode" });
+    if (value.scope !== "repository" && mode !== "commit" && has("commit")) context.addIssue({ code: "custom", path: ["commit"], message: "commit is only valid in commit mode" });
+    if (value.scope !== "repository" && mode !== "range" && (has("base") || has("head"))) context.addIssue({ code: "custom", path: ["base"], message: "base and head are only valid in range mode" });
+  });
+  registerJsonTool(server, "explain_incomplete", "Explain why CodeAtlas evidence may be incomplete and what should be verified directly.", explainIncompleteSchema, async (args) => explainIncomplete(resolveRepo(args.repoPath as string | undefined), {
+    scope: args.scope as "repository" | "change" | "tests" | undefined,
+    mode: args.mode as "working" | "staged" | "commit" | "range" | undefined,
+    commit: args.commit as string | undefined,
+    base: args.base as string | undefined,
+    head: args.head as string | undefined,
+    maxDepth: args.maxDepth as number | undefined,
+  }));
+
+  const graphDeltaSchema = z.object(changeSourceShape).strict().superRefine(validateChangeSource).extend({
+    maxEdges: z.number().int().min(1).max(10_000).optional(),
+  });
+  registerJsonTool(server, "graph_delta", "Compare structural relationships before and after Git changes.", graphDeltaSchema, async (args) => {
+    const mode = (args.mode as GraphDeltaInput["mode"] | undefined) ?? "working";
+    const options = { maxEdges: args.maxEdges as number | undefined };
+    if (mode === "commit") return graphDelta(resolveRepo(args.repoPath as string | undefined), { mode, commit: args.commit as string, ...options });
+    if (mode === "range") return graphDelta(resolveRepo(args.repoPath as string | undefined), { mode, base: args.base as string, head: args.head as string, ...options });
+    return graphDelta(resolveRepo(args.repoPath as string | undefined), { mode, ...options });
+  });
+
+  const architectureDriftSchema = z.object({
+    ...changeSourceShape,
+    maxEdges: z.number().int().min(1).max(10_000).optional(),
+    configPath: z.string().min(1).optional(),
+  }).strict().superRefine(validateChangeSource);
+  registerJsonTool(server, "architecture_drift", "Detect architectural violations and dependency cycles introduced or resolved by Git changes.", architectureDriftSchema, async (args) => {
+    const mode = (args.mode as ArchitectureDriftInput["mode"] | undefined) ?? "working";
+    const options = { maxEdges: args.maxEdges as number | undefined, configPath: args.configPath as string | undefined };
+    if (mode === "commit") return architectureDrift(resolveRepo(args.repoPath as string | undefined), { mode, commit: args.commit as string, ...options });
+    if (mode === "range") return architectureDrift(resolveRepo(args.repoPath as string | undefined), { mode, base: args.base as string, head: args.head as string, ...options });
+    return architectureDrift(resolveRepo(args.repoPath as string | undefined), { mode, ...options });
+  });
+
+  const changeGateSchema = z.object({
+    ...changeSourceShape,
+    maxDepth: z.number().int().min(0).max(10).optional(),
+    maxTests: z.number().int().min(1).max(1_000).optional(),
+    maxEdges: z.number().int().min(1).max(10_000).optional(),
+  }).strict().superRefine(validateChangeSource);
+  registerJsonTool(server, "change_gate", "Evaluate Git changes against the repository's deterministic CodeAtlas Change Gate policy.", changeGateSchema, async (args) => {
+    const mode = (args.mode as ChangeGateInput["mode"] | undefined) ?? "working";
+    const options = {
+      maxDepth: args.maxDepth as number | undefined,
+      maxTests: args.maxTests as number | undefined,
+      maxEdges: args.maxEdges as number | undefined,
+    };
+    if (mode === "commit") return changeGate(resolveRepo(args.repoPath as string | undefined), { mode, commit: args.commit as string, ...options });
+    if (mode === "range") return changeGate(resolveRepo(args.repoPath as string | undefined), { mode, base: args.base as string, head: args.head as string, ...options });
+    return changeGate(resolveRepo(args.repoPath as string | undefined), { mode, ...options });
+  });
 
   registerJsonTool(server, "trace", "Return a bounded, directed or explanatory graph path.", z.object({
     ...commonInput,

@@ -15,7 +15,7 @@ import type {
 import type { EmbeddingProvider } from "../semantic/embedding-provider.js";
 import type { VectorStore } from "../semantic/vector-store.js";
 import type { RerankerProvider } from "../retrieval/reranker-provider.js";
-import type { ResolutionCoverage } from "../graph/resolution.types.js";
+import { emptyResolutionCoverage, type ResolutionCoverage } from "../graph/resolution.types.js";
 import {
   embeddingProviderIdentity,
   hasVectorStoreGeneration,
@@ -93,6 +93,46 @@ export type CapabilitySummary = {
   updatedAt?: string;
   lastError?: string;
 };
+
+function emptyStatus(
+  repoPath: string,
+  sourceFiles: number,
+  changeDetection: RepositoryStatus["changeDetection"],
+): RepositoryStatus {
+  const repoId = getRepositoryIdentity(repoPath).id;
+  return {
+    changeDetection,
+    repository: { path: repoPath, repoId, sourceFiles },
+    capabilities: {
+      graph: { state: "not_indexed", indexedFiles: 0, itemCount: 0 },
+      lexical: { state: "not_indexed", indexedFiles: 0, itemCount: 0 },
+      semantic: { state: "not_configured", indexedFiles: 0, itemCount: 0 },
+      reranker: { state: "not_configured", indexedFiles: 0, itemCount: 0 },
+    },
+    vector: {
+      currentVersion: VECTOR_INDEX_VERSION,
+      indexedFiles: 0,
+      points: 0,
+      chunks: 0,
+      backend: "sqlite",
+      reachable: false,
+      status: "not_indexed",
+      needsSync: false,
+    },
+    graph: {
+      currentVersion: GRAPH_INDEX_VERSION,
+      indexedFiles: 0,
+      nodes: 0,
+      edges: 0,
+      edgeBreakdown: { calls: 0, imports: 0, extends: 0, contains: 0 },
+      resolutionCoverage: emptyResolutionCoverage(),
+      sqlitePath: path.join(repoPath, ".codeatlas", "atlas.db"),
+      reachable: false,
+      status: "not_indexed",
+      needsRebuild: false,
+    },
+  };
+}
 
 async function currentHashes(
   repoPath: string,
@@ -294,13 +334,28 @@ async function getCapabilitySummaries(
 export async function getRepositoryStatus(
   inputPath = process.cwd(),
   providers: RepositoryStatusProviders = {},
+  options: { readOnly?: boolean } = {},
 ): Promise<RepositoryStatus> {
   const repoPath = canonicalRepositoryPath(path.resolve(inputPath));
   const files = await scanRepo(repoPath);
   const hashes = await currentHashes(repoPath, files);
   const changeDetection = await detectChangeDetectionMode(repoPath);
-  const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
-  const repository = store.ensureRepository(getRepositoryIdentity(repoPath));
+  const databasePath = path.join(repoPath, ".codeatlas", "atlas.db");
+  if (options.readOnly) {
+    try {
+      await fs.access(databasePath);
+    } catch {
+      return emptyStatus(repoPath, files.length, changeDetection);
+    }
+  }
+  const store = new AtlasStore(databasePath, options);
+  const repository = options.readOnly
+    ? store.findRepository(getRepositoryIdentity(repoPath))
+    : store.ensureRepository(getRepositoryIdentity(repoPath));
+  if (!repository) {
+    store.close();
+    return emptyStatus(repoPath, files.length, changeDetection);
+  }
   const repoId = repository.id;
 
   try {
@@ -341,6 +396,13 @@ export async function getRepositoryStatus(
   } finally {
     store.close();
   }
+}
+
+export async function getRepositoryStatusReadOnly(
+  inputPath = process.cwd(),
+  providers: RepositoryStatusProviders = {},
+): Promise<RepositoryStatus> {
+  return getRepositoryStatus(inputPath, providers, { readOnly: true });
 }
 
 async function getVectorStatus(

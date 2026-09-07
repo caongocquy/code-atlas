@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { pathToFileURL } from "node:url";
 
 import { initializeAtlasSchema, ATLAS_SCHEMA_VERSION } from "./atlas.schema.js";
 import type {
@@ -105,12 +106,19 @@ function repositoryFromRow(row: RepositoryRow): AtlasRepository {
 export class AtlasStore {
   private readonly database: DatabaseSync;
 
-  constructor(databasePath = DEFAULT_ATLAS_DB_PATH) {
-    ensureDatabaseDirectory(databasePath);
+  constructor(databasePath = DEFAULT_ATLAS_DB_PATH, options: { readOnly?: boolean } = {}) {
+    if (!options.readOnly) ensureDatabaseDirectory(databasePath);
 
-    const database = new DatabaseSync(databasePath);
+    const database = new DatabaseSync(
+      options.readOnly ? `${pathToFileURL(path.resolve(databasePath)).href}?immutable=1` : databasePath,
+      { readOnly: options.readOnly },
+    );
 
     try {
+      if (options.readOnly) {
+        this.database = database;
+        return;
+      }
       database.exec("PRAGMA foreign_keys = ON;");
       database.exec("PRAGMA journal_mode = WAL;");
       initializeAtlasSchema(database);
@@ -119,6 +127,17 @@ export class AtlasStore {
       database.close();
       throw error;
     }
+  }
+
+  findRepository(identity: RepositoryIdentity): AtlasRepository | undefined {
+    const row = this.database
+      .prepare("SELECT * FROM repositories WHERE identity_key = ?")
+      .get(identity.identityKey) as RepositoryRow | undefined;
+    if (row) return repositoryFromRow(row);
+    const byId = this.database
+      .prepare("SELECT * FROM repositories WHERE id = ?")
+      .get(identity.id) as RepositoryRow | undefined;
+    return byId ? repositoryFromRow(byId) : undefined;
   }
 
   ensureRepository(identity: RepositoryIdentity): AtlasRepository {
