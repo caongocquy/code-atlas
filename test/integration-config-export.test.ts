@@ -19,7 +19,7 @@ const tsxLoader = createRequire(import.meta.url).resolve("tsx/esm");
 test("integration config exports a durable JSON launch from any cwd", async () => {
   const cwd = await mkdtemp(path.join(tmpdir(), "code-atlas-config-export-"));
   try {
-    const env = { ...process.env, PATH: "/usr/bin:/bin", HOME: cwd };
+    const env = { ...process.env, PATH: "/usr/bin:/bin", HOME: cwd, NODE_NO_WARNINGS: "1" };
     delete env.NODE_PATH;
     const result = await execFile(process.execPath, [
       "--import",

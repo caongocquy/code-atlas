@@ -229,7 +229,7 @@ test("explain-incomplete CLI emits JSON only", async () => {
     const tsxLoader = createRequire(import.meta.url).resolve("tsx/esm");
     const result = await execFile(process.execPath, ["--import", tsxLoader, cliPath, "explain-incomplete", repoPath, "--json"], {
       cwd: repoPath,
-      env: { ...process.env, NO_COLOR: "1" },
+      env: { ...process.env, NO_COLOR: "1", NODE_NO_WARNINGS: "1" },
     });
     const output = JSON.parse(result.stdout) as { scope: string; authoritativeNegativeResults: boolean };
     assert.equal(output.scope, "repository");

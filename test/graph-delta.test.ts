@@ -193,7 +193,7 @@ test("graph-delta CLI emits human output and clean JSON", async () => {
     await writeFile(path.join(repoPath, "src/a.ts"), "export function a() { return true; }\n");
     const json = await execFile(process.execPath, ["--import", tsxLoader, cliPath, "graph-delta", repoPath, "--json"], {
       cwd: repoPath,
-      env: { ...process.env, NO_COLOR: "1" },
+      env: { ...process.env, NO_COLOR: "1", NODE_NO_WARNINGS: "1" },
     });
     const result = JSON.parse(String(json.stdout)) as GraphDeltaResultLike;
     assert.equal(result.source.mode, "working");

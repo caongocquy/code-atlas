@@ -202,7 +202,7 @@ test("inspect-change is exposed through MCP and the thin CLI", async () => {
 
     const cli = await execFile(process.execPath, ["--import", tsxLoader, cliPath, "inspect-change", repoPath, "--json"], {
       cwd: repoPath,
-      env: { ...process.env, NO_COLOR: "1" },
+      env: { ...process.env, NO_COLOR: "1", NODE_NO_WARNINGS: "1" },
     });
     const output = JSON.parse(cli.stdout) as { summary: { changedFiles: number } };
     assert.equal(output.summary.changedFiles, 1);

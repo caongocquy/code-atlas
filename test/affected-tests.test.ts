@@ -118,7 +118,7 @@ test("affected-tests CLI returns structured JSON without decoration", async () =
   try {
     const result = await execFile(process.execPath, ["--import", tsxLoader, cliPath, "affected-tests", repoPath, "--json"], {
       cwd: repoPath,
-      env: { ...process.env, NO_COLOR: "1" },
+      env: { ...process.env, NO_COLOR: "1", NODE_NO_WARNINGS: "1" },
     });
     const output = JSON.parse(result.stdout) as { source: { mode: string } };
     assert.equal(output.source.mode, "working");
