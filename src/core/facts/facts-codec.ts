@@ -4,7 +4,11 @@ import type {
   ParsedFactsBlob,
   ParserIdentity,
 } from "./facts.types.js";
-import type { SupportedLanguage } from "../graph/parsers/types.js";
+import {
+  LANGUAGE_IDS,
+  type SupportedLanguage,
+  type SymbolType,
+} from "../graph/parsers/types.js";
 
 export type FactCacheLookup =
   | { kind: "hit"; facts: ParsedFactsBlob }
@@ -29,7 +33,7 @@ export type FactCacheExpectation = {
 };
 
 export function encodeFacts(facts: ParsedFactsBlob): string {
-  return JSON.stringify(facts);
+  return canonicalJson(facts);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -38,12 +42,140 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function hasParserIdentity(value: unknown): value is ParserIdentity {
   return isRecord(value)
-    && typeof value.language === "string"
+    && isSupportedLanguage(value.language)
     && typeof value.parserName === "string"
     && typeof value.parserVersion === "string"
     && typeof value.grammarName === "string"
     && typeof value.grammarVersion === "string"
     && typeof value.adapterVersion === "string";
+}
+
+const SYMBOL_TYPES: ReadonlySet<SymbolType> = new Set([
+  "class", "function", "method", "interface", "type", "enum", "variable", "route", "module",
+]);
+
+function isSupportedLanguage(value: unknown): value is SupportedLanguage {
+  return typeof value === "string" && (LANGUAGE_IDS as readonly string[]).includes(value);
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string";
+}
+
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || isString(value);
+}
+
+function isFactId(value: unknown): boolean {
+  return typeof value === "string"
+    && /^(symbol|scope|import|export|reference|call|binding|type):[1-9]\d*$/.test(value);
+}
+
+function isInteger(value: unknown): value is number {
+  return Number.isInteger(value);
+}
+
+function isRange(value: unknown): boolean {
+  if (!isRecord(value) || !isInteger(value.startLine) || !isInteger(value.endLine)) {
+    return false;
+  }
+  const startLine = value.startLine;
+  const endLine = value.endLine;
+  const startColumn = value.startColumn;
+  const endColumn = value.endColumn;
+
+  if (startLine < 1
+    || endLine < startLine
+    || (startColumn !== undefined && (!isInteger(startColumn) || startColumn < 0))
+    || (endColumn !== undefined && (!isInteger(endColumn) || endColumn < 0))) {
+    return false;
+  }
+
+  return startLine !== endLine
+    || startColumn === undefined
+    || endColumn === undefined
+    || endColumn >= startColumn;
+}
+
+function isSymbolFact(value: unknown): boolean {
+  return isRecord(value)
+    && isFactId(value.localId)
+    && typeof value.name === "string"
+    && typeof value.kind === "string"
+    && SYMBOL_TYPES.has(value.kind as SymbolType)
+    && isRange(value.range)
+    && (value.scopeId === undefined || isFactId(value.scopeId))
+    && isOptionalString(value.declaredQualifiedName);
+}
+
+function isScopeFact(value: unknown): boolean {
+  return isRecord(value)
+    && isFactId(value.localId)
+    && typeof value.kind === "string"
+    && isOptionalString(value.name)
+    && (value.parentId === undefined || isFactId(value.parentId))
+    && isRange(value.range);
+}
+
+function isImportFact(value: unknown): boolean {
+  return isRecord(value)
+    && isFactId(value.localId)
+    && typeof value.moduleSpecifier === "string"
+    && isOptionalString(value.importedName)
+    && isOptionalString(value.localName)
+    && typeof value.kind === "string"
+    && isRange(value.range);
+}
+
+function isExportFact(value: unknown): boolean {
+  return isRecord(value)
+    && isFactId(value.localId)
+    && isOptionalString(value.exportedName)
+    && isOptionalString(value.localName)
+    && isOptionalString(value.moduleSpecifier)
+    && typeof value.kind === "string"
+    && isRange(value.range);
+}
+
+function isReferenceFact(value: unknown): boolean {
+  return isRecord(value)
+    && isFactId(value.localId)
+    && typeof value.name === "string"
+    && (value.ownerId === undefined || isFactId(value.ownerId))
+    && (value.scopeId === undefined || isFactId(value.scopeId))
+    && isRange(value.range);
+}
+
+function isCallFact(value: unknown): boolean {
+  return isRecord(value)
+    && isFactId(value.localId)
+    && typeof value.calleeText === "string"
+    && (value.callerId === undefined || isFactId(value.callerId))
+    && (value.scopeId === undefined || isFactId(value.scopeId))
+    && isRange(value.range);
+}
+
+function isBindingFact(value: unknown): boolean {
+  return isRecord(value)
+    && isFactId(value.localId)
+    && typeof value.name === "string"
+    && typeof value.bindingKind === "string"
+    && isOptionalString(value.sourceModule)
+    && isOptionalString(value.importedName)
+    && (value.ownerId === undefined || isFactId(value.ownerId))
+    && isRange(value.range);
+}
+
+function isDeclaredTypeFact(value: unknown): boolean {
+  return isRecord(value)
+    && isFactId(value.localId)
+    && isFactId(value.ownerId)
+    && typeof value.text === "string"
+    && isRange(value.range);
+}
+
+function isFactArray(value: unknown, item: (value: unknown) => boolean): boolean {
+  return Array.isArray(value) && value.every(item);
 }
 
 function hasFactsShape(value: unknown): value is ParsedFactsBlob {
@@ -52,19 +184,32 @@ function hasFactsShape(value: unknown): value is ParsedFactsBlob {
   return typeof value.factsSchemaVersion === "string"
     && typeof value.factsVersion === "string"
     && typeof value.contentHash === "string"
-    && typeof value.language === "string"
+    && isSupportedLanguage(value.language)
     && hasParserIdentity(value.parserIdentity)
+    && value.parserIdentity.language === value.language
     && (value.parseStatus === "complete" || value.parseStatus === "deterministic_partial")
     && Array.isArray(value.parserDiagnostics)
     && value.parserDiagnostics.every((item) => typeof item === "string")
-    && Array.isArray(value.symbols)
-    && Array.isArray(value.containmentScopes)
-    && Array.isArray(value.imports)
-    && Array.isArray(value.exports)
-    && Array.isArray(value.references)
-    && Array.isArray(value.callSites)
-    && Array.isArray(value.bindingSeeds)
-    && Array.isArray(value.declaredTypeAnnotations);
+    && isFactArray(value.symbols, isSymbolFact)
+    && isFactArray(value.containmentScopes, isScopeFact)
+    && isFactArray(value.imports, isImportFact)
+    && isFactArray(value.exports, isExportFact)
+    && isFactArray(value.references, isReferenceFact)
+    && isFactArray(value.callSites, isCallFact)
+    && isFactArray(value.bindingSeeds, isBindingFact)
+    && isFactArray(value.declaredTypeAnnotations, isDeclaredTypeFact);
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (isRecord(value)) {
+    return `{${Object.entries(value)
+      .filter(([, item]) => item !== undefined)
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
 }
 
 function sameParserIdentity(left: ParserIdentity, right: ParserIdentity): boolean {

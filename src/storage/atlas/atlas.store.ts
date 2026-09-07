@@ -926,29 +926,33 @@ export class AtlasStore {
 
     const payload = encodeFacts(facts);
     const parserIdentity = JSON.stringify(facts.parserIdentity);
-    const existing = this.database
-      .prepare("SELECT * FROM fact_blobs WHERE fact_blob_key = ?")
-      .get(key) as AtlasFactBlobRow | undefined;
-
-    if (existing) {
-      let valid = false;
-      try {
-        valid = decodeFacts(existing.payload_json, {
-          key: existing.fact_blob_key,
-          contentHash: existing.content_hash,
-          language: existing.language,
-          parserIdentity: JSON.parse(existing.parser_identity_json) as ParserIdentity,
-          factsVersion: existing.facts_version,
-          factsSchemaVersion: existing.facts_schema_version,
-        }).kind === "hit";
-      } catch {
-        valid = false;
-      }
-      if (valid) return;
-    }
 
     this.database.exec("BEGIN IMMEDIATE;");
     try {
+      const existing = this.database
+        .prepare("SELECT * FROM fact_blobs WHERE fact_blob_key = ?")
+        .get(key) as AtlasFactBlobRow | undefined;
+
+      if (existing) {
+        let valid = false;
+        try {
+          valid = decodeFacts(existing.payload_json, {
+            key: existing.fact_blob_key,
+            contentHash: existing.content_hash,
+            language: existing.language,
+            parserIdentity: JSON.parse(existing.parser_identity_json) as ParserIdentity,
+            factsVersion: existing.facts_version,
+            factsSchemaVersion: existing.facts_schema_version,
+          }).kind === "hit";
+        } catch {
+          valid = false;
+        }
+        if (valid) {
+          this.database.exec("COMMIT;");
+          return;
+        }
+      }
+
       this.database
         .prepare(
           `INSERT INTO fact_blobs

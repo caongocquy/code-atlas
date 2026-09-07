@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -8,6 +8,7 @@ import test from "node:test";
 import { decodeFacts, encodeFacts } from "../src/core/facts/facts-codec.js";
 import { factBlobKey } from "../src/core/facts/facts-identity.js";
 import type { ParsedFactsBlob } from "../src/core/facts/facts.types.js";
+import { getRepositoryIdentity } from "../src/core/repository/repository-identity.js";
 import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
 
 const parserIdentity = {
@@ -54,8 +55,25 @@ function expectation(value: ParsedFactsBlob) {
 test("fact blobs round-trip deterministically and validate", () => {
   const value = facts();
   const payload = encodeFacts(value);
+  const reordered = {
+    declaredTypeAnnotations: value.declaredTypeAnnotations,
+    bindingSeeds: value.bindingSeeds,
+    callSites: value.callSites,
+    references: value.references,
+    exports: value.exports,
+    imports: value.imports,
+    containmentScopes: value.containmentScopes,
+    symbols: value.symbols,
+    parserDiagnostics: value.parserDiagnostics,
+    parseStatus: value.parseStatus,
+    parserIdentity: { ...value.parserIdentity },
+    language: value.language,
+    contentHash: value.contentHash,
+    factsVersion: value.factsVersion,
+    factsSchemaVersion: value.factsSchemaVersion,
+  };
 
-  assert.equal(payload, encodeFacts({ ...value }));
+  assert.equal(payload, encodeFacts(reordered));
   assert.deepEqual(decodeFacts(payload, expectation(value)), { kind: "hit", facts: value });
 });
 
@@ -66,8 +84,11 @@ test("fact codec reports every miss reason", () => {
     [undefined, expected, "absent"],
     ["{", expected, "invalid_json"],
     [JSON.stringify({ ...value, symbols: "not-an-array" }), expected, "schema_mismatch"],
+    [JSON.stringify({ ...value, symbols: [null] }), expected, "schema_mismatch"],
     [encodeFacts({ ...value, contentHash: "other-hash" }), expected, "hash_mismatch"],
     [encodeFacts({ ...value, factsVersion: "2" }), expected, "version_mismatch"],
+    [encodeFacts({ ...value, factsSchemaVersion: "2" }), expected, "schema_mismatch"],
+    [encodeFacts({ ...value, language: "javascript", parserIdentity: { ...value.parserIdentity, language: "javascript" } }), expected, "parser_identity_mismatch"],
     [encodeFacts({ ...value, parserIdentity: { ...value.parserIdentity, adapterVersion: "2" } }), expected, "parser_identity_mismatch"],
   ];
 
@@ -79,16 +100,22 @@ test("fact codec reports every miss reason", () => {
 test("fact blobs are reused across paths and repositories", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase14a-cache-"));
   const databasePath = path.join(root, "atlas.db");
+  const firstRepositoryPath = path.join(root, "repository-a");
+  const secondRepositoryPath = path.join(root, "repository-b");
   const value = facts();
   const key = factBlobKey(value);
 
   try {
+    await mkdir(firstRepositoryPath);
+    await mkdir(secondRepositoryPath);
     const first = new AtlasStore(databasePath);
+    first.ensureRepository(getRepositoryIdentity(firstRepositoryPath));
     first.putFactBlob(key, value);
     assert.equal(first.getFactBlob(key), encodeFacts(value));
     first.close();
 
     const second = new AtlasStore(databasePath);
+    second.ensureRepository(getRepositoryIdentity(secondRepositoryPath));
     assert.equal(second.getFactBlob(key), encodeFacts(value));
     second.close();
   } finally {
@@ -116,6 +143,42 @@ test("corrupt fact rows miss and are repaired by putFactBlob", async () => {
     repaired.putFactBlob(key, value);
     assert.equal(repaired.getFactBlob(key), encodeFacts(value));
     repaired.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("valid fact rows stay immutable across sequential writers", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase14a-cache-immutable-"));
+  const databasePath = path.join(root, "atlas.db");
+  const value = facts();
+  const key = factBlobKey(value);
+
+  try {
+    const first = new AtlasStore(databasePath);
+    first.putFactBlob(key, value);
+    const originalPayload = first.getFactBlob(key);
+    const second = new AtlasStore(databasePath);
+    second.putFactBlob(key, {
+      declaredTypeAnnotations: value.declaredTypeAnnotations,
+      bindingSeeds: value.bindingSeeds,
+      callSites: value.callSites,
+      references: value.references,
+      exports: value.exports,
+      imports: value.imports,
+      containmentScopes: value.containmentScopes,
+      symbols: value.symbols,
+      parserDiagnostics: value.parserDiagnostics,
+      parseStatus: value.parseStatus,
+      parserIdentity: { ...value.parserIdentity },
+      language: value.language,
+      contentHash: value.contentHash,
+      factsVersion: value.factsVersion,
+      factsSchemaVersion: value.factsSchemaVersion,
+    });
+    assert.equal(second.getFactBlob(key), originalPayload);
+    second.close();
+    first.close();
   } finally {
     await rm(root, { recursive: true, force: true });
   }
