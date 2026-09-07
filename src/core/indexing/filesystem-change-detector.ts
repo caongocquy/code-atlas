@@ -43,10 +43,12 @@ function statesByCapability(
 
 function stateNeedsIndex(
   state: AtlasFileCapabilityState | undefined,
+  binding: { contentHash: string; language: string } | undefined,
   capability: IndexCapability,
   version: string | undefined,
   fileHash: string | undefined,
 ): boolean {
+  if (!state && binding?.contentHash === fileHash) return false;
   if (!state || state.state !== "ready" || state.version !== version) {
     return true;
   }
@@ -78,8 +80,13 @@ export async function detectFilesystemChanges(
   const currentFiles = new Set(relativeFiles);
   const persistedFiles = options.store.getIndexedFilePaths(options.repoId);
   const states = statesByCapability(options.store, options.repoId, options.capabilities);
+  const activeBindings = new Map(
+    options.store.getGenerationManifest(options.repoId)?.files.map((file) => [file.relativePath, file]) ?? [],
+  );
   const candidateHint = options.candidateFiles;
-  const shouldHashAll = options.forceFullScan || candidateHint === undefined;
+  // The unified pipeline needs hashes for every current file to materialize
+  // generation bindings and distinguish fact reuse from a parser miss.
+  const shouldHashAll = true;
   const fileHashes = new Map<string, string>();
 
   const hashes = async (reporter: { setProgress(current: number, total: number): void }) => {
@@ -91,7 +98,7 @@ export async function detectFilesystemChanges(
         continue;
       }
 
-      const shouldHash = shouldHashAll || candidateHint.has(relativeFile);
+      const shouldHash = shouldHashAll || candidateHint?.has(relativeFile) === true;
 
       if (shouldHash) {
         fileHashes.set(relativeFile, createFileHash(await fs.readFile(file, "utf8")));
@@ -117,6 +124,7 @@ export async function detectFilesystemChanges(
     const needsIndex = options.forceFullScan || options.capabilities.some((capability) =>
       stateNeedsIndex(
         states.get(capability)?.get(relativeFile),
+        capability === "graph" || capability === "lexical" ? activeBindings.get(relativeFile) : undefined,
         capability,
         options.versions[capability],
         hash,

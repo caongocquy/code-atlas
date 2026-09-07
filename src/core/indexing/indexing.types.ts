@@ -3,6 +3,7 @@ import type { EmbeddingProvider } from "../semantic/embedding-provider.js";
 import type { VectorStore } from "../semantic/vector-store.js";
 import type { ParsedFactsBlob } from "../facts/facts.types.js";
 import type { CodeChunk } from "../graph/parsers/types.js";
+import type { InvalidationPlan } from "./invalidation-planner.js";
 
 export type IndexedSourceUnit = {
   relativePath: string;
@@ -58,3 +59,27 @@ export type IndexPipelineOptions = {
     vectorStore: VectorStore;
   };
 };
+
+export type IndexFailure = {
+  kind: "infrastructure_failure" | "cache_write_failure" | "source_race";
+  message: string;
+  activeGenerationId?: string;
+};
+
+export type PublishedIndexRun = {
+  kind: "published";
+  repositoryId: string;
+  generationId: string;
+  plan: InvalidationPlan;
+  published: true;
+};
+
+export type FailedIndexRun = {
+  kind: "failed";
+  repositoryId: string;
+  activeGenerationId?: string;
+  published: false;
+  failure: IndexFailure;
+};
+
+export type IndexRunOutcome = PublishedIndexRun | FailedIndexRun;

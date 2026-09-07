@@ -274,7 +274,10 @@ export class AtlasStore {
       )
       .all(repoId, repoId) as Array<{ file: string }>;
 
-    return new Set(rows.map((row) => row.file));
+    const paths = new Set(rows.map((row) => row.file));
+    const manifest = this.getGenerationManifest(repoId);
+    for (const file of manifest?.files ?? []) paths.add(file.relativePath);
+    return paths;
   }
 
   replaceGraph(
@@ -798,18 +801,20 @@ export class AtlasStore {
     if (indexState) {
       if (!indexState.activeGenerationId) return [];
       const activeGenerationId = indexState.activeGenerationId;
-      const pattern = `%${matchQuery.replace(/[\\%_]/g, "\\$&")}%`;
+      const terms = [...new Set(matchQuery.split(/\s+OR\s+|\s+AND\s+|[()]/).map((term) => term.replace(/\*/g, "").trim()).filter(Boolean))];
+      const patterns = terms.map((term) => `%${term.replace(/[\\%_]/g, "\\$&")}%`);
+      const match = terms.length > 0
+        ? terms.map(() => "(content LIKE ? OR file LIKE ? OR COALESCE(symbol_name, '') LIKE ? OR COALESCE(qualified_name, '') LIKE ?)").join(" OR ")
+        : "0";
       const rows = this.database.prepare(
         `SELECT document_id, file, symbol_name, qualified_name, symbol_type,
                 content, start_line, end_line
          FROM generation_lexical_documents
          WHERE repository_id = ? AND generation_id = ?
            AND (? IS NULL OR file LIKE ?)
-           AND (content LIKE ? ESCAPE '\\' OR file LIKE ? ESCAPE '\\'
-                OR COALESCE(symbol_name, '') LIKE ? ESCAPE '\\'
-                OR COALESCE(qualified_name, '') LIKE ? ESCAPE '\\')
+           AND (${match})
          ORDER BY file ASC, start_line ASC, document_id ASC LIMIT ?`,
-      ).all(repoId, activeGenerationId, filePrefix ?? null, filePrefix ? `${filePrefix}%` : null, pattern, pattern, pattern, pattern, limit) as Array<{
+      ).all(repoId, activeGenerationId, filePrefix ?? null, filePrefix ? `${filePrefix}%` : null, ...patterns.flatMap((pattern) => [pattern, pattern, pattern, pattern]), limit) as Array<{
         document_id: string; file: string; symbol_name: string | null; qualified_name: string | null;
         symbol_type: string | null; content: string; start_line: number | null; end_line: number | null;
       }>;
