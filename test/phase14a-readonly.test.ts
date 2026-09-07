@@ -8,11 +8,12 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import { loadIndexedGraphReadOnly } from "../src/core/graph/indexed-graph.service.js";
-import { migrateLegacyIndexOnMutation } from "../src/core/indexing/index-pipeline.service.js";
+import { indexRepository, migrateLegacyIndexOnMutation } from "../src/core/indexing/index-pipeline.service.js";
 import { getRepositoryIdentity } from "../src/core/repository/repository-identity.js";
 import { createFileHash } from "../src/core/repository/file-hash.js";
 import { getRepositoryStatus, getRepositoryStatusReadOnly } from "../src/core/repository/repository-status.service.js";
 import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
+import { SqliteVectorStore } from "../src/storage/atlas/sqlite-vector.store.js";
 
 const execFile = promisify(execFileCallback);
 
@@ -114,6 +115,39 @@ test("the shared repository status service is read-only by default", async () =>
     await writeFile(path.join(repoPath, "source.ts"), "export const source = true;\n");
     await getRepositoryStatus(repoPath);
     await assert.rejects(() => stat(path.join(repoPath, ".codeatlas", "atlas.db")));
+  } finally {
+    await rm(repoPath, { recursive: true, force: true });
+  }
+});
+
+test("read-only status sees a freshly written WAL-backed repository", async () => {
+  const repoPath = await mkdtemp(path.join(tmpdir(), "code-atlas-phase-14a-wal-status-"));
+  const databasePath = path.join(repoPath, ".codeatlas", "atlas.db");
+  const vectorStore = new SqliteVectorStore(databasePath);
+  try {
+    const store = new AtlasStore(databasePath);
+    const repository = store.ensureRepository(getRepositoryIdentity(repoPath));
+    store.close();
+
+    const status = await getRepositoryStatusReadOnly(repoPath);
+    assert.equal(status.repository.repoId, repository.id);
+  } finally {
+    vectorStore.close();
+    await rm(repoPath, { recursive: true, force: true });
+  }
+});
+
+test("status ignores unsupported documentation files for indexed freshness", async () => {
+  const repoPath = await mkdtemp(path.join(tmpdir(), "code-atlas-phase-14a-doc-status-"));
+  try {
+    await writeFile(path.join(repoPath, "source.ts"), "export const source = true;\n");
+    const outcome = await indexRepository(repoPath, { skipGit: true });
+    assert.equal(outcome.kind, "published");
+
+    await writeFile(path.join(repoPath, "AGENTS.md"), "# Guidance\n");
+    const status = await getRepositoryStatusReadOnly(repoPath);
+    assert.equal(status.graph.status, "ready");
+    assert.equal(status.capabilities.lexical.state, "ready");
   } finally {
     await rm(repoPath, { recursive: true, force: true });
   }

@@ -115,7 +115,9 @@ export class AtlasStore {
     if (!options.readOnly) ensureDatabaseDirectory(databasePath);
 
     const database = new DatabaseSync(
-      options.readOnly ? `${pathToFileURL(path.resolve(databasePath)).href}?immutable=1` : databasePath,
+      options.readOnly
+        ? `${pathToFileURL(path.resolve(databasePath)).href}?${fs.existsSync(`${databasePath}-wal`) || fs.existsSync(`${databasePath}-shm`) ? "mode=ro" : "immutable=1"}`
+        : databasePath,
       { readOnly: options.readOnly },
     );
 

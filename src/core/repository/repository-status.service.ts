@@ -30,6 +30,7 @@ import {
   scanRepo,
 } from "./repository-files.js";
 import { detectChangeDetectionMode } from "../indexing/change-detector.js";
+import { getLanguageAdapter } from "../graph/parsers/registry.js";
 
 export type RepositoryStatus = {
   changeDetection: "git" | "filesystem";
@@ -94,20 +95,37 @@ export type CapabilitySummary = {
   lastError?: string;
 };
 
-function emptyStatus(
+async function providerAvailable(
+  provider: { isAvailable: () => Promise<boolean> } | undefined,
+): Promise<boolean> {
+  if (!provider) return false;
+  try {
+    return await provider.isAvailable();
+  } catch {
+    return false;
+  }
+}
+
+async function emptyStatus(
   repoPath: string,
   sourceFiles: number,
   changeDetection: RepositoryStatus["changeDetection"],
-): RepositoryStatus {
+  providers: RepositoryStatusProviders,
+): Promise<RepositoryStatus> {
   const repoId = getRepositoryIdentity(repoPath).id;
+  const semanticConfigured = providers.embeddingProvider !== undefined && providers.vectorStore !== undefined;
+  const semanticReady = semanticConfigured
+    && await providerAvailable(providers.embeddingProvider)
+    && await providerAvailable(providers.vectorStore);
+  const rerankerReady = await providerAvailable(providers.rerankerProvider);
   return {
     changeDetection,
     repository: { path: repoPath, repoId, sourceFiles },
     capabilities: {
       graph: { state: "not_indexed", indexedFiles: 0, itemCount: 0 },
       lexical: { state: "not_indexed", indexedFiles: 0, itemCount: 0 },
-      semantic: { state: "not_configured", indexedFiles: 0, itemCount: 0 },
-      reranker: { state: "not_configured", indexedFiles: 0, itemCount: 0 },
+      semantic: { state: semanticConfigured ? (semanticReady ? "not_indexed" : "unavailable") : "not_configured", indexedFiles: 0, itemCount: 0 },
+      reranker: { state: providers.rerankerProvider ? (rerankerReady ? "ready" : "unavailable") : "not_configured", indexedFiles: 0, itemCount: 0 },
     },
     vector: {
       currentVersion: VECTOR_INDEX_VERSION,
@@ -142,6 +160,7 @@ async function currentHashes(
 
   for (const filePath of files) {
     const relativePath = repositoryRelativePath(repoPath, filePath);
+    if (!getLanguageAdapter(relativePath)) continue;
     hashes.set(relativePath, createFileHash(await fs.readFile(filePath, "utf8")));
   }
 
@@ -345,7 +364,7 @@ export async function getRepositoryStatus(
     try {
       await fs.access(databasePath);
     } catch {
-      return emptyStatus(repoPath, files.length, changeDetection);
+      return emptyStatus(repoPath, files.length, changeDetection, providers);
     }
   }
   const store = new AtlasStore(databasePath, options);
@@ -354,7 +373,7 @@ export async function getRepositoryStatus(
     : store.ensureRepository(getRepositoryIdentity(repoPath));
   if (!repository) {
     store.close();
-    return emptyStatus(repoPath, files.length, changeDetection);
+    return emptyStatus(repoPath, files.length, changeDetection, providers);
   }
   const repoId = repository.id;
 
