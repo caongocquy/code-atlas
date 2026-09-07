@@ -6,6 +6,7 @@ import type {
   FileFactBinding,
   ParsedFactsBlob,
 } from "../../core/facts/facts.types.js";
+import type { IndexGeneration, IndexManifest } from "../../core/indexing/index-manifest.js";
 
 export type AtlasIndexAxis =
   | "schema"
@@ -116,3 +117,5 @@ export type AtlasFactBlobRow = {
 };
 
 export type AtlasFileFactBinding = FileFactBinding;
+export type AtlasIndexGeneration = IndexGeneration;
+export type AtlasIndexManifest = IndexManifest;

@@ -27,11 +27,6 @@ export async function loadIndexedGraphReadOnly(inputPath: string): Promise<Index
 async function loadIndexedGraphInternal(inputPath: string, readOnly: boolean): Promise<IndexedGraph> {
   const repoPath = canonicalRepositoryPath(path.resolve(inputPath));
   const status = await (readOnly ? getRepositoryStatusReadOnly(repoPath) : getRepositoryStatus(repoPath));
-
-  if (status.graph.status === "not_indexed") {
-    throw new Error("Repository graph is not indexed.");
-  }
-
   const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"), { readOnly });
   const repository = readOnly
     ? store.findRepository(getRepositoryIdentity(repoPath))
@@ -41,6 +36,10 @@ async function loadIndexedGraphInternal(inputPath: string, readOnly: boolean): P
     throw new Error("Repository graph is not indexed.");
   }
   try {
+    const activeGenerationId = store.getActiveGenerationId(repository.id);
+    if (status.graph.status === "not_indexed" && !activeGenerationId) {
+      throw new Error("Repository graph is not indexed.");
+    }
     return {
       repoPath,
       repoId: repository.id,

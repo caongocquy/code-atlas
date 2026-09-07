@@ -202,6 +202,113 @@ export function initializeAtlasSchema(database: DatabaseSync): void {
 
     CREATE INDEX IF NOT EXISTS idx_fact_blobs_content_hash
       ON fact_blobs (content_hash);
+
+    CREATE TABLE IF NOT EXISTS repository_index_state (
+      repository_id TEXT PRIMARY KEY,
+      active_generation_id TEXT,
+      active_schema_version TEXT NOT NULL,
+      active_facts_version TEXT NOT NULL,
+      active_resolution_version TEXT NOT NULL,
+      active_derived_version TEXT NOT NULL,
+      active_provenance_metadata TEXT NOT NULL DEFAULT '{}',
+      FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS index_generations (
+      id TEXT PRIMARY KEY,
+      repository_id TEXT NOT NULL,
+      parent_generation_id TEXT,
+      status TEXT NOT NULL CHECK (status IN ('candidate', 'committed')),
+      versions_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS index_manifests (
+      generation_id TEXT PRIMARY KEY,
+      repository_id TEXT NOT NULL,
+      versions_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (generation_id) REFERENCES index_generations(id) ON DELETE CASCADE,
+      FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS file_fact_bindings (
+      repository_id TEXT NOT NULL,
+      generation_id TEXT NOT NULL,
+      relative_path TEXT NOT NULL,
+      fact_blob_key TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      language TEXT NOT NULL,
+      PRIMARY KEY (repository_id, generation_id, relative_path),
+      FOREIGN KEY (generation_id) REFERENCES index_generations(id) ON DELETE CASCADE,
+      FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE,
+      FOREIGN KEY (fact_blob_key) REFERENCES fact_blobs(fact_blob_key)
+    );
+
+    CREATE TABLE IF NOT EXISTS generation_symbols (
+      repository_id TEXT NOT NULL,
+      generation_id TEXT NOT NULL,
+      id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      name TEXT NOT NULL,
+      qualified_name TEXT,
+      file_path TEXT NOT NULL,
+      start_line INTEGER,
+      end_line INTEGER,
+      PRIMARY KEY (repository_id, generation_id, id),
+      FOREIGN KEY (generation_id) REFERENCES index_generations(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS generation_edges (
+      repository_id TEXT NOT NULL,
+      generation_id TEXT NOT NULL,
+      owner_file TEXT NOT NULL,
+      from_symbol_id TEXT NOT NULL,
+      to_symbol_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      resolution_method TEXT,
+      evidence_kind TEXT,
+      confidence REAL,
+      resolution_file TEXT,
+      resolution_line INTEGER,
+      PRIMARY KEY (repository_id, generation_id, owner_file, from_symbol_id, to_symbol_id, type),
+      FOREIGN KEY (generation_id) REFERENCES index_generations(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS generation_lexical_documents (
+      repository_id TEXT NOT NULL,
+      generation_id TEXT NOT NULL,
+      document_id TEXT NOT NULL,
+      file TEXT NOT NULL,
+      symbol_name TEXT,
+      qualified_name TEXT,
+      symbol_type TEXT,
+      content TEXT NOT NULL,
+      start_line INTEGER,
+      end_line INTEGER,
+      PRIMARY KEY (repository_id, generation_id, document_id),
+      FOREIGN KEY (generation_id) REFERENCES index_generations(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS generation_semantic_vectors (
+      repository_id TEXT NOT NULL,
+      generation_id TEXT NOT NULL,
+      point_id TEXT NOT NULL,
+      vector BLOB NOT NULL,
+      file_path TEXT NOT NULL,
+      file_hash TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      PRIMARY KEY (repository_id, generation_id, point_id),
+      FOREIGN KEY (generation_id) REFERENCES index_generations(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_generation_symbols_active
+      ON generation_symbols (repository_id, generation_id, file_path);
+    CREATE INDEX IF NOT EXISTS idx_generation_edges_active
+      ON generation_edges (repository_id, generation_id, owner_file);
+    CREATE INDEX IF NOT EXISTS idx_generation_lexical_active
+      ON generation_lexical_documents (repository_id, generation_id, file);
   `);
 
   const capabilityColumns = database

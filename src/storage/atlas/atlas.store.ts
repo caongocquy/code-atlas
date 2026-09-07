@@ -6,7 +6,8 @@ import { pathToFileURL } from "node:url";
 import { initializeAtlasSchema, ATLAS_SCHEMA_VERSION } from "./atlas.schema.js";
 import { decodeFacts, encodeFacts } from "../../core/facts/facts-codec.js";
 import { factBlobKey } from "../../core/facts/facts-identity.js";
-import type { FactBlobKey, ParsedFactsBlob, ParserIdentity } from "../../core/facts/facts.types.js";
+import type { FactBlobKey, FileFactBinding, IndexVersionDomains, ParsedFactsBlob, ParserIdentity } from "../../core/facts/facts.types.js";
+import type { IndexGeneration, IndexManifest } from "../../core/indexing/index-manifest.js";
 import type {
   AtlasCapability,
   AtlasFileCapabilityState,
@@ -416,6 +417,8 @@ export class AtlasStore {
   }
 
   loadGraph(repoId: string): CodeGraph {
+    const activeGenerationId = this.getActiveGenerationId(repoId);
+    if (activeGenerationId) return this.loadGenerationGraph(repoId, activeGenerationId);
     const nodeRows = this.database
       .prepare(
         `SELECT id, type, name, qualified_name, file_path, start_line, end_line
@@ -472,6 +475,73 @@ export class AtlasStore {
     };
   }
 
+  writeCandidateLexicalDocuments(generationId: string, updates: LexicalFileUpdate[]): void {
+    const generation = this.generationRepository(generationId);
+    this.database.exec("BEGIN IMMEDIATE;");
+    try {
+      const deleteFile = this.database.prepare("DELETE FROM generation_lexical_documents WHERE generation_id = ? AND file = ?");
+      const insert = this.database.prepare(
+        `INSERT INTO generation_lexical_documents
+         (repository_id, generation_id, document_id, file, symbol_name, qualified_name, symbol_type, content, start_line, end_line)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      for (const update of updates) {
+        deleteFile.run(generationId, update.file);
+        for (const document of update.documents) {
+          insert.run(generation.repository_id, generationId, document.documentId, document.file, document.symbolName ?? null, document.qualifiedName ?? null, document.symbolType ?? null, document.content, document.startLine ?? null, document.endLine ?? null);
+        }
+      }
+      this.database.exec("COMMIT;");
+    } catch (error) {
+      this.database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  writeCandidateSemanticVectors(generationId: string, points: VectorPoint[]): void {
+    const generation = this.generationRepository(generationId);
+    this.database.exec("BEGIN IMMEDIATE;");
+    try {
+      const insert = this.database.prepare(
+        `INSERT OR REPLACE INTO generation_semantic_vectors
+         (repository_id, generation_id, point_id, vector, file_path, file_hash, payload_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      );
+      for (const point of points) {
+        const payload = point.payload as { file?: string; fileHash?: string };
+        if (typeof payload.file !== "string" || typeof payload.fileHash !== "string") throw new Error("Semantic vector payload must include file and fileHash");
+        insert.run(generation.repository_id, generationId, String(point.id), Buffer.from(Float32Array.from(point.vector).buffer), payload.file, payload.fileHash, JSON.stringify(point.payload));
+      }
+      this.database.exec("COMMIT;");
+    } catch (error) {
+      this.database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  deleteUnreferencedFactBlobs(afterPublishedGenerationId: string): number {
+    if (!this.hasTable("repository_index_state")) return 0;
+    const published = Boolean(this.database.prepare(
+      "SELECT 1 FROM repository_index_state WHERE active_generation_id = ?",
+    ).get(afterPublishedGenerationId));
+    if (!published) throw new Error("Fact-blob GC requires a successfully published generation");
+    this.database.exec("BEGIN IMMEDIATE;");
+    try {
+      const result = this.database.prepare(
+        `DELETE FROM fact_blobs
+         WHERE NOT EXISTS (
+           SELECT 1 FROM file_fact_bindings b
+           WHERE b.fact_blob_key = fact_blobs.fact_blob_key
+         )`,
+      ).run();
+      this.database.exec("COMMIT;");
+      return Number(result.changes);
+    } catch (error) {
+      this.database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
   getGraphResolutionCoverage(repoId: string): ResolutionCoverage {
     const row = this.database
       .prepare(
@@ -514,6 +584,138 @@ export class AtlasStore {
       )
       .all(repoId) as Array<{ diagnostics_json: string }>;
     return rows.flatMap((row) => JSON.parse(row.diagnostics_json) as ResolutionDiagnostic[]);
+  }
+
+  getActiveGenerationId(repositoryId: string): string | undefined {
+    if (!this.hasTable("repository_index_state")) return undefined;
+    const row = this.database
+      .prepare("SELECT active_generation_id FROM repository_index_state WHERE repository_id = ?")
+      .get(repositoryId) as { active_generation_id: string | null } | undefined;
+    return row?.active_generation_id ?? undefined;
+  }
+
+  beginCandidateGeneration(generation: IndexGeneration): void {
+    this.ensureRepositoryId(generation.repositoryId);
+    this.database.exec("BEGIN IMMEDIATE;");
+    try {
+      this.database.prepare(
+        `INSERT INTO index_generations
+         (id, repository_id, parent_generation_id, status, versions_json, created_at)
+         VALUES (?, ?, ?, 'candidate', ?, ?)`,
+      ).run(
+        generation.id,
+        generation.repositoryId,
+        generation.parentGenerationId ?? null,
+        JSON.stringify(generation.versions),
+        generation.manifest.createdAt,
+      );
+      this.database.exec("COMMIT;");
+    } catch (error) {
+      this.database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  writeCandidateManifest(manifest: IndexManifest): void {
+    this.database.exec("BEGIN IMMEDIATE;");
+    try {
+      const generation = this.database.prepare(
+        "SELECT repository_id, status FROM index_generations WHERE id = ?",
+      ).get(manifest.generationId) as { repository_id: string; status: string } | undefined;
+      if (!generation || generation.status !== "candidate") throw new Error("Candidate generation is missing or already published");
+      this.database.prepare(
+        `INSERT OR REPLACE INTO index_manifests
+         (generation_id, repository_id, versions_json, created_at) VALUES (?, ?, ?, ?)`,
+      ).run(manifest.generationId, generation.repository_id, JSON.stringify(manifest.versions), manifest.createdAt);
+      this.database.prepare("DELETE FROM file_fact_bindings WHERE generation_id = ?").run(manifest.generationId);
+      const insert = this.database.prepare(
+        `INSERT INTO file_fact_bindings
+         (repository_id, generation_id, relative_path, fact_blob_key, content_hash, language)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      );
+      for (const file of manifest.files) {
+        insert.run(generation.repository_id, manifest.generationId, file.relativePath, file.factBlobKey, file.contentHash, file.language);
+      }
+      this.database.exec("COMMIT;");
+    } catch (error) {
+      this.database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  writeCandidateFileFactBindings(generationId: string, bindings: FileFactBinding[]): void {
+    const manifest = this.getGenerationManifestById(generationId);
+    if (!manifest) throw new Error("Candidate manifest is missing");
+    this.writeCandidateManifest({ ...manifest, files: bindings });
+  }
+
+  getGenerationManifest(repositoryId: string): IndexManifest | undefined {
+    const id = this.getActiveGenerationId(repositoryId);
+    return id ? this.getGenerationManifestById(id) : undefined;
+  }
+
+  writeCandidateGraph(generationId: string, graph: CodeGraph, fileHashes: Map<string, string>): void {
+    const generation = this.generationRepository(generationId);
+    this.database.exec("BEGIN IMMEDIATE;");
+    try {
+      this.database.prepare("DELETE FROM generation_edges WHERE generation_id = ?").run(generationId);
+      this.database.prepare("DELETE FROM generation_symbols WHERE generation_id = ?").run(generationId);
+      const insertNode = this.database.prepare(
+        `INSERT INTO generation_symbols
+         (repository_id, generation_id, id, type, name, qualified_name, file_path, start_line, end_line)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      for (const node of graph.nodes) {
+        insertNode.run(generation.repository_id, generationId, node.id, node.type, node.name, node.qualifiedName ?? null, node.file, node.startLine ?? null, node.endLine ?? null);
+      }
+      const insertEdge = this.database.prepare(
+        `INSERT INTO generation_edges
+         (repository_id, generation_id, owner_file, from_symbol_id, to_symbol_id, type,
+          resolution_method, evidence_kind, confidence, resolution_file, resolution_line)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      const nodes = new Map(graph.nodes.map((node) => [node.id, node]));
+      for (const edge of graph.edges) {
+        const owner = nodes.get(edge.from)?.file;
+        if (!owner) throw new Error(`Missing source node for edge: ${edge.from}`);
+        insertEdge.run(generation.repository_id, generationId, owner, edge.from, edge.to, edge.type, edge.resolutionMethod ?? null, edge.evidenceKind ?? null, edge.confidence ?? null, edge.resolutionSource?.file ?? null, edge.resolutionSource?.line ?? null);
+      }
+      void fileHashes;
+      this.database.exec("COMMIT;");
+    } catch (error) {
+      this.database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  publishCandidateGeneration(generationId: string, options: { requireGraph?: boolean; requireLexical?: boolean; semanticEnabled?: boolean } = {}): void {
+    this.database.exec("BEGIN IMMEDIATE;");
+    try {
+      const generation = this.database.prepare(
+        "SELECT repository_id, status, versions_json FROM index_generations WHERE id = ?",
+      ).get(generationId) as { repository_id: string; status: string; versions_json: string } | undefined;
+      if (!generation || generation.status !== "candidate") throw new Error("Candidate generation is missing or already published");
+      if (!this.database.prepare("SELECT 1 FROM index_manifests WHERE generation_id = ?").get(generationId)) throw new Error("Candidate manifest is missing");
+      if (options.requireGraph && !this.database.prepare("SELECT 1 FROM generation_symbols WHERE generation_id = ? LIMIT 1").get(generationId)) throw new Error("Candidate graph is incomplete");
+      if (options.requireLexical && !this.database.prepare("SELECT 1 FROM generation_lexical_documents WHERE generation_id = ? LIMIT 1").get(generationId)) throw new Error("Candidate lexical index is incomplete");
+      if (options.semanticEnabled && !this.database.prepare("SELECT 1 FROM generation_semantic_vectors WHERE generation_id = ? LIMIT 1").get(generationId)) throw new Error("Candidate semantic index is incomplete");
+      const versions = JSON.parse(generation.versions_json) as IndexVersionDomains;
+      this.database.prepare("UPDATE index_generations SET status = 'committed' WHERE id = ?").run(generationId);
+      this.database.prepare(
+        `INSERT INTO repository_index_state
+         (repository_id, active_generation_id, active_schema_version, active_facts_version,
+          active_resolution_version, active_derived_version, active_provenance_metadata)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(repository_id) DO UPDATE SET active_generation_id = excluded.active_generation_id,
+           active_schema_version = excluded.active_schema_version, active_facts_version = excluded.active_facts_version,
+           active_resolution_version = excluded.active_resolution_version, active_derived_version = excluded.active_derived_version,
+           active_provenance_metadata = excluded.active_provenance_metadata`,
+      ).run(generation.repository_id, generationId, versions.schemaVersion, versions.factsVersion, versions.resolutionVersion, versions.derivedVersion, JSON.stringify({ semanticEnabled: options.semanticEnabled ?? false }));
+      this.database.exec("COMMIT;");
+    } catch (error) {
+      this.database.exec("ROLLBACK;");
+      throw error;
+    }
   }
 
   replaceLexicalDocuments(
@@ -590,6 +792,36 @@ export class AtlasStore {
   ): LexicalSearchRow[] {
     if (limit <= 0 || !matchQuery.trim()) {
       return [];
+    }
+
+    const activeGenerationId = this.getActiveGenerationId(repoId);
+    if (activeGenerationId) {
+      const pattern = `%${matchQuery.replace(/[\\%_]/g, "\\$&")}%`;
+      const rows = this.database.prepare(
+        `SELECT document_id, file, symbol_name, qualified_name, symbol_type,
+                content, start_line, end_line
+         FROM generation_lexical_documents
+         WHERE repository_id = ? AND generation_id = ?
+           AND (content LIKE ? ESCAPE '\\' OR file LIKE ? ESCAPE '\\'
+                OR COALESCE(symbol_name, '') LIKE ? ESCAPE '\\'
+                OR COALESCE(qualified_name, '') LIKE ? ESCAPE '\\')
+         ORDER BY file ASC, start_line ASC, document_id ASC LIMIT ?`,
+      ).all(repoId, activeGenerationId, pattern, pattern, pattern, pattern, limit) as Array<{
+        document_id: string; file: string; symbol_name: string | null; qualified_name: string | null;
+        symbol_type: string | null; content: string; start_line: number | null; end_line: number | null;
+      }>;
+      return rows.map((row) => ({
+        documentId: row.document_id,
+        file: row.file,
+        symbolName: row.symbol_name ?? undefined,
+        qualifiedName: row.qualified_name ?? undefined,
+        symbolType: row.symbol_type ?? undefined,
+        content: row.content,
+        startLine: row.start_line ?? undefined,
+        endLine: row.end_line ?? undefined,
+        score: 0,
+        snippet: row.content,
+      }));
     }
 
     const rows = this.database
@@ -1267,6 +1499,61 @@ export class AtlasStore {
     this.database
       .prepare("DELETE FROM graph_resolution_files WHERE repository_id = ? AND file_path = ?")
       .run(repoId, file);
+  }
+
+  private hasTable(name: string): boolean {
+    return Boolean(this.database.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+    ).get(name));
+  }
+
+  private generationRepository(generationId: string): { repository_id: string } {
+    const row = this.database.prepare(
+      "SELECT repository_id FROM index_generations WHERE id = ? AND status = 'candidate'",
+    ).get(generationId) as { repository_id: string } | undefined;
+    if (!row) throw new Error("Candidate generation is missing or already published");
+    return row;
+  }
+
+  private getGenerationManifestById(generationId: string): IndexManifest | undefined {
+    if (!this.hasTable("index_manifests")) return undefined;
+    const row = this.database.prepare(
+      "SELECT repository_id, versions_json, created_at FROM index_manifests WHERE generation_id = ?",
+    ).get(generationId) as { repository_id: string; versions_json: string; created_at: string } | undefined;
+    if (!row) return undefined;
+    const files = this.database.prepare(
+      `SELECT repository_id, relative_path, generation_id, fact_blob_key, content_hash, language
+       FROM file_fact_bindings WHERE generation_id = ? ORDER BY relative_path`,
+    ).all(generationId) as Array<{
+      repository_id: string;
+      relative_path: string;
+      generation_id: string;
+      fact_blob_key: FactBlobKey;
+      content_hash: string;
+      language: FileFactBinding["language"];
+    }>;
+    return {
+      generationId,
+      files: files.map((file) => ({ repositoryId: file.repository_id, relativePath: file.relative_path, generationId: file.generation_id, factBlobKey: file.fact_blob_key, contentHash: file.content_hash, language: file.language })),
+      createdAt: row.created_at,
+      versions: JSON.parse(row.versions_json) as IndexVersionDomains,
+    };
+  }
+
+  private loadGenerationGraph(repoId: string, generationId: string): CodeGraph {
+    const nodes = this.database.prepare(
+      `SELECT id, type, name, qualified_name, file_path, start_line, end_line
+       FROM generation_symbols WHERE repository_id = ? AND generation_id = ?`,
+    ).all(repoId, generationId) as Array<{ id: string; type: string; name: string; qualified_name: string | null; file_path: string; start_line: number | null; end_line: number | null }>;
+    const edges = this.database.prepare(
+      `SELECT from_symbol_id, to_symbol_id, type, resolution_method, evidence_kind,
+              confidence, resolution_file, resolution_line
+       FROM generation_edges WHERE repository_id = ? AND generation_id = ?`,
+    ).all(repoId, generationId) as Array<{ from_symbol_id: string; to_symbol_id: string; type: string; resolution_method: string | null; evidence_kind: "EXTRACTED" | "INFERRED" | "AMBIGUOUS" | null; confidence: number | null; resolution_file: string | null; resolution_line: number | null }>;
+    return {
+      nodes: nodes.map((row) => ({ id: row.id, type: row.type as GraphNodeType, name: row.name, qualifiedName: row.qualified_name ?? undefined, file: row.file_path, startLine: row.start_line ?? undefined, endLine: row.end_line ?? undefined })),
+      edges: edges.map((row) => ({ from: row.from_symbol_id, to: row.to_symbol_id, type: row.type as GraphEdgeType, ...(row.resolution_method ? { resolutionMethod: row.resolution_method as GraphEdge["resolutionMethod"] } : {}), ...(row.evidence_kind ? { evidenceKind: row.evidence_kind } : {}), ...(row.confidence !== null ? { confidence: row.confidence } : {}), ...(row.resolution_file && row.resolution_line !== null ? { resolutionSource: { file: row.resolution_file, line: row.resolution_line } } : {}) })),
+    };
   }
 
   close(): void {
