@@ -19,6 +19,7 @@ import {
 } from "../repository/repository-files.js";
 import { splitLargeSymbol } from "../semantic/split-symbol.js";
 import { silentProgressRunner } from "../progress/silent-progress-runner.js";
+import { codeChunksFromFacts, type IndexedSourceUnit } from "../indexing/indexing.types.js";
 
 export type LexicalIndexOptions = {
   progress?: ProgressRunner;
@@ -27,6 +28,7 @@ export type LexicalIndexOptions = {
   deletedFiles?: string[];
   fileHashes?: Map<string, string>;
   forceFullRebuild?: boolean;
+  units?: IndexedSourceUnit[];
 };
 
 export type LexicalIndexResult = {
@@ -76,11 +78,16 @@ function toDocuments(repoId: string, file: string, chunks: CodeChunk[]): Lexical
   }));
 }
 
+export function toLexicalDocumentsFromFacts(repositoryId: string, unit: IndexedSourceUnit): LexicalDocument[] {
+  return toDocuments(repositoryId, unit.relativePath, codeChunksFromFacts(unit).flatMap(splitLargeSymbol));
+}
+
 async function createUpdates(
   repoPath: string,
   repoId: string,
   files: string[],
   reporter: ProgressReporter,
+  unitsByFile?: Map<string, IndexedSourceUnit>,
 ): Promise<LexicalFileUpdate[]> {
   const updates: LexicalFileUpdate[] = [];
 
@@ -89,8 +96,11 @@ async function createUpdates(
     if (!file) continue;
 
     const relativePath = repositoryRelativePath(repoPath, file);
-    const content = await fs.readFile(file, "utf8");
-    const chunks = parseCodeSymbols(content, relativePath).flatMap(splitLargeSymbol);
+    const indexedUnit = unitsByFile?.get(relativePath);
+    const content = indexedUnit?.source ?? await fs.readFile(file, "utf8");
+    const chunks = indexedUnit
+      ? codeChunksFromFacts(indexedUnit).flatMap(splitLargeSymbol)
+      : parseCodeSymbols(content, relativePath).flatMap(splitLargeSymbol);
     updates.push({
       file: relativePath,
       fileHash: createFileHash(content),
@@ -162,7 +172,7 @@ export async function indexLexical(
     );
     const updates = await progress.run(
       "Parsing source",
-      (reporter) => createUpdates(repoPath, repoId, filesToIndex, reporter),
+      (reporter) => createUpdates(repoPath, repoId, filesToIndex, reporter, new Map(options.units?.map((unit) => [unit.relativePath, unit]))),
     );
 
     if (updates.length === 0 && deletedFiles.length === 0 && !fullRebuild) {

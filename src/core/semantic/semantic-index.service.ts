@@ -40,6 +40,7 @@ import {
   embeddingProviderIdentity,
   semanticGenerationIdentity,
 } from "./provider-identity.js";
+import { codeChunksFromFacts, type IndexedSourceUnit } from "../indexing/indexing.types.js";
 
 type PreparedFile = {
   relativePath: string;
@@ -76,6 +77,7 @@ export type SemanticIndexOptions = {
   forceFullReindex?: boolean;
   embeddingProvider?: EmbeddingProvider;
   vectorStore?: VectorStore;
+  units?: IndexedSourceUnit[];
 };
 
 export type SemanticIndexResult = {
@@ -263,7 +265,8 @@ export async function syncSemantic(
             continue;
           }
 
-          const content = await fs.readFile(filePath, "utf8");
+          const indexedUnit = options.units?.find((unit) => unit.relativePath === relativePath);
+          const content = indexedUnit?.source ?? await fs.readFile(filePath, "utf8");
           const fileHash = options.fileHashes?.get(relativePath) ?? createFileHash(content);
           const previousState = capabilityStates.get(relativePath);
           const previousPointState = indexedStates.get(relativePath);
@@ -287,8 +290,9 @@ export async function syncSemantic(
             continue;
           }
 
-          const parsedChunks = parseCodeSymbols(content, relativePath);
-          const chunks = parsedChunks.flatMap(splitLargeSymbol);
+          const chunks = indexedUnit
+            ? codeChunksFromFacts(indexedUnit).flatMap(splitLargeSymbol)
+            : parseCodeSymbols(content, relativePath).flatMap(splitLargeSymbol);
           preparedFiles.push({
             relativePath,
             fileHash,

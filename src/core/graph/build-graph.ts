@@ -12,12 +12,14 @@ import {
 import { createGraphNodeId } from "./node-id.js";
 import type { CodeGraph, GraphNodeType } from "./types.js";
 import { extractImportBindings } from "./import-bindings.js";
-import { extractCalls, hasParserErrors } from "./calls.js";
+import { extractCalls, hasParserErrors, type CallReference } from "./calls.js";
 import { resolveCallResults } from "./call-resolution.js";
 import { resolveMemberCallResults } from "./member-resolution.js";
 import { resolveExtendsResults } from "./extends.js";
-import { mergeResolutionCoverage, type GraphResolutionFile } from "./resolution.types.js";
+import { emptyResolutionCoverage, mergeResolutionCoverage, type GraphResolutionFile } from "./resolution.types.js";
 import type { ProgressReporter } from "../progress/progress.types.js";
+import type { ImportBinding } from "./import-bindings.js";
+import { codeChunksFromFacts, type IndexedSourceUnit } from "../indexing/indexing.types.js";
 
 function toGraphNodeType(symbolType: string): GraphNodeType | undefined {
   switch (symbolType) {
@@ -122,6 +124,114 @@ export type GraphBuildResult = {
   graph: CodeGraph;
   resolutionByFile: Map<string, GraphResolutionFile>;
 };
+
+export function factsImportBindings(unit: IndexedSourceUnit, fileSet: Set<string>): ImportBinding[] {
+  return unit.facts.bindingSeeds
+    .filter((binding) => binding.bindingKind === "import" && binding.sourceModule && binding.importedName)
+    .map((binding) => ({
+      localName: binding.name,
+      importedName: binding.importedName!,
+      source: binding.sourceModule!,
+      targetFile: resolveImportCandidates(unit.relativePath, binding.sourceModule!).find((candidate) => fileSet.has(candidate)),
+    }));
+}
+
+export function factsCalls(unit: IndexedSourceUnit, chunks: ReturnType<typeof codeChunksFromFacts>): CallReference[] {
+  const symbolsById = new Map(unit.facts.symbols.map((symbol) => [symbol.localId, symbol]));
+  return unit.facts.callSites.map((call) => {
+    const caller = call.callerId ? symbolsById.get(call.callerId) : undefined;
+    const qualifiedName = caller ? getQualifiedSymbolName(chunks.find((chunk) => chunk.symbolName === caller.name && chunk.startLine === caller.range.startLine) ?? {
+      symbolName: caller.name,
+      symbolType: caller.kind,
+      startLine: caller.range.startLine,
+      endLine: caller.range.endLine,
+    }, chunks) : undefined;
+    const callerType = caller && (caller.kind === "function" || caller.kind === "method" || caller.kind === "variable") ? caller.kind : undefined;
+    return {
+      calleeName: call.calleeText.replace(/\([^()]*\)\s*$/, ""),
+      callerName: caller?.name,
+      callerQualifiedName: qualifiedName,
+      callerType,
+      callerClassName: qualifiedName?.split(".").slice(0, -1).join(".") || undefined,
+      line: call.range.startLine,
+    };
+  });
+}
+
+export async function buildCodeGraphWithResolutionFromFacts(
+  repoPath: string,
+  units: IndexedSourceUnit[],
+  reporter?: ProgressReporter,
+  repositoryId?: string,
+): Promise<GraphBuildResult> {
+  const absoluteRepoPath = canonicalRepositoryPath(path.resolve(repoPath));
+  const repoId = repositoryId ?? getRepoId(absoluteRepoPath);
+  const relativeFiles = units.map((unit) => unit.relativePath);
+  const fileSet = new Set(relativeFiles);
+  const graph: CodeGraph = { nodes: [], edges: [] };
+  const resolutionByFile = new Map<string, GraphResolutionFile>();
+  const fileNodeIds = new Map<string, string>();
+
+  for (const relativePath of relativeFiles) {
+    const id = createGraphNodeId(repoId, relativePath, "file", relativePath);
+    fileNodeIds.set(relativePath, id);
+    graph.nodes.push({ id, type: "file", name: relativePath, file: relativePath });
+  }
+
+  const chunksByFile = new Map<string, ReturnType<typeof codeChunksFromFacts>>();
+  for (let index = 0; index < units.length; index += 1) {
+    const unit = units[index];
+    if (!unit) continue;
+    const fileNodeId = fileNodeIds.get(unit.relativePath);
+    if (!fileNodeId) continue;
+    const chunks = codeChunksFromFacts(unit);
+    chunksByFile.set(unit.relativePath, chunks);
+    for (const chunk of chunks) {
+      const nodeType = toGraphNodeType(chunk.symbolType);
+      if (!nodeType) continue;
+      const qualifiedName = getQualifiedSymbolName(chunk, chunks);
+      const symbolNodeId = createGraphNodeId(repoId, unit.relativePath, nodeType, qualifiedName);
+      graph.nodes.push({ id: symbolNodeId, type: nodeType, name: chunk.symbolName, qualifiedName, file: unit.relativePath, startLine: chunk.startLine, endLine: chunk.endLine });
+      graph.edges.push({ from: fileNodeId, to: symbolNodeId, type: "contains" });
+    }
+    reporter?.setProgress(index + 1, units.length);
+  }
+
+  for (const unit of units) {
+    const importerNodeId = fileNodeIds.get(unit.relativePath);
+    if (!importerNodeId) continue;
+    for (const importReference of unit.facts.imports) {
+      if (!isRelativeImport(importReference.moduleSpecifier)) continue;
+      const targetFile = resolveImportCandidates(unit.relativePath, importReference.moduleSpecifier).find((candidate) => fileSet.has(candidate));
+      const targetNodeId = targetFile ? fileNodeIds.get(targetFile) : undefined;
+      if (targetNodeId) graph.edges.push({ from: importerNodeId, to: targetNodeId, type: "imports" });
+    }
+  }
+
+  for (const unit of units) {
+    const chunks = chunksByFile.get(unit.relativePath) ?? [];
+    const bindings = factsImportBindings(unit, fileSet);
+    const calls = factsCalls(unit, chunks);
+    const callResults = resolveCallResults(graph, unit.relativePath, calls, bindings);
+    const memberResults = calls.some((call) => call.calleeName.includes("."))
+      ? resolveMemberCallResults(graph, unit.relativePath, unit.source, calls, bindings)
+      : { edges: [], results: [], coverage: emptyResolutionCoverage() };
+    const extendsResults = /\bextends\b/.test(unit.source)
+      ? resolveExtendsResults(graph, unit.relativePath, unit.source, bindings)
+      : { edges: [], results: [], coverage: emptyResolutionCoverage() };
+    graph.edges.push(...callResults.edges, ...memberResults.edges, ...extendsResults.edges);
+    const coverage = mergeResolutionCoverage(mergeResolutionCoverage(callResults.coverage, memberResults.coverage), extendsResults.coverage);
+    coverage.parserErrors = unit.facts.parseStatus === "deterministic_partial" ? 1 : 0;
+    coverage.mayBeIncomplete = coverage.parserErrors > 0 || coverage.unsupportedDynamic > 0 || coverage.unresolvedCalls > 0 || coverage.ambiguousCalls > 0 || coverage.unresolvedExtends > 0 || coverage.ambiguousExtends > 0;
+    resolutionByFile.set(unit.relativePath, {
+      coverage,
+      diagnostics: [...callResults.results, ...memberResults.results, ...extendsResults.results]
+        .filter((result): result is Exclude<typeof result, { kind: "resolved" }> => result.kind !== "resolved"),
+    });
+  }
+
+  return { graph, resolutionByFile };
+}
 
 export async function buildCodeGraphWithResolution(
   repoPath: string,
