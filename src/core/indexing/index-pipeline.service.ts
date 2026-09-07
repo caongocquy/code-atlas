@@ -6,6 +6,7 @@ import { decodeFacts } from "../facts/facts-codec.js";
 import { extractParsedFacts } from "../facts/facts-extractor.js";
 import { factBlobKey } from "../facts/facts-identity.js";
 import { buildCodeGraphWithResolutionFromFacts } from "../graph/build-graph.js";
+import { isRelativeImport, resolveImportCandidates } from "../graph/imports.js";
 import { parserMetadata } from "../graph/parsers/code-parser.js";
 import { getLanguageAdapter } from "../graph/parsers/registry.js";
 import type { LexicalFileUpdate } from "../../storage/atlas/atlas.types.js";
@@ -103,10 +104,6 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       sources.set(relativePath, await fs.readFile(path.join(repoPath, relativePath), "utf8"));
     }
 
-    const plan = planInvalidation({ repositoryFiles: [...currentFiles.keys()], currentFiles, previousBindings, directImporters: new Map(), versions: CURRENT_INDEX_VERSION_DOMAINS, previousVersions: previousManifest?.versions });
-    recordIndexWork(counters, "filesResolved", plan.resolvePaths.length);
-    recordIndexWork(counters, "importersInvalidated", plan.importersInvalidated.length);
-    if (plan.fullGraphResolution) recordIndexWork(counters, "fullResolutionFallbacks");
     const units: IndexedSourceUnit[] = [];
     const bindings: Array<{ repositoryId: string; relativePath: string; generationId: string; factBlobKey: FactBlobKey; contentHash: string; language: "typescript" | "tsx" | "javascript" }> = [];
 
@@ -159,10 +156,47 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       bindings.push({ repositoryId: repoId, relativePath, generationId: "pending", factBlobKey: key, contentHash: facts.contentHash, language: current.language });
     }
 
+    const directImporters = new Map<string, Set<string>>();
+    const addImporter = (target: string, importer: string) => {
+      const importers = directImporters.get(target) ?? new Set<string>();
+      importers.add(importer);
+      directImporters.set(target, importers);
+    };
+    const previousGraph = store.loadGraph(repoId);
+    const previousNodes = new Map(previousGraph.nodes.map((node) => [node.id, node]));
+    for (const edge of previousGraph.edges) {
+      if (edge.type !== "imports") continue;
+      const importer = previousNodes.get(edge.from)?.file;
+      const target = previousNodes.get(edge.to)?.file;
+      if (importer && target) addImporter(target, importer);
+    }
+    const currentFileSet = new Set(currentFiles.keys());
+    for (const unit of units) {
+      for (const reference of unit.facts.imports) {
+        const targets = isRelativeImport(reference.moduleSpecifier)
+          ? resolveImportCandidates(unit.relativePath, reference.moduleSpecifier)
+          : [`module:${reference.moduleSpecifier}`];
+        for (const target of targets) {
+          if (target.startsWith("module:") || !currentFileSet.has(target)) {
+            addImporter(target.startsWith("module:") ? target : `unresolved:${target}`, unit.relativePath);
+          } else {
+            addImporter(target, unit.relativePath);
+          }
+        }
+      }
+    }
+    const plan = planInvalidation({ repositoryFiles: [...currentFiles.keys()], currentFiles, previousBindings, directImporters, versions: CURRENT_INDEX_VERSION_DOMAINS, previousVersions: previousManifest?.versions });
+    recordIndexWork(counters, "importersInvalidated", plan.importersInvalidated.length);
+
     const generation = createCandidateGeneration(repoId, activeGenerationId, CURRENT_INDEX_VERSION_DOMAINS, bindings);
     store.beginCandidateGeneration(generation);
     store.writeCandidateManifest(generation.manifest);
-    const graph = await buildCodeGraphWithResolutionFromFacts(repoPath, units, undefined, repoId);
+    const graphCompatible = plan.parsePaths.length === 0 && plan.resolvePaths.length === 0 && plan.removedPaths.length === 0 && previousManifest !== undefined;
+    const graph = graphCompatible
+      ? { graph: previousGraph, resolutionByFile: new Map() }
+      : await buildCodeGraphWithResolutionFromFacts(repoPath, units, undefined, repoId);
+    recordIndexWork(counters, "filesResolved", graph.resolutionByFile.size);
+    if (plan.fullGraphResolution && !graphCompatible) recordIndexWork(counters, "fullResolutionFallbacks");
     store.writeCandidateGraph(generation.id, graph.graph, changes.fileHashes);
     const lexical: LexicalFileUpdate[] = units.map((unit) => ({ file: unit.relativePath, fileHash: unit.facts.contentHash, documents: toLexicalDocumentsFromFacts(repoId, unit) }));
     store.writeCandidateLexicalDocuments(generation.id, lexical);
@@ -222,7 +256,14 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       semantic,
       totalMs,
     };
-    return { kind: "published", repositoryId: repoId, generationId: generation.id, plan, published: true, counters: freezeIndexWorkCounters(counters), ...legacy };
+    const published = { kind: "published" as const, repositoryId: repoId, generationId: generation.id, plan, published: true as const, ...legacy };
+    Object.defineProperty(published, "counters", {
+      value: freezeIndexWorkCounters(counters),
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    });
+    return published as PublishedIndexRun & LegacyIndexResult;
   } catch (error) {
     return { kind: "failed", repositoryId: repoId, ...(activeGenerationId ? { activeGenerationId } : {}), published: false, failure: failure(error, activeGenerationId) };
   } finally {

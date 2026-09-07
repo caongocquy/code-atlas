@@ -9,6 +9,7 @@ import type { EmbeddingProvider } from "../src/core/semantic/embedding-provider.
 import type { VectorPoint, VectorStore } from "../src/core/semantic/vector-store.js";
 import { getRepositoryIdentity } from "../src/core/repository/repository-identity.js";
 import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
+import { CURRENT_INDEX_VERSION_DOMAINS } from "../src/core/repository/index-version.js";
 
 function semanticFixtures(): { embeddingProvider: EmbeddingProvider & { calls: number; fail: boolean }; vectorStore: VectorStore; upsertCalls: number } {
   const points = new Map<string, VectorPoint>();
@@ -84,6 +85,7 @@ test("index publishes one typed generation and unchanged sync reuses it", async 
       importersInvalidated: 0,
       fullResolutionFallbacks: 0,
     });
+    assert.doesNotMatch(JSON.stringify(first), /filesParsed|factCacheMisses/);
 
     const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
     try {
@@ -96,6 +98,59 @@ test("index publishes one typed generation and unchanged sync reuses it", async 
   } finally {
     await rm(repoPath, { recursive: true, force: true });
   }
+});
+
+test("index work counters observe importer invalidation and uncertain resolution fallback", async () => {
+  const repoPath = await mkdtemp(path.join(tmpdir(), "code-atlas-phase14a-counter-evidence-"));
+  try {
+    await writeFile(path.join(repoPath, "dependency.ts"), "export const dependency = true;\n");
+    await writeFile(path.join(repoPath, "consumer.ts"), 'import { dependency } from "./dependency.js"; export const consumer = dependency;\n');
+    await writeFile(path.join(repoPath, "external.ts"), 'import path from "node:path"; export const external = path;\n');
+    await indexRepository(repoPath, { skipGit: true });
+
+    await writeFile(path.join(repoPath, "dependency.ts"), "export const dependency = false;\n");
+    const result = await syncRepository(repoPath, { skipGit: true });
+    assert.equal(result.kind, "published");
+    assert.equal(result.counters.importersInvalidated, 1);
+    assert.equal(result.counters.fullResolutionFallbacks, 1);
+    assert.equal(result.counters.filesResolved, 3);
+  } finally {
+    await rm(repoPath, { recursive: true, force: true });
+  }
+});
+
+test("version domains drive parsing and resolution counters independently", async () => {
+  const run = async (domain: "resolutionVersion" | "factsVersion" | "derivedVersion") => {
+    const repoPath = await mkdtemp(path.join(tmpdir(), `code-atlas-phase14a-version-${domain}-`));
+    try {
+      await writeFile(path.join(repoPath, "one.ts"), "export const one = 1;\n");
+      await writeFile(path.join(repoPath, "two.ts"), "export const two = 2;\n");
+      await indexRepository(repoPath, { skipGit: true });
+      const previous = CURRENT_INDEX_VERSION_DOMAINS[domain];
+      CURRENT_INDEX_VERSION_DOMAINS[domain] = `${previous}-bump`;
+      try {
+        return await syncRepository(repoPath, { skipGit: true });
+      } finally {
+        CURRENT_INDEX_VERSION_DOMAINS[domain] = previous;
+      }
+    } finally {
+      await rm(repoPath, { recursive: true, force: true });
+    }
+  };
+
+  const resolution = await run("resolutionVersion");
+  assert.equal(resolution.kind, "published");
+  assert.equal(resolution.counters.filesParsed, 0);
+  assert.equal(resolution.counters.filesResolved, 2);
+
+  const facts = await run("factsVersion");
+  assert.equal(facts.kind, "published");
+  assert.equal(facts.counters.filesParsed, 2);
+
+  const derived = await run("derivedVersion");
+  assert.equal(derived.kind, "published");
+  assert.equal(derived.counters.filesParsed, 0);
+  assert.equal(derived.counters.filesResolved, 0);
 });
 
 test("index work counters are deterministic for a cold, unchanged, modified, and renamed fixture", async () => {
