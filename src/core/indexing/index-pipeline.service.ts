@@ -33,8 +33,20 @@ type LegacyIndexResult = {
 
 export type IndexPipelineResult = PublishedIndexRun & LegacyIndexResult;
 
+class CacheWriteFailure extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CacheWriteFailure";
+  }
+}
+
 function failure(error: unknown, activeGenerationId?: string): IndexFailure {
-  return { kind: error instanceof SourceRaceError ? "source_race" : "infrastructure_failure", message: error instanceof Error ? error.message : String(error), ...(activeGenerationId ? { activeGenerationId } : {}) };
+  const kind = error instanceof SourceRaceError
+    ? "source_race"
+    : error instanceof CacheWriteFailure
+      ? "cache_write_failure"
+      : "infrastructure_failure";
+  return { kind, message: error instanceof Error ? error.message : String(error), ...(activeGenerationId ? { activeGenerationId } : {}) };
 }
 
 function semanticResult(
@@ -116,7 +128,7 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
           source = stable.source;
           facts = stable.facts;
           key = factBlobKey({ ...expected, contentHash: facts.contentHash });
-          try { store.putFactBlob(key, facts); } catch (error) { throw new Error(`Fact cache write failed for ${relativePath}: ${error instanceof Error ? error.message : String(error)}`); }
+          try { store.putFactBlob(key, facts); } catch (error) { throw new CacheWriteFailure(`Fact cache write failed for ${relativePath}: ${error instanceof Error ? error.message : String(error)}`); }
         }
       } else {
         const stable = await extractStableFacts(
@@ -127,7 +139,7 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
         source = stable.source;
         facts = stable.facts;
         key = factBlobKey({ ...expected, contentHash: facts.contentHash });
-        try { store.putFactBlob(key, facts); } catch (error) { throw new Error(`Fact cache write failed for ${relativePath}: ${error instanceof Error ? error.message : String(error)}`); }
+        try { store.putFactBlob(key, facts); } catch (error) { throw new CacheWriteFailure(`Fact cache write failed for ${relativePath}: ${error instanceof Error ? error.message : String(error)}`); }
       }
       units.push({ relativePath, source, facts });
       bindings.push({ repositoryId: repoId, relativePath, generationId: "pending", factBlobKey: key, contentHash: facts.contentHash, language: current.language });
