@@ -273,3 +273,63 @@ test("preserves side-effect imports and aliased export bindings", () => {
     { exportedName: "published", localName: "local" },
   ]);
 });
+
+test("retains parser diagnostics for missing tree-sitter nodes", () => {
+  const result = extractParsedFacts({
+    source: "class A {",
+    language: "typescript",
+    contentHash: "broken-hash",
+    factsVersion: CURRENT_INDEX_VERSION_DOMAINS.factsVersion,
+    factsSchemaVersion: "1.0.0",
+  });
+
+  assert.equal(result.kind, "facts");
+  if (result.kind !== "facts") return;
+
+  assert.equal(result.facts.parseStatus, "deterministic_partial");
+  assert.ok(result.facts.parserDiagnostics.length > 0);
+});
+
+test("records containment ownership for symbols, calls, and references", () => {
+  const result = extractParsedFacts({
+    source: `
+function outer() {
+  const value = helper();
+  return value;
+}
+`,
+    language: "typescript",
+    contentHash: "ownership-hash",
+    factsVersion: CURRENT_INDEX_VERSION_DOMAINS.factsVersion,
+    factsSchemaVersion: "1.0.0",
+  });
+
+  assert.equal(result.kind, "facts");
+  if (result.kind !== "facts") return;
+
+  const outer = result.facts.symbols.find((symbol) => symbol.name === "outer");
+  assert.ok(outer?.scopeId);
+  assert.equal(outer?.scopeId, "scope:1");
+  assert.equal(result.facts.callSites[0]?.callerId, outer?.localId);
+  assert.equal(result.facts.callSites[0]?.scopeId, "scope:3");
+  assert.equal(result.facts.references.find((reference) => reference.name === "value")?.ownerId, outer?.localId);
+});
+
+test("extracts export-star facts with their source module", () => {
+  const result = extractParsedFacts({
+    source: 'export * from "./dep.js";',
+    language: "typescript",
+    contentHash: "star-hash",
+    factsVersion: CURRENT_INDEX_VERSION_DOMAINS.factsVersion,
+    factsSchemaVersion: "1.0.0",
+  });
+
+  assert.equal(result.kind, "facts");
+  if (result.kind !== "facts") return;
+
+  assert.equal(result.facts.exports.length, 1);
+  assert.deepEqual(
+    result.facts.exports.map(({ exportedName, moduleSpecifier, kind }) => ({ exportedName, moduleSpecifier, kind })),
+    [{ exportedName: "*", moduleSpecifier: "./dep.js", kind: "star" }],
+  );
+});

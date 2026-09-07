@@ -78,15 +78,25 @@ function declarationName(node: Parser.SyntaxNode): string | undefined {
 function exportEntries(node: Parser.SyntaxNode): Array<{
   exportedName?: string;
   localName?: string;
+  kind?: string;
 }> {
   const declaration = node.childForFieldName("declaration");
   if (declaration) {
     const name = declarationName(declaration);
-    return [{ exportedName: name, localName: name }];
+    return [{ exportedName: name, localName: name, kind: "declaration" }];
+  }
+
+  const namespaceExport = node.namedChildren.find((child) => child.type === "namespace_export");
+  if (namespaceExport) {
+    return [{
+      exportedName: namespaceExport.namedChildren[0]?.text ?? "*",
+      localName: "*",
+      kind: "star",
+    }];
   }
 
   const clause = node.namedChildren.find((child) => child.type === "export_clause");
-  return clause?.namedChildren
+  const entries = clause?.namedChildren
     .filter((child) => child.type === "export_specifier")
     .map((specifier) => {
       const names = specifier.namedChildren
@@ -96,8 +106,13 @@ function exportEntries(node: Parser.SyntaxNode): Array<{
       const exportedName = specifier.childForFieldName("alias")?.text
         ?? names[1]
         ?? localName;
-      return { exportedName, localName };
+      return { exportedName, localName, kind: "named" };
     }) ?? [];
+  if (entries.length > 0) return entries;
+
+  return /export\s+\*\s+from\b/.test(node.text)
+    ? [{ exportedName: "*", kind: "star" }]
+    : [];
 }
 
 function isDeclarationIdentifier(node: Parser.SyntaxNode): boolean {
@@ -125,10 +140,71 @@ function diagnosticNodes(root: Parser.SyntaxNode): string[] {
     if (node.type === "ERROR" || node.isMissing) {
       diagnostics.push(`${node.type}@${node.startPosition.row + 1}:${node.startPosition.column}`);
     }
-    for (const child of node.namedChildren) visit(child);
+    for (const child of node.children) visit(child);
   }
   visit(root);
+  if (root.hasError && diagnostics.length === 0) {
+    diagnostics.push(`parse_error@${root.startPosition.row + 1}:${root.startPosition.column}`);
+  }
   return [...new Set(diagnostics)];
+}
+
+function comparePosition(
+  lineA: number,
+  columnA: number | undefined,
+  lineB: number,
+  columnB: number | undefined,
+): number {
+  return lineA - lineB || (columnA ?? 0) - (columnB ?? 0);
+}
+
+function containsRange(outer: SourceRangeFact, inner: SourceRangeFact): boolean {
+  return comparePosition(outer.startLine, outer.startColumn, inner.startLine, inner.startColumn) <= 0
+    && comparePosition(outer.endLine, outer.endColumn, inner.endLine, inner.endColumn) >= 0;
+}
+
+function rangeSpan(value: SourceRangeFact): number {
+  return value.endLine - value.startLine + (value.endColumn ?? 0) / 1_000_000;
+}
+
+function smallestContainingSymbol(
+  value: SourceRangeFact,
+  symbols: ParsedSymbolFact[],
+): ParsedSymbolFact | undefined {
+  return symbols
+    .filter((symbol) => containsRange(symbol.range, value))
+    .sort((left, right) => rangeSpan(left.range) - rangeSpan(right.range)
+      || left.localId.localeCompare(right.localId))[0];
+}
+
+function scopeKindForSymbol(kind: ParsedSymbolFact["kind"]): string | undefined {
+  switch (kind) {
+    case "class": return "class_declaration";
+    case "function": return "function_declaration";
+    case "method": return "method_definition";
+    default: return undefined;
+  }
+}
+
+function scopeForSymbol(
+  symbol: ParsedSymbolFact,
+  scopes: ContainmentScopeFact[],
+): FactLocalId | undefined {
+  const scopeKind = scopeKindForSymbol(symbol.kind);
+  const exactScope = scopeKind
+    ? scopes.find((scope) => scope.kind === scopeKind
+      && scope.name === symbol.name
+      && scope.range.startLine === symbol.range.startLine
+      && scope.range.endLine === symbol.range.endLine
+      && scope.range.startColumn === symbol.range.startColumn
+      && scope.range.endColumn === symbol.range.endColumn)
+    : undefined;
+  if (exactScope) return exactScope.parentId;
+
+  return scopes
+    .filter((scope) => containsRange(scope.range, symbol.range))
+    .sort((left, right) => rangeSpan(left.range) - rangeSpan(right.range)
+      || left.localId.localeCompare(right.localId))[0]?.localId;
 }
 
 export function extractParsedFacts(input: FactExtractionInput): FactExtractionOutcome {
@@ -226,7 +302,7 @@ export function extractParsedFacts(input: FactExtractionInput): FactExtractionOu
 
       if (node.type === "export_statement") {
         for (const entry of exportEntries(node)) {
-          exports.push({ localId: id("export", ++exportNumber), exportedName: entry.exportedName, localName: entry.localName, moduleSpecifier: stringChild(node), kind: node.childForFieldName("declaration") ? "declaration" : "named", range: range(node) });
+          exports.push({ localId: id("export", ++exportNumber), exportedName: entry.exportedName, localName: entry.localName, moduleSpecifier: stringChild(node), kind: entry.kind ?? "named", range: range(node) });
         }
       }
 
@@ -255,6 +331,15 @@ export function extractParsedFacts(input: FactExtractionInput): FactExtractionOu
     }
 
     visit(root);
+    for (const symbol of symbols) {
+      symbol.scopeId = scopeForSymbol(symbol, containmentScopes);
+    }
+    for (const callSite of callSites) {
+      callSite.callerId = smallestContainingSymbol(callSite.range, symbols)?.localId;
+    }
+    for (const reference of references) {
+      reference.ownerId = smallestContainingSymbol(reference.range, symbols)?.localId;
+    }
     const parserDiagnostics = diagnosticNodes(root);
     const facts: ParsedFactsBlob = {
       factsSchemaVersion: input.factsSchemaVersion,
