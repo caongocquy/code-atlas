@@ -21,6 +21,7 @@ import { detectRepositoryChanges } from "./change-detector.js";
 import { createCandidateGeneration } from "./index-manifest.js";
 import { planInvalidation } from "./invalidation-planner.js";
 import { extractStableFacts, SourceRaceError, type SourceReader } from "./filesystem-change-detector.js";
+import { createIndexWorkCounters, freezeIndexWorkCounters, recordIndexWork } from "./index-work-counters.js";
 import type { IndexPipelineOptions, IndexingChanges, IndexRunOutcome, IndexFailure, IndexedSourceUnit, PublishedIndexRun } from "./indexing.types.js";
 
 type LegacyIndexResult = {
@@ -73,6 +74,7 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
   const repoPath = canonicalRepositoryPath(path.resolve(inputPath));
   const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
   const repoId = store.ensureRepository(getRepositoryIdentity(repoPath)).id;
+  const counters = createIndexWorkCounters();
   const readSource: SourceReader = async (relativePath) => {
     const source = await fs.readFile(path.join(repoPath, relativePath), "utf8");
     return { source, contentHash: createFileHash(source) };
@@ -86,6 +88,8 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
     const storedLexicalVersion = store.getVersion(repoId, "lexical");
     const capabilities = options.includeSemantic ? ["graph", "lexical", "semantic"] as const : ["graph", "lexical"] as const;
     const changes = await detectRepositoryChanges(repoPath, { store, repoId, capabilities: [...capabilities], versions: { graph: GRAPH_INDEX_VERSION, lexical: LEXICAL_INDEX_VERSION, semantic: VECTOR_INDEX_VERSION }, skipGit: options.skipGit, progress: options.progress, forceFullScan: operation === "index" || legacyRepository });
+    recordIndexWork(counters, "filesScanned", changes.relativeFiles.length);
+    recordIndexWork(counters, "filesHashed", changes.fileHashes.size);
     const previousManifest = store.getGenerationManifest(repoId);
     const previousBindings = new Map(previousManifest?.files.map((file) => [file.relativePath, file]) ?? []);
     const currentFiles = new Map<string, { contentHash: string; language: "typescript" | "tsx" | "javascript" }>();
@@ -100,6 +104,9 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
     }
 
     const plan = planInvalidation({ repositoryFiles: [...currentFiles.keys()], currentFiles, previousBindings, directImporters: new Map(), versions: CURRENT_INDEX_VERSION_DOMAINS, previousVersions: previousManifest?.versions });
+    recordIndexWork(counters, "filesResolved", plan.resolvePaths.length);
+    recordIndexWork(counters, "importersInvalidated", plan.importersInvalidated.length);
+    if (plan.fullGraphResolution) recordIndexWork(counters, "fullResolutionFallbacks");
     const units: IndexedSourceUnit[] = [];
     const bindings: Array<{ repositoryId: string; relativePath: string; generationId: string; factBlobKey: FactBlobKey; contentHash: string; language: "typescript" | "tsx" | "javascript" }> = [];
 
@@ -119,9 +126,12 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
           () => ({ kind: "facts", facts: cached.facts }),
         );
         if (createFileHash(stableCached.source) === cached.facts.contentHash) {
+          recordIndexWork(counters, "factCacheHits");
           source = stableCached.source;
           facts = cached.facts;
         } else {
+          recordIndexWork(counters, "factCacheMisses");
+          recordIndexWork(counters, "filesParsed");
           const stable = await extractStableFacts(
             relativePath,
             readSource,
@@ -133,6 +143,8 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
           try { store.putFactBlob(key, facts); } catch (error) { throw new CacheWriteFailure(`Fact cache write failed for ${relativePath}: ${error instanceof Error ? error.message : String(error)}`); }
         }
       } else {
+        recordIndexWork(counters, "factCacheMisses");
+        recordIndexWork(counters, "filesParsed");
         const stable = await extractStableFacts(
           relativePath,
           readSource,
@@ -210,7 +222,7 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       semantic,
       totalMs,
     };
-    return { kind: "published", repositoryId: repoId, generationId: generation.id, plan, published: true, ...legacy };
+    return { kind: "published", repositoryId: repoId, generationId: generation.id, plan, published: true, counters: freezeIndexWorkCounters(counters), ...legacy };
   } catch (error) {
     return { kind: "failed", repositoryId: repoId, ...(activeGenerationId ? { activeGenerationId } : {}), published: false, failure: failure(error, activeGenerationId) };
   } finally {

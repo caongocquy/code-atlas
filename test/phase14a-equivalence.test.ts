@@ -4,6 +4,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { indexRepository, syncRepository } from "../src/core/indexing/index-pipeline.service.js";
+import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
+import { getRepositoryIdentity } from "../src/core/repository/repository-identity.js";
+
 import { buildCodeGraph, buildCodeGraphWithResolutionFromFacts } from "../src/core/graph/build-graph.js";
 import { extractParsedFacts } from "../src/core/facts/facts-extractor.js";
 import { CURRENT_INDEX_VERSION_DOMAINS } from "../src/core/repository/index-version.js";
@@ -69,6 +73,51 @@ test("facts import edges deduplicate bindings from the same module", async () =>
     const importEdges = actual.graph.edges.filter((edge) => edge.type === "imports");
 
     assert.equal(importEdges.length, 1);
+  } finally {
+    await rm(repoPath, { recursive: true, force: true });
+  }
+});
+
+function normalizedGraph(graph: { nodes: Array<Record<string, unknown>>; edges: Array<Record<string, unknown>> }) {
+  const nodes = graph.nodes.map(({ id: _id, ...node }) => node).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  const byId = new Map(graph.nodes.map((node) => [node.id, `${node.type}:${node.file}:${node.qualifiedName ?? node.name}`]));
+  const edges = graph.edges.map(({ from, to, ...edge }) => ({
+    ...edge,
+    from: byId.get(from) ?? from,
+    to: byId.get(to) ?? to,
+  })).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  return { nodes, edges };
+}
+
+test("incremental graph matches a clean full rebuild for imports, calls, extends, malformed, delete, and rename", async () => {
+  const repoPath = await mkdtemp(path.join(tmpdir(), "code-atlas-phase14a-equivalence-lifecycle-"));
+  try {
+    await writeFile(path.join(repoPath, "base.ts"), "export class Base { work() {} }\n");
+    await writeFile(path.join(repoPath, "consumer.ts"), 'import { Base } from "./base.js"; export class Consumer extends Base { run() { this.work(); } }\n');
+    await writeFile(path.join(repoPath, "broken.ts"), "export function broken( {\n");
+    await writeFile(path.join(repoPath, "removed.ts"), "export const removed = true;\n");
+
+    await indexRepository(repoPath, { skipGit: true });
+    await rm(path.join(repoPath, "removed.ts"));
+    await rm(path.join(repoPath, "base.ts"));
+    await writeFile(path.join(repoPath, "renamed-base.ts"), "export class Base { work() {} }\n");
+    await writeFile(path.join(repoPath, "consumer.ts"), 'import { Base } from "./renamed-base.js"; export class Consumer extends Base { run() { this.work(); } }\n');
+    const incremental = await syncRepository(repoPath, { skipGit: true });
+    assert.equal(incremental.kind, "published");
+
+    const incrementalStore = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
+    const repository = incrementalStore.ensureRepository(getRepositoryIdentity(repoPath));
+    const incrementalGraph = incrementalStore.loadGraph(repository.id);
+    incrementalStore.close();
+
+    await indexRepository(repoPath, { skipGit: true });
+    const fullStore = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
+    try {
+      const fullRepository = fullStore.ensureRepository(getRepositoryIdentity(repoPath));
+      assert.deepEqual(normalizedGraph(incrementalGraph), normalizedGraph(fullStore.loadGraph(fullRepository.id)));
+    } finally {
+      fullStore.close();
+    }
   } finally {
     await rm(repoPath, { recursive: true, force: true });
   }

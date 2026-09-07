@@ -4,6 +4,7 @@ import type { VectorStore } from "../semantic/vector-store.js";
 import type { ParsedFactsBlob } from "../facts/facts.types.js";
 import type { CodeChunk } from "../graph/parsers/types.js";
 import type { InvalidationPlan } from "./invalidation-planner.js";
+import type { IndexWorkCounters } from "./index-work-counters.js";
 
 export type IndexedSourceUnit = {
   relativePath: string;
@@ -72,6 +73,7 @@ export type PublishedIndexRun = {
   generationId: string;
   plan: InvalidationPlan;
   published: true;
+  counters: Readonly<IndexWorkCounters>;
 };
 
 export type FailedIndexRun = {

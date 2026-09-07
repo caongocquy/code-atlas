@@ -64,6 +64,26 @@ test("index publishes one typed generation and unchanged sync reuses it", async 
     assert.equal(second.published, true);
     assert.deepEqual(second.plan.parsePaths, []);
     assert.deepEqual(second.plan.reusePaths, ["source.ts"]);
+    assert.deepEqual(first.counters, {
+      filesScanned: 1,
+      filesHashed: 1,
+      factCacheHits: 0,
+      factCacheMisses: 1,
+      filesParsed: 1,
+      filesResolved: 1,
+      importersInvalidated: 0,
+      fullResolutionFallbacks: 0,
+    });
+    assert.deepEqual(second.counters, {
+      filesScanned: 1,
+      filesHashed: 1,
+      factCacheHits: 1,
+      factCacheMisses: 0,
+      filesParsed: 0,
+      filesResolved: 0,
+      importersInvalidated: 0,
+      fullResolutionFallbacks: 0,
+    });
 
     const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
     try {
@@ -73,6 +93,42 @@ test("index publishes one typed generation and unchanged sync reuses it", async 
     } finally {
       store.close();
     }
+  } finally {
+    await rm(repoPath, { recursive: true, force: true });
+  }
+});
+
+test("index work counters are deterministic for a cold, unchanged, modified, and renamed fixture", async () => {
+  const repoPath = await mkdtemp(path.join(tmpdir(), "code-atlas-phase14a-counters-"));
+
+  try {
+    await Promise.all(Array.from({ length: 100 }, (_, index) =>
+      writeFile(path.join(repoPath, `file-${String(index).padStart(3, "0")}.ts`), `export const value${index} = ${index};\n`)));
+
+    const cold = await indexRepository(repoPath, { skipGit: true });
+    assert.equal(cold.kind, "published");
+    assert.equal(cold.counters.filesParsed, 100);
+    assert.equal(cold.counters.factCacheMisses, 100);
+    assert.equal(cold.counters.filesScanned, 100);
+    assert.equal(cold.counters.filesHashed, 100);
+
+    const unchanged = await syncRepository(repoPath, { skipGit: true });
+    assert.equal(unchanged.kind, "published");
+    assert.equal(unchanged.counters.filesParsed, 0);
+    assert.equal(unchanged.counters.factCacheHits, 100);
+
+    await writeFile(path.join(repoPath, "file-042.ts"), "export const value42 = 4200;\n");
+    const modified = await syncRepository(repoPath, { skipGit: true });
+    assert.equal(modified.kind, "published");
+    assert.equal(modified.counters.filesParsed, 1);
+    assert.equal(modified.counters.factCacheMisses, 1);
+
+    await rm(path.join(repoPath, "file-042.ts"));
+    await writeFile(path.join(repoPath, "renamed.ts"), "export const value42 = 4200;\n");
+    const renamed = await syncRepository(repoPath, { skipGit: true });
+    assert.equal(renamed.kind, "published");
+    assert.equal(renamed.counters.filesParsed, 0);
+    assert.equal(renamed.counters.factCacheHits, 100);
   } finally {
     await rm(repoPath, { recursive: true, force: true });
   }
