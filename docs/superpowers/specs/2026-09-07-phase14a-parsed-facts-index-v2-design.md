@@ -91,6 +91,7 @@ ParsedFactsBlob {
   contentHash
   language
   parserIdentity
+  parseStatus
   parserDiagnostics
   symbols[]
   containmentScopes[]
@@ -103,10 +104,30 @@ ParsedFactsBlob {
 }
 ```
 
-The exact TypeScript representation may follow existing repository conventions,
-but every persisted field MUST be covered by an explicit facts schema version.
-Parser diagnostics MUST distinguish a valid deterministic partial parse from an
-internal parser or extraction failure.
+The exact TypeScript representation may follow existing repository conventions.
+The three fact metadata fields have non-overlapping ownership:
+
+- `factsSchemaVersion` owns the serialized and validated shape of the
+  `ParsedFactsBlob`. It changes when that persisted fact schema changes
+  incompatibly, such as when a field is added with incompatible semantics, or
+  renamed or removed, or when the serialization contract changes.
+- `factsVersion` owns CodeAtlas extraction semantics: what structural facts
+  mean and how CodeAtlas extracts them. It changes for changes such as a new
+  call-site extraction rule, containment semantics, import/export fact
+  semantics, or binding-seed interpretation. It MUST NOT change merely because
+  the concrete Tree-sitter runtime or grammar package version changed when
+  extraction semantics remain unchanged.
+- `parserIdentity` identifies the concrete parser, runtime, and relevant
+  grammar identity/version assumptions used to produce the facts. It SHOULD
+  deterministically represent those inputs and changes when they could alter
+  parse output. It participates in `FactBlobKey` and cache validation; it is
+  not a replacement for `factsVersion`.
+
+`parseStatus` is `complete` or `deterministic_partial`. `parserDiagnostics`
+MUST preserve source syntax diagnostics for a partial parse and MUST
+distinguish that valid deterministic result from an internal parser or
+extraction failure. Infrastructure failure has no authoritative
+`ParsedFactsBlob` and therefore no published `parseStatus`.
 
 The blob MUST be path-neutral wherever the source syntax does not provide path
 evidence. Raw fact identities are local to the source blob, for example:
@@ -136,15 +157,17 @@ The recommended conceptual key is:
 FactBlobKey = hash(
   source content hash
   + language
-  + parser identity
+  + parserIdentity
   + factsVersion
-  + facts schema version
+  + factsSchemaVersion
 )
 ```
 
-`parserIdentity` identifies the parser and grammar assumptions that affect the
-facts. It MUST change when those assumptions change in a way that can alter the
-facts.
+`parserIdentity` MUST change when parser, runtime, or grammar inputs change in a
+way that could alter parse output. It remains distinct from `factsVersion`:
+the parser provenance can change without changing CodeAtlas extraction
+semantics, and extraction semantics can change without being reducible to a
+concrete parser package version.
 
 `FileFactBinding` maps repository context to a reusable blob:
 
@@ -198,6 +221,10 @@ The index has four independent version domains:
 | `resolutionVersion` | Resolver algorithms and resolved-edge semantics | Reuse ParsedFacts; rebuild the resolved graph |
 | `derivedVersion` | Lexical and other derived projections | Retain compatible facts and graph; rebuild derived projections only |
 
+`factsSchemaVersion` is separate fact-blob compatibility metadata, not a
+collapse of `factsVersion` and not a fifth resolver or derived-version domain.
+It is evaluated as part of fact-blob validation before facts are reused.
+
 Version changes MUST invalidate only the layer whose semantics changed, subject
 to storage compatibility and explicit safety fallback rules.
 
@@ -219,6 +246,15 @@ storage engine, external vector database, or mandatory service.
 The conceptual storage model is:
 
 ```text
+repository_index_state
+  repository_id
+  active_generation_id
+  active_schema_version
+  active_facts_version
+  active_resolution_version
+  active_derived_version
+  active_provenance_metadata
+
 fact_blobs
   blob_key
   facts_version
@@ -231,15 +267,23 @@ fact_blobs
 
 file_fact_bindings
   repository_id
+  generation_id
   relative_path
   blob_key
   content_hash
-  generation_id
+  validated_provenance
 ```
 
 The exact table and column names may follow the existing SQLite schema, but the
 stored data MUST preserve the separation between immutable blob identity and
-path-specific binding identity.
+path-specific, generation-specific binding identity. A binding for candidate
+generation N+1 MUST NOT overwrite the active generation N binding in place.
+
+Normal readers resolve repository state through
+`repository_index_state.active_generation_id`. They MUST then read only
+bindings, manifests, graph state, and derived state belonging to that active
+generation. Fact blobs remain immutable/content-addressed and may exist
+independently of any active generation.
 
 The v1 payload format is compact, inspectable JSON. Protobuf, MessagePack, or
 another binary format is not required. ParsedFacts MUST NOT persist an AST,
@@ -252,9 +296,23 @@ A cache hit requires all of the following to match:
 
 - source content hash;
 - language;
-- parser identity;
-- facts version; and
-- facts schema version.
+- `parserIdentity`;
+- `factsVersion`; and
+- `factsSchemaVersion`.
+
+The mismatch meanings are distinct:
+
+- `factsSchemaVersion` mismatch means the persisted blob shape is incompatible;
+  the blob is discarded and facts are rebuilt or reparsed as required.
+- `factsVersion` mismatch means CodeAtlas extraction semantics changed; facts
+  are rebuilt.
+- `parserIdentity` mismatch means parser/runtime/grammar provenance changed;
+  facts are rebuilt for the affected language or source.
+
+No parser/runtime/grammar change that could alter parse output may silently
+reuse an incompatible blob. A parser identity change that is known not to
+alter extraction semantics still requires fresh fact provenance under the new
+identity, while it does not imply a `factsVersion` change.
 
 On a hit, the existing valid facts blob is reused without parsing.
 
@@ -332,6 +390,12 @@ Manifest comparison is the canonical basis for incremental work. Changed,
 added, deleted, and renamed paths are determined from source snapshots and
 manifest comparison, with content hashes remaining authoritative. The
 implementation MUST NOT infer changed files by reverse-engineering the graph.
+
+The manifest is generation-scoped. Readers locate the visible manifest through
+`repository_index_state.active_generation_id` and MUST NOT read a staged
+candidate manifest as normal repository state. A candidate manifest may be
+constructed for N+1, but it becomes readable only after the active-generation
+pointer is atomically switched.
 
 ## 10. Invalidation model
 
@@ -447,13 +511,24 @@ active generation N
   → atomically publish N+1
 ```
 
-Only the final publication step changes the active generation. Any failure
-before publication leaves active generation N authoritative.
+Candidate generation N+1 may stage generation-scoped bindings, a manifest,
+graph state, and derived state. These staged records are not visible to normal
+readers because readers follow `repository_index_state.active_generation_id`,
+which still points to N.
+
+The final publication step MUST atomically switch the repository's active
+generation pointer from N to N+1 together with the minimum version and
+provenance metadata required for consistency. It MUST NOT publish candidate
+bindings by overwriting active N bindings before that switch.
+
+Any failure before the final switch leaves `active_generation_id` equal to N.
+Candidate bindings and candidate graph or derived state MUST NOT become active.
+Read-only commands MUST NOT switch the pointer, repair candidate state, migrate
+generation state, or promote staged bindings.
 
 Immutable fact blobs produced during an aborted candidate build MAY remain as
-temporarily unreferenced cache blobs. They MUST NOT make the failed candidate
-generation active, and no binding may point to a candidate generation that was
-not published.
+temporarily unreferenced cache blobs. Candidate-generation cleanup or GC MAY
+occur later, but no binding may make an unpublished generation active.
 
 ## 13. Fact-cache garbage collection
 
@@ -462,35 +537,58 @@ publication:
 
 ```text
 all fact blobs
-  − blobs referenced by active bindings and active generation
+  − blobs referenced by committed active-generation bindings
+    and any intentionally retained generation policy
   = eligible orphan blobs
 ```
 
-Phase 14A does not add LRU, TTL, configurable cache limits, or a background
-cache daemon. Those features require measured operational requirements.
+Only committed active-generation references, plus any intentionally retained
+generation policy defined by the implementation, make a blob active or
+referenced for GC. Phase 14A does not add historical-generation browsing,
+rollback UI, a public generation CLI, or a background generation manager. It
+also does not add LRU, TTL, configurable cache limits, or a background cache
+daemon; those features require measured operational requirements.
 
 ## 14. Error and degradation semantics
 
 User source syntax errors and CodeAtlas infrastructure failures are distinct.
 
-### 14.1 Syntax errors and partial parses
+### 14.1 CASE A — User source and deterministic partial parse
 
-When the parser produces deterministic partial facts for malformed source:
+This case covers malformed or incomplete user code where Tree-sitter returns a
+valid partial or error-containing tree and extraction can deterministically
+produce structurally safe partial facts. The blob carries
+`parseStatus: deterministic_partial`:
 
 - the partial facts MAY be cached;
 - parser diagnostics MUST be stored with the facts;
 - downstream analysis MUST expose explicit incompleteness; and
 - unchanged malformed source MUST NOT be continuously reparsed.
+- no authoritative-negative conclusion may be inferred beyond existing
+  CodeAtlas completeness rules.
 
 Partial facts are evidence with diagnostics, not a claim that the source is
 fully understood.
 
-### 14.2 Internal parser or extraction failure
+### 14.2 CASE B — CodeAtlas parser or extraction infrastructure failure
 
-An internal parser or extraction failure MUST NOT be cached as authoritative
-facts. Candidate publication fails or remains explicitly incomplete according to
-the existing lifecycle safety semantics. It MUST NOT silently become a valid
-facts blob merely because it has a content hash.
+An internal parser or extraction failure is distinct from malformed user source:
+unexpected parser exception, extraction invariant violation, internal timeout
+or failure without trustworthy deterministic facts, corrupted parser state, and
+other infrastructure-level failures belong here. Such a failure:
+
+- MUST NOT publish an authoritative `ParsedFactsBlob`;
+- MUST NOT publish candidate generation N+1;
+- leaves previous active generation N active;
+- reports an indexing failure or incomplete state through the lifecycle;
+- leaves read-only surfaces observational and unable to repair the state; and
+- retries only through the normal explicit mutating lifecycle, apart from the
+  bounded source-race retry already defined.
+
+Infrastructure parser or extraction failure MUST fail candidate publication. An
+implementer MUST NOT choose to publish an incomplete generation for this case.
+It MUST NOT silently become a valid facts blob merely because it has a content
+hash.
 
 ### 14.3 Other failure categories
 
@@ -524,6 +622,10 @@ and any equivalent read-only analysis surface, MUST NOT:
 - repair bindings;
 - index or sync; or
 - publish a new generation.
+
+Readers resolve state through the committed active-generation pointer and MUST
+observe only the bindings, manifests, graph state, and derived state belonging
+to that generation. They MUST NOT promote or repair candidate state.
 
 The protected examples are:
 
@@ -771,6 +873,12 @@ Phase 14A is complete only when all of the following are demonstrated:
 - Legacy read-only paths remain non-mutating.
 - Migration happens only under a mutating lifecycle.
 - Cache corruption recovers safely.
+- Malformed user source may publish only deterministic partial facts with
+  diagnostics and explicit incompleteness.
+- Infrastructure parser or extraction failure always aborts candidate
+  publication and leaves the previous active generation authoritative.
+- Candidate-generation bindings cannot become visible before active-pointer
+  publication.
 - Existing Phase 13 semantics remain unchanged.
 - npm/pnpm packaging and MCP behavior remain compatible.
 
@@ -794,12 +902,19 @@ document for:
 
 - unresolved unfinished-work markers or unbounded future-work language;
 - contradictions between `MUST`, `SHOULD`, and optional behavior;
+- distinct ownership for `factsSchemaVersion`, `factsVersion`, and
+  `parserIdentity`;
+- parser/runtime/grammar changes cannot silently reuse incompatible facts;
 - accidental semantic-invalidation scope;
 - accidental Resolver v2 scope;
 - accidental watcher or daemon scope;
 - consistent path-neutral blob identity;
 - non-contradictory cache-key and file-binding identity;
 - non-mutating legacy read-only behavior;
+- active readers observe only the generation named by the committed active
+  pointer;
+- candidate bindings never overwrite active bindings before publication;
+- infrastructure parser failure always aborts candidate publication;
 - active-generation preservation on every failure path;
 - internally consistent version rules;
 - uncertain-dependency fallback that never implies full reparse;
