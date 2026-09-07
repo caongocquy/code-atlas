@@ -75,6 +75,18 @@ test("fact blobs round-trip deterministically and validate", () => {
 
   assert.equal(payload, encodeFacts(reordered));
   assert.deepEqual(decodeFacts(payload, expectation(value)), { kind: "hit", facts: value });
+
+  const zeroIdFacts = facts({
+    containmentScopes: [{
+      localId: "scope:0",
+      kind: "module",
+      range: { startLine: 1, endLine: 1 },
+    }],
+  });
+  assert.deepEqual(
+    decodeFacts(encodeFacts(zeroIdFacts), expectation(zeroIdFacts)),
+    { kind: "hit", facts: zeroIdFacts },
+  );
 });
 
 test("fact codec reports every miss reason", () => {

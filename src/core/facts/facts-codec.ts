@@ -68,7 +68,7 @@ function isOptionalString(value: unknown): boolean {
 
 function isFactId(value: unknown): boolean {
   return typeof value === "string"
-    && /^(symbol|scope|import|export|reference|call|binding|type):[1-9]\d*$/.test(value);
+    && /^(symbol|scope|import|export|reference|call|binding|type):\d+$/.test(value);
 }
 
 function isInteger(value: unknown): value is number {
