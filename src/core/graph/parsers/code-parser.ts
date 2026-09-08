@@ -17,6 +17,15 @@ const LANGUAGE_FILE_NAMES: Partial<Record<SupportedLanguage, string>> = {
   typescript: "source.ts",
   tsx: "source.tsx",
   javascript: "source.js",
+  python: "source.py",
+  java: "source.java",
+  kotlin: "source.kt",
+  go: "source.go",
+  rust: "source.rs",
+  swift: "source.swift",
+  dart: "source.dart",
+  c: "source.c",
+  cpp: "source.cpp",
 };
 
 export function getLanguageAdapterForLanguage(
