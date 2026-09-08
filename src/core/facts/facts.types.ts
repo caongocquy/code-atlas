@@ -1,24 +1,16 @@
-import type { SupportedLanguage, SymbolType } from "../graph/parsers/types.js";
+import type { LanguageId, SymbolType } from "../graph/parsers/types.js";
 
 export type ParseStatus = "complete" | "deterministic_partial";
 
-export type FactLocalId =
-  | `symbol:${number}`
-  | `scope:${number}`
-  | `import:${number}`
-  | `export:${number}`
-  | `reference:${number}`
-  | `call:${number}`
-  | `binding:${number}`
-  | `type:${number}`;
+export type FactLocalId = string & { readonly __brand: "FactLocalId" };
 
 export type ParserIdentity = {
-  language: SupportedLanguage;
-  parserName: string;
-  parserVersion: string;
+  language: LanguageId;
+  runtimeName: "tree-sitter";
+  runtimeVersion: string;
+  packageName: string;
   grammarName: string;
   grammarVersion: string;
-  adapterVersion: string;
 };
 
 export type SourceRangeFact = {
@@ -96,11 +88,106 @@ export type DeclaredTypeAnnotationFact = {
   range: SourceRangeFact;
 };
 
+export type ExpressionFact = {
+  localId: FactLocalId;
+  kind: "identifier" | "literal" | "call" | "construct" | "member" | "type_ref" | "other";
+  text?: string;
+  ownerScopeId?: FactLocalId;
+  range: SourceRangeFact;
+};
+
+export type MemberFact = {
+  localId: FactLocalId;
+  ownerSymbolId?: FactLocalId;
+  receiverId?: FactLocalId;
+  memberName: string;
+  memberKind: "field" | "method" | "property";
+  access: "instance" | "static" | "extension";
+  range: SourceRangeFact;
+};
+
+export type AssignmentFact = {
+  localId: FactLocalId;
+  targetId: FactLocalId;
+  sourceExpressionId?: FactLocalId;
+  sourceName?: string;
+  assignmentKind: "declaration" | "reassignment" | "alias" | "function_pointer";
+  range: SourceRangeFact;
+};
+
+export type ParameterFact = {
+  localId: FactLocalId;
+  ownerSymbolId: FactLocalId;
+  name: string;
+  bindingId?: FactLocalId;
+  typeText?: string;
+  index: number;
+  receiverKind?: "method_receiver" | "go_receiver";
+  range: SourceRangeFact;
+};
+
+export type ReturnFact = {
+  localId: FactLocalId;
+  ownerSymbolId: FactLocalId;
+  expressionId?: FactLocalId;
+  typeText?: string;
+  range: SourceRangeFact;
+};
+
+export type ConstructorFact = {
+  localId: FactLocalId;
+  ownerSymbolId?: FactLocalId;
+  constructedTypeName: string;
+  callExpressionId?: FactLocalId;
+  resultBindingId?: FactLocalId;
+  range: SourceRangeFact;
+};
+
+export type InheritanceFact = {
+  localId: FactLocalId;
+  subjectId: FactLocalId;
+  targetName: string;
+  relationKind: "extends" | "base" | "trait" | "protocol" | "mixin";
+  range: SourceRangeFact;
+};
+
+export type ImplementationFact = {
+  localId: FactLocalId;
+  subjectId: FactLocalId;
+  targetName: string;
+  relationKind: "implements" | "interface" | "trait_impl" | "protocol_conformance" | "extension" | "mixin";
+  range: SourceRangeFact;
+};
+
+export type AliasFact = {
+  localId: FactLocalId;
+  aliasName: string;
+  targetName: string;
+  targetId?: FactLocalId;
+  aliasKind: "import" | "type" | "namespace" | "value";
+  range: SourceRangeFact;
+};
+
+export type ModuleFact = {
+  localId: FactLocalId;
+  name: string;
+  moduleKind: "file" | "module" | "package" | "namespace";
+  exported: boolean;
+  range: SourceRangeFact;
+};
+
+export type NamespaceFact = {
+  localId: FactLocalId;
+  name: string;
+  ownerId?: FactLocalId;
+  range: SourceRangeFact;
+};
+
 export type ParsedFactsBlob = {
   factsSchemaVersion: string;
   factsVersion: string;
   contentHash: string;
-  language: SupportedLanguage;
+  language: LanguageId;
   parserIdentity: ParserIdentity;
   parseStatus: ParseStatus;
   parserDiagnostics: string[];
@@ -112,6 +199,17 @@ export type ParsedFactsBlob = {
   callSites: CallSiteFact[];
   bindingSeeds: BindingSeedFact[];
   declaredTypeAnnotations: DeclaredTypeAnnotationFact[];
+  expressions: readonly ExpressionFact[];
+  members: readonly MemberFact[];
+  assignments: readonly AssignmentFact[];
+  parameters: readonly ParameterFact[];
+  returns: readonly ReturnFact[];
+  constructors: readonly ConstructorFact[];
+  inheritances: readonly InheritanceFact[];
+  implementations: readonly ImplementationFact[];
+  aliases: readonly AliasFact[];
+  modules: readonly ModuleFact[];
+  namespaces: readonly NamespaceFact[];
 };
 
 export type FactBlobKey = string & { readonly __brand: "FactBlobKey" };
@@ -122,7 +220,7 @@ export type FileFactBinding = {
   generationId: string;
   factBlobKey: FactBlobKey;
   contentHash: string;
-  language: SupportedLanguage;
+  language: LanguageId;
 };
 
 export type MaterializedFileFacts = {

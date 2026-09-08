@@ -20,11 +20,11 @@ import { parseCodeSymbols } from "../src/core/graph/parsers/code-parser.js";
 
 const parserIdentity = {
   language: "typescript" as const,
-  parserName: "tree-sitter",
-  parserVersion: "0.25.1",
+  runtimeName: "tree-sitter" as const,
+  runtimeVersion: "0.25.1",
+  packageName: "tree-sitter-typescript",
   grammarName: "tree-sitter-typescript",
   grammarVersion: "0.23.2",
-  adapterVersion: "1",
 };
 
 function factInput(overrides: Partial<ParsedFactsBlob> = {}): ParsedFactsBlob {
@@ -44,6 +44,17 @@ function factInput(overrides: Partial<ParsedFactsBlob> = {}): ParsedFactsBlob {
     callSites: [],
     bindingSeeds: [],
     declaredTypeAnnotations: [],
+    expressions: [],
+    members: [],
+    assignments: [],
+    parameters: [],
+    returns: [],
+    constructors: [],
+    inheritances: [],
+    implementations: [],
+    aliases: [],
+    modules: [],
+    namespaces: [],
     ...overrides,
   };
 }
@@ -55,7 +66,14 @@ test("fact blob keys are canonical and path-independent", () => {
     .update(JSON.stringify({
       contentHash: facts.contentHash,
       language: facts.language,
-      parserIdentity: facts.parserIdentity,
+      parserIdentity: {
+        language: facts.parserIdentity.language,
+        parserName: undefined,
+        parserVersion: undefined,
+        grammarName: facts.parserIdentity.grammarName,
+        grammarVersion: facts.parserIdentity.grammarVersion,
+        adapterVersion: undefined,
+      },
       factsVersion: facts.factsVersion,
       factsSchemaVersion: facts.factsSchemaVersion,
     }))
