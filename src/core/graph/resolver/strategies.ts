@@ -147,7 +147,9 @@ function resolveTypes(input: ResolverInput, site: ResolutionSiteIdentity, strate
 function resolveMembers(input: ResolverInput, site: ResolutionSiteIdentity, strategy: ResolutionStrategyId): readonly ResolutionCandidate[] {
   const facts = input.facts.members.filter((item) => item.localId === site.localId);
   const names = new Set(facts.map((item) => item.memberName));
-  const members = input.evidence.members.filter((item) => sameSourceUnit(item.sourceUnit, site.sourceUnit) && names.has(item.memberName));
+  const members = input.evidence.members.filter((item) => sameSourceUnit(item.sourceUnit, site.sourceUnit)
+    && names.has(item.memberName)
+    && item.evidenceId.endsWith(`member:${site.localId}`));
   return mergeCandidates(members.flatMap((item) => {
     const result = input.environment.resolveMember(item.ownerType, item.memberName);
     if (result.status !== "found") return [];

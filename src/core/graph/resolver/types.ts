@@ -187,6 +187,7 @@ export type AdapterDiagnostic = {
   code: string;
   message: string;
   sourceUnit: SourceUnitIdentity;
+  siteLocalId?: string;
   range?: SourceRangeFact;
   candidates?: readonly SymbolIdentity[];
 };

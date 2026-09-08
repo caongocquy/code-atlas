@@ -21,7 +21,14 @@ export function normalizeDartFacts(facts: ParsedFactsBlob, context: AdapterConte
   for (const item of facts.modules) result.modules = [...result.modules, { ...base("module", item.localId, item.range), kind: "module", module: { repositoryId: context.repositoryIdentity.id, normalizedName: item.name, relativePath: unit.relativePath }, exportedNames: [] }];
   for (const item of facts.declaredTypeAnnotations) { const type = typeOf(item.text); if (type) result.typeAnnotations = [...result.typeAnnotations, { ...base("type", item.localId, item.range), kind: "type_annotation", subjectLocalId: item.ownerId, type }]; }
   for (const item of facts.constructors) result.constructors = [...result.constructors, { ...base("constructor", item.localId, item.range), kind: "constructor", constructedType: typeOf(item.constructedTypeName) ?? { kind: "named", name: item.constructedTypeName }, resultBindingId: item.resultBindingId }];
-  for (const item of facts.assignments) { const sourceExpression = item.sourceExpressionId ? { sourceUnit: unit, localId: item.sourceExpressionId } : undefined; result.assignments = [...result.assignments, { ...base("assignment", item.localId, item.range), kind: "assignment", targetBindingId: item.targetId, sourceExpression, sourceType: item.sourceName ? typeOf(item.sourceName) : undefined }]; }
+  for (const item of facts.assignments) {
+    if (!facts.bindingSeeds.some((binding) => binding.localId === item.targetId)) {
+      result.diagnostics = [...result.diagnostics, { ...base("assignment", item.localId, item.range), code: "assignment_target_member_unsupported", message: `Dart assignment target ${item.targetId} is not a binding seed`, siteLocalId: item.localId }];
+      continue;
+    }
+    const sourceExpression = item.sourceExpressionId ? { sourceUnit: unit, localId: item.sourceExpressionId } : undefined;
+    result.assignments = [...result.assignments, { ...base("assignment", item.localId, item.range), kind: "assignment", targetBindingId: item.targetId, sourceExpression, sourceType: item.sourceName ? typeOf(item.sourceName) : undefined }];
+  }
   for (const item of facts.parameters) { const callable = symbols.get(item.ownerSymbolId); if (callable) result.parameters = [...result.parameters, { ...base("parameter", item.localId, item.range), kind: "parameter", callable, index: item.index, bindingId: item.bindingId ?? item.localId, type: typeOf(item.typeText) }]; }
   for (const item of facts.returns) { const callable = symbols.get(item.ownerSymbolId); if (callable) result.returns = [...result.returns, { ...base("return", item.localId, item.range), kind: "return", callable, type: typeOf(item.typeText) }]; }
   for (const item of facts.inheritances) { const subject = symbols.get(item.subjectId); if (subject) result.inheritance = [...result.inheritance, { ...base("inheritance", item.localId, item.range), kind: "inheritance", subject, target: typeOf(item.targetName) ?? { kind: "named", name: item.targetName }, relation: item.relationKind }]; }
@@ -39,8 +46,11 @@ export function normalizeDartFacts(facts: ParsedFactsBlob, context: AdapterConte
     if (!ownerName) continue;
     const relations = facts.implementations.filter((relation) => relation.subjectId === facts.symbols.find((symbol) => symbol.name === ownerName)?.localId && relation.relationKind === "mixin");
     const extensionMembers = facts.members.filter((member) => member.memberName === item.memberName && member.access === "extension" && facts.implementations.some((relation) => relation.subjectId === member.ownerSymbolId && relation.relationKind === "extension" && relation.targetName === ownerName)).map((member) => member.ownerSymbolId);
-    const candidates = facts.symbols.filter((candidate) => candidate.name === item.memberName && (candidate.declaredQualifiedName?.startsWith(`${ownerName}.`) || relations.some((relation) => candidate.declaredQualifiedName?.startsWith(`${relation.targetName}.`)) || extensionMembers.includes(candidate.localId)));
-    if (candidates.length > 1) { result.diagnostics = [...result.diagnostics, { ...base("mixin", item.localId, item.range), code: "mixin_selection_ambiguity", message: `Dart mixin selection is not statically unique for ${item.memberName}`, candidates: candidates.map((candidate) => symbols.get(candidate.localId)!).filter((candidate): candidate is SymbolIdentity => Boolean(candidate)) }]; }
+    const directCandidates = facts.symbols.filter((candidate) => candidate.name === item.memberName && candidate.declaredQualifiedName?.startsWith(`${ownerName}.`));
+    const candidates = directCandidates.length > 0
+      ? directCandidates
+      : facts.symbols.filter((candidate) => candidate.name === item.memberName && (relations.some((relation) => candidate.declaredQualifiedName?.startsWith(`${relation.targetName}.`)) || extensionMembers.includes(candidate.localId)));
+    if (candidates.length > 1) { result.diagnostics = [...result.diagnostics, { ...base("mixin", item.localId, item.range), code: "mixin_selection_ambiguity", message: `Dart mixin selection is not statically unique for ${item.memberName}`, siteLocalId: item.localId, candidates: candidates.map((candidate) => symbols.get(candidate.localId)!).filter((candidate): candidate is SymbolIdentity => Boolean(candidate)) }]; }
     else if (candidates.length === 1) result.members = [...result.members, { ...base("member", item.localId, item.range), kind: "member", ownerType, memberName: item.memberName, member: symbols.get(candidates[0]!.localId)!, access: item.access }];
   }
   for (const item of facts.callSites) result.calls = [...result.calls, { ...base("call", item.localId, item.range), kind: "call", site: { sourceUnit: unit, localId: item.localId }, calleeName: item.calleeText, arguments: [] }];
