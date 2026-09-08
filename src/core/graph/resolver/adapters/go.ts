@@ -1,5 +1,5 @@
 import type { FactLocalId, ParsedFactsBlob, SourceRangeFact } from "../../../facts/facts.types.js";
-import { symbolIdentity, type ExpressionIdentity, type ModuleIdentity, type ScopeIdentity } from "../identities.js";
+import { symbolIdentity, type ModuleIdentity, type ScopeIdentity, type SymbolIdentity } from "../identities.js";
 import type { AdapterContext, LanguageSemanticAdapter, SemanticCapabilities, SemanticEvidenceBatch, TypeRef } from "../types.js";
 
 export const GO_CAPABILITIES: SemanticCapabilities = { moduleImport: "full", localBinding: "full", directCall: "full", declaredType: "full", constructorType: "full", receiverMember: "full", assignment: "partial", parameterFlow: "full", returnFlow: "partial", inheritance: "unsupported" };
@@ -9,15 +9,23 @@ export function normalizeGoFacts(facts: ParsedFactsBlob, context: AdapterContext
   const result = empty(), unit = context.sourceUnit;
   const base = (kind: string, localId: string, range: SourceRangeFact) => ({ evidenceId: `${unit.relativePath}:${kind}:${localId}` as never, sourceUnit: unit, range });
   const symbols = new Map(facts.symbols.map((item) => [item.localId, symbolIdentity({ repositoryId: context.repositoryIdentity.id, relativePath: unit.relativePath, language: unit.language, kind: item.kind, qualifiedName: item.declaredQualifiedName ?? item.name, discriminator: item.localId })]));
-  const byName = new Map(facts.symbols.map((item) => [item.name, symbols.get(item.localId)!]));
+  const packageName = facts.modules.find((item) => item.moduleKind === "package")?.name;
+  const byQualifiedName = new Map(facts.symbols.map((item) => [item.declaredQualifiedName ?? item.name, symbols.get(item.localId)!]));
+  const byName = new Map<string, SymbolIdentity[]>();
+  for (const item of facts.symbols) { const value = symbols.get(item.localId); if (value) byName.set(item.name, [...(byName.get(item.name) ?? []), value]); }
   const scopes = new Map(facts.containmentScopes.map((item) => [item.localId, item]));
   const parent = (id: string | undefined): FactLocalId | undefined => id ? scopes.get(id as FactLocalId)?.parentId : undefined;
   const scopeOf = (id: string | undefined): ScopeIdentity => ({ sourceUnit: unit, localId: id ?? "scope:1", parentLocalId: parent(id) });
   const typeOf = (value: string | undefined): TypeRef | undefined => {
     if (!value) return undefined;
-    const name = value.replace("*", "");
-    const symbol = byName.get(name);
-    return symbol ? { kind: "known", symbol } : { kind: "named", name };
+    const name = value.replaceAll("*", "");
+    const qualified = name.includes(".") ? name : packageName ? `${packageName}.${name}` : name;
+    const symbol = byQualifiedName.get(qualified);
+    if (symbol) return { kind: "known", symbol };
+    const local = byName.get(name);
+    if (local?.length === 1) return { kind: "known", symbol: local[0] };
+    const imported = facts.imports.find((item) => item.localName === name || item.importedName === name);
+    return { kind: "named", name, qualification: imported ? [imported.moduleSpecifier] : packageName ? [packageName] : undefined, module: imported ? { repositoryId: context.repositoryIdentity.id, normalizedName: imported.moduleSpecifier } : undefined };
   };
   const typeByBinding = new Map<string, TypeRef>();
   for (const annotation of facts.declaredTypeAnnotations) { const type = typeOf(annotation.text); if (type) typeByBinding.set(annotation.ownerId, type); }
@@ -47,11 +55,11 @@ export function normalizeGoFacts(facts: ParsedFactsBlob, context: AdapterContext
     const iface = owner && interfaces.some((item) => item.localId === owner.localId) ? owner : undefined;
     if (iface) {
       const implementations = facts.implementations.filter((item) => item.targetName === iface.name && facts.symbols.find((symbol) => symbol.localId === item.subjectId));
-      const candidates = implementations.flatMap((item) => { const subject = facts.symbols.find((symbol) => symbol.localId === item.subjectId); return subject ? facts.symbols.filter((symbol) => symbol.kind === "method" && symbol.name === call.memberName && facts.parameters.some((parameter) => parameter.ownerSymbolId === symbol.localId && parameter.typeText?.replace("*", "") === subject.name)) : []; });
+      const candidates = implementations.flatMap((item) => { const subject = facts.symbols.find((symbol) => symbol.localId === item.subjectId); return subject ? facts.symbols.filter((symbol) => symbol.kind === "method" && symbol.name === call.memberName && facts.parameters.some((parameter) => parameter.ownerSymbolId === symbol.localId && parameter.receiverKind === "go_receiver" && parameter.typeText?.replaceAll("*", "") === subject.name)) : []; });
       if (candidates.length > 1) { result.members = [...result.members, ...candidates.map((candidate) => ({ ...base("member", call.localId, call.range), kind: "member" as const, ownerType, memberName: call.memberName, member: symbols.get(candidate.localId)!, access: call.access }))]; result.diagnostics = [...result.diagnostics, { ...base("member", call.localId, call.range), code: "interface_dispatch_ambiguous", message: `Interface dispatch for ${call.memberName} has multiple observed method-set owners` }]; }
       else result.diagnostics = [...result.diagnostics, { ...base("member", call.localId, call.range), code: "interface_dispatch_unknown", message: `Interface dispatch for ${call.memberName} is not uniquely observed` }];
     } else {
-      const target = owner ? facts.symbols.find((symbol) => symbol.kind === "method" && symbol.name === call.memberName && facts.parameters.some((parameter) => parameter.ownerSymbolId === symbol.localId && parameter.typeText?.replace("*", "") === owner.name)) : undefined;
+      const target = owner ? facts.symbols.find((symbol) => symbol.kind === "method" && symbol.name === call.memberName && facts.parameters.some((parameter) => parameter.ownerSymbolId === symbol.localId && parameter.receiverKind === "go_receiver" && parameter.typeText?.replaceAll("*", "") === owner.name)) : undefined;
       if (target) result.members = [...result.members, { ...base("member", call.localId, call.range), kind: "member", ownerType, memberName: call.memberName, member: symbols.get(target.localId)!, access: call.access }];
       else result.diagnostics = [...result.diagnostics, { ...base("member", call.localId, call.range), code: "receiver_type_unknown", message: `Cannot resolve receiver for ${call.memberName}` }];
     }

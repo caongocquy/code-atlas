@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 import type { ParsedFactsBlob } from "../../src/core/facts/facts.types.js";
 import type { FactExtractionOutcome } from "../../src/core/facts/facts-extractor.js";
 import type { LanguageFactExtractor, LanguageFactExtractorInput } from "../../src/core/facts/language-fact-extractor.js";
-import { createBudgetLedger, type BudgetLedger } from "../../src/core/graph/resolver/budgets.js";
+import { createBudgetLedger, type BudgetLedger, type ResolverBudgets } from "../../src/core/graph/resolver/budgets.js";
 import { resolveSite, type ResolutionDecision } from "../../src/core/graph/resolver/resolver.js";
 import { createGenerationResolverContext, type GenerationResolverContext } from "../../src/core/graph/resolver/generation-context.js";
 import { symbolIdentity, type ResolutionSiteIdentity, type SourceUnitIdentity, type SymbolIdentity } from "../../src/core/graph/resolver/identities.js";
@@ -32,6 +33,7 @@ export type LanguageFixtureDependencies = {
   memoMode?: "cold" | "warm";
   parallel?: boolean;
   resolverState?: LanguageFixtureResolverState;
+  budget?: Partial<ResolverBudgets>;
 };
 
 export type LanguageFixtureResult = {
@@ -99,7 +101,7 @@ class Overload {
 fun use() { Overload().run(null) }
 fun String.extension(): String = this
 `;
-    case "go": return "package main\n\nvar value = 1\n";
+    case "go": return readFileSync(new URL("../fixtures/phase14b/go/main.go", import.meta.url), "utf8");
     case "rust": return "fn main() { let value = 1; }\n";
     case "swift": return "let value = 1\n";
     case "dart": return "void main() { var value = 1; }\n";
@@ -155,6 +157,17 @@ function symbolsFor(fixture: LanguageFixtureDefinition, facts: readonly ParsedFa
 }
 
 function prepareFixture(fixture: LanguageFixtureDefinition, facts: readonly ParsedFactsBlob[]): LanguageFixtureDefinition {
+  if (fixture.name === "go") {
+    const expected = JSON.parse(readFileSync(new URL("../fixtures/phase14b/go/expected.json", import.meta.url), "utf8")) as { sites: readonly { callee: string; status: ResolutionDecision["status"] }[] };
+    const blob = facts[0];
+    if (!blob) return fixture;
+    const calls = new Map(blob.callSites.map((item) => [item.calleeText, item]));
+    const sites = expected.sites.flatMap((item) => {
+      const call = calls.get(item.callee);
+      return call ? [{ sourceUnit: sourceUnit(fixture, 0, blob), localId: call.localId }] : [];
+    });
+    return { ...fixture, sites, expectedDecisionStatuses: expected.sites.map((item) => item.status).filter((_, index) => sites[index]) };
+  }
   if (fixture.name !== "java" && fixture.name !== "kotlin" && fixture.name !== "jvm") return fixture;
   const sites: ResolutionSiteIdentity[] = [];
   const expectedDecisionStatuses: ResolutionDecision["status"][] = [];
@@ -188,7 +201,7 @@ export async function runLanguageFixture(name: string, deps: LanguageFixtureDepe
     return outcome.facts;
   };
   const normalizedFacts = fixture.cases.map(extract);
-  return runFixtureThroughResolver(prepareFixture(fixture, normalizedFacts), normalizedFacts, deps.adapter, deps.memoMode, deps.parallel, deps.resolverState);
+  return runFixtureThroughResolver(prepareFixture(fixture, normalizedFacts), normalizedFacts, deps.adapter, deps.memoMode, deps.parallel, deps.resolverState, deps.budget);
 }
 
 export async function runFixtureThroughResolver(
@@ -198,6 +211,7 @@ export async function runFixtureThroughResolver(
   memoMode: "cold" | "warm" = "cold",
   parallel = false,
   resolverState?: LanguageFixtureResolverState,
+  budgetOverrides: Partial<ResolverBudgets> = {},
 ): Promise<LanguageFixtureResult> {
   const repositoryIdentity = { id: "phase14b-fixtures", identityKey: "phase14b-fixtures", rootPath: "/phase14b-fixtures", displayName: "phase14b-fixtures" };
   const normalize = (factsBlob: ParsedFactsBlob, index: number) => adapter.normalizeFile(factsBlob, {
@@ -207,7 +221,7 @@ export async function runFixtureThroughResolver(
     resolutionVersion: "14b-2",
   });
   const evidence = resolverState?.evidence ?? (parallel ? await Promise.all(facts.map(normalize)) : facts.map(normalize));
-  const state = resolverState ?? createFixtureResolverState(fixture, facts, evidence, memoMode, repositoryIdentity, adapter);
+  const state = resolverState ?? createFixtureResolverState(fixture, facts, evidence, memoMode, repositoryIdentity, adapter, budgetOverrides);
   const decisions = fixture.sites.map((site) => {
     const index = fixture.cases.findIndex((item) => item.filePath === site.sourceUnit.relativePath && item.language === site.sourceUnit.language);
     const factsBlob = facts[index];
@@ -228,6 +242,7 @@ function createFixtureResolverState(
   memoMode: "cold" | "warm",
   repositoryIdentity: { id: string; identityKey: string; rootPath: string; displayName: string },
   adapter: LanguageSemanticAdapter,
+  budgetOverrides: Partial<ResolverBudgets>,
 ): LanguageFixtureResolverState {
   const state = { memoHitCount: 0 } as LanguageFixtureResolverState;
   const backingMemo = createResolverMemo();
@@ -240,7 +255,7 @@ function createFixtureResolverState(
     set: (key, value) => backingMemo.set(key, value),
     size: () => backingMemo.size(),
   };
-  state.budget = createBudgetLedger({ candidateExpansions: 1000, bindingHops: 1000, returnDepth: 1000, inheritanceDepth: 1000, memberCandidates: 1000, expressionNodes: 1000, propagationRounds: 1000 });
+  state.budget = createBudgetLedger({ candidateExpansions: 1000, bindingHops: 1000, returnDepth: 1000, inheritanceDepth: 1000, memberCandidates: 1000, expressionNodes: 1000, propagationRounds: 1000, ...budgetOverrides });
   state.evidence = evidence;
   state.typeEnvironment = createTypeEnvironment({ generationId: `fixture:${fixture.name}`, symbols: symbolsFor(fixture, facts), evidence, budget: state.budget, memo: state.memo });
   state.context = createGenerationResolverContext({
