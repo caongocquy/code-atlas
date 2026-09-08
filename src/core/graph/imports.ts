@@ -1,5 +1,7 @@
 import path from "node:path";
 
+import type { ImportFact } from "../facts/facts.types.js";
+
 export type ImportReference = {
   source: string;
 };
@@ -76,4 +78,22 @@ export function resolveImportCandidates(
     path.join(resolvedBase, "index.js"),
     path.join(resolvedBase, "index.jsx"),
   ];
+}
+
+export function importFactTargets(
+  importerPath: string,
+  fact: ImportFact,
+): readonly string[] {
+  if (!isRelativeImport(fact.moduleSpecifier)) {
+    return [`module:${fact.moduleSpecifier}`];
+  }
+
+  const candidates = resolveImportCandidates(importerPath, fact.moduleSpecifier);
+  const normalizedSpecifier = path.normalize(path.join(path.dirname(importerPath), fact.moduleSpecifier));
+
+  if (candidates.includes(normalizedSpecifier)) {
+    return [normalizedSpecifier];
+  }
+
+  return candidates.map((candidate) => `unresolved:${candidate}`);
 }

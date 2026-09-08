@@ -1,5 +1,10 @@
-import type { FileFactBinding, IndexVersionDomains } from "../facts/facts.types.js";
+import type {
+  FileFactBinding,
+  IndexVersionDomains,
+  ParsedFactsBlob,
+} from "../facts/facts.types.js";
 import {
+  importFactTargets,
   isRelativeImport,
   resolveImportCandidates,
   type ImportReference,
@@ -208,5 +213,27 @@ export function buildReverseImporterIndex(
     [...reverse.entries()]
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([target, importerSet]) => [target, new Set(sorted(importerSet))]),
+  );
+}
+
+export function buildFactReverseImporterIndex(
+  inputs: ReadonlyMap<string, ParsedFactsBlob>,
+): ReadonlyMap<string, ReadonlySet<string>> {
+  const reverse = new Map<string, Set<string>>();
+
+  for (const [importer, facts] of [...inputs.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+    for (const fact of facts.imports) {
+      for (const target of importFactTargets(importer, fact)) {
+        const importers = reverse.get(target) ?? new Set<string>();
+        importers.add(importer);
+        reverse.set(target, importers);
+      }
+    }
+  }
+
+  return new Map(
+    [...reverse.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([target, importers]) => [target, new Set(sorted(importers))]),
   );
 }
