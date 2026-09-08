@@ -3,6 +3,7 @@ import type { EmbeddingProvider } from "../semantic/embedding-provider.js";
 import type { VectorStore } from "../semantic/vector-store.js";
 import type { ParsedFactsBlob } from "../facts/facts.types.js";
 import type { CodeChunk } from "../graph/parsers/types.js";
+import type { CodeGraph } from "../graph/types.js";
 import type { InvalidationPlan } from "./invalidation-planner.js";
 import type { IndexWorkCounters } from "./index-work-counters.js";
 
@@ -40,6 +41,13 @@ export type IndexedSourceUnit = {
   relativePath: string;
   source: string;
   facts: ParsedFactsBlob;
+};
+
+export type CandidateResolutionInput = {
+  allUnits: readonly IndexedSourceUnit[];
+  scope: ResolutionScope;
+  previousGenerationId?: string;
+  previousGraph?: CodeGraph;
 };
 
 export function codeChunksFromFacts(unit: IndexedSourceUnit): CodeChunk[] {
