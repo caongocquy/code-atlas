@@ -5,6 +5,11 @@ import {
   type ImportReference,
 } from "../graph/imports.js";
 import type { SupportedLanguage } from "../graph/parsers/types.js";
+import type {
+  InvalidationReasonCode,
+  ResolutionScope,
+  ResolutionScopeReason,
+} from "./indexing.types.js";
 
 export type InvalidationInput = {
   repositoryFiles: string[];
@@ -26,8 +31,34 @@ export type InvalidationPlan = {
   fullGraphResolution: boolean;
   dependencyImpact: DependencyImpact;
   importersInvalidated: string[];
-  reasons: string[];
+  reasons: InvalidationReasonCode[];
 };
+
+function assertNever(value: never): never {
+  throw new Error(`unhandled invalidation reason: ${String(value)}`);
+}
+
+export function toResolutionScopeReason(reason: InvalidationReasonCode): ResolutionScopeReason {
+  switch (reason) {
+    case "source_changed": return "changed_source";
+    case "direct_importer": return "direct_importer";
+    case "resolution_version_changed": return "resolution_version";
+    case "unresolved_import_ownership": return "uncertain_importer";
+    case "path_moved": return "module_move";
+    case "path_renamed": return "module_rename";
+    case "module_config_changed": return "module_config";
+    case "export_ambiguous": return "export_ambiguity";
+    case "dependency_provenance_incomplete": return "incomplete_provenance";
+    case "facts_version_changed": return "facts_change";
+    default: return assertNever(reason);
+  }
+}
+
+export function createResolutionScope(plan: InvalidationPlan): ResolutionScope {
+  const reasons = [...new Set(plan.reasons.map(toResolutionScopeReason))].sort();
+  const paths = [...new Set(plan.resolvePaths)].sort();
+  return { mode: plan.fullGraphResolution ? "repository" : "bounded", paths, reasons };
+}
 
 const sorted = (paths: Iterable<string>): string[] => [...new Set(paths)].sort();
 
@@ -83,6 +114,7 @@ export function planInvalidation(input: InvalidationInput): InvalidationPlan {
   const parsePaths: string[] = [];
   const reusePaths: string[] = [];
   const changedPaths: string[] = [];
+  const renamedPaths = new Set<string>();
 
   for (const file of currentPaths) {
     const current = input.currentFiles.get(file);
@@ -105,6 +137,7 @@ export function planInvalidation(input: InvalidationInput): InvalidationPlan {
     );
     if (contentMatch) {
       reusePaths.push(file);
+      renamedPaths.add(file);
     } else {
       parsePaths.push(file);
     }
@@ -128,13 +161,14 @@ export function planInvalidation(input: InvalidationInput): InvalidationPlan {
       ...importersInvalidated,
     ]);
 
-  const reasons: string[] = [];
-  if (parsePaths.length > 0) reasons.push("facts-invalidated");
-  if (removedPaths.length > 0) reasons.push("paths-removed");
-  if (importersInvalidated.length > 0) reasons.push("direct-importers-invalidated");
-  if (resolutionChanged) reasons.push("resolution-version-changed");
-  if (derivedChanged) reasons.push("derived-version-changed");
-  if (dependencyImpact === "uncertain") reasons.push("incomplete-importer-relation");
+  const reasons: InvalidationReasonCode[] = [];
+  if (parsePaths.length > 0 && !factsChanged) reasons.push("source_changed");
+  if (importersInvalidated.length > 0) reasons.push("direct_importer");
+  if (resolutionChanged) reasons.push("resolution_version_changed");
+  if (dependencyImpact === "uncertain") reasons.push("unresolved_import_ownership");
+  if (renamedPaths.size > 0) reasons.push("path_renamed");
+  if (removedPaths.length > renamedPaths.size) reasons.push("path_moved");
+  if (factsChanged) reasons.push("facts_version_changed");
 
   return {
     parsePaths: sorted(parsePaths),

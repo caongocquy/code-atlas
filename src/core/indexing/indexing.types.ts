@@ -6,6 +6,36 @@ import type { CodeChunk } from "../graph/parsers/types.js";
 import type { InvalidationPlan } from "./invalidation-planner.js";
 import type { IndexWorkCounters } from "./index-work-counters.js";
 
+export type InvalidationReasonCode =
+  | "source_changed"
+  | "direct_importer"
+  | "resolution_version_changed"
+  | "unresolved_import_ownership"
+  | "path_moved"
+  | "path_renamed"
+  | "module_config_changed"
+  | "export_ambiguous"
+  | "dependency_provenance_incomplete"
+  | "facts_version_changed";
+
+export type ResolutionScopeReason =
+  | "changed_source"
+  | "direct_importer"
+  | "resolution_version"
+  | "uncertain_importer"
+  | "module_move"
+  | "module_rename"
+  | "module_config"
+  | "export_ambiguity"
+  | "incomplete_provenance"
+  | "facts_change";
+
+export type ResolutionScope = {
+  mode: "bounded" | "repository";
+  paths: readonly string[];
+  reasons: readonly ResolutionScopeReason[];
+};
+
 export type IndexedSourceUnit = {
   relativePath: string;
   source: string;
