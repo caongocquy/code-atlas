@@ -21,6 +21,8 @@ import {
   registerLanguageFactExtractor,
   type LanguageFactExtractorInput,
 } from "./language-fact-extractor.js";
+import { cFactExtractor } from "./extractors/c.js";
+import { cppFactExtractor } from "./extractors/cpp.js";
 
 export type FactExtractionInput = Omit<LanguageFactExtractorInput, "filePath"> & {
   filePath?: string;
@@ -373,6 +375,9 @@ for (const language of ["typescript", "tsx", "javascript"] as const) {
     extract: extractFactsForLanguage,
   });
 }
+
+registerLanguageFactExtractor(cFactExtractor);
+registerLanguageFactExtractor(cppFactExtractor);
 
 export function extractParsedFacts(input: FactExtractionInput): FactExtractionOutcome {
   const filePath = input.filePath ?? `source.${input.language === "typescript"
