@@ -206,12 +206,9 @@ function scopeForSymbol(
 
 export function extractFactsForLanguage(input: LanguageFactExtractorInput): FactExtractionOutcome {
   try {
-    const parsed = parseSource(input.source, input.filePath);
+    const parsed = parseSource(input.source, input.filePath, input.language);
     if (!parsed) {
       return { kind: "infrastructure_failure", error: new Error(`Unable to parse ${input.language} source`) };
-    }
-    if (parsed.adapter.language !== input.language) {
-      return { kind: "infrastructure_failure", error: new Error(`Parser identity mismatch for ${input.language}`) };
     }
 
     const root = parsed.tree.rootNode;
@@ -370,7 +367,7 @@ export function materializeFileFacts(relativePath: string, facts: ParsedFactsBlo
   return { relativePath, facts };
 }
 
-for (const language of ["typescript", "tsx", "javascript", "python"] as const) {
+for (const language of ["typescript", "tsx", "javascript"] as const) {
   registerLanguageFactExtractor({
     language,
     extract: extractFactsForLanguage,
@@ -384,9 +381,7 @@ export function extractParsedFacts(input: FactExtractionInput): FactExtractionOu
       ? "tsx"
       : input.language === "javascript"
         ? "js"
-        : input.language === "python"
-          ? "py"
-          : "unknown"}`;
+        : "unknown"}`;
   const extractor = getLanguageFactExtractor(input.language as LanguageId);
   return extractor === undefined
     ? { kind: "infrastructure_failure", error: new Error("Parser or extractor unavailable") }

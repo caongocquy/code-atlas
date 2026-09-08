@@ -68,3 +68,36 @@ Implemented on the task branch; ready to commit after final verification.
 - `src/core/graph/parsers/registry.ts`
 - `src/core/indexing/index-pipeline.service.ts`
 - `test/phase14b-fact-extractor-dispatch.test.ts`
+
+## Loop round 1 ledger fix
+
+Applied the ledger ruling from review:
+
+- Removed the `tree-sitter-python` dependency and its lockfile/workspace
+  build-policy entries.
+- Removed the Python parser adapter and parser-registry registration.
+- Kept only the currently registered TypeScript, TSX, and JavaScript fact
+  extractors. Python and the other declared language IDs now return
+  `infrastructure_failure` until their owning grammar-integration task.
+- Kept the language extractor contract/registry, fact-extractor dispatch, real
+  pipeline file paths, and dispatch regression test.
+- Made `parseSource` accept an optional expected language and reject a file
+  path whose registered adapter language differs before parsing semantic facts.
+- Added regression tests for TypeScript success/parser identity, unregistered
+  Python failure, file-path/language mismatch, and exactly-one extractor
+  dispatch.
+
+## Loop round 1 TDD and validation
+
+1. Updated the dispatch test first and ran the focused test. It failed because
+   Python was still registered and returned facts.
+2. Removed the grammar/package/registry integration and ran the focused test:
+   4 passed, 0 failed.
+3. Ran `node_modules/.bin/tsc --noEmit`: passed.
+4. Ran the focused Phase 14A/14B fact suite: 37 passed, 0 failed.
+5. Ran the full suite with
+   `node --import tsx/esm --test test/*.test.ts`: 323 passed, 0 failed.
+6. Ran `git diff --check`: passed.
+
+No facts version, facts schema version, semantic resolver, or grammar package
+integration was added in this fix.

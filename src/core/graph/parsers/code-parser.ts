@@ -13,34 +13,27 @@ export type ParsedSource = {
   tree: Parser.Tree;
 };
 
-const LANGUAGE_FILE_NAMES: Record<SupportedLanguage, string> = {
+const LANGUAGE_FILE_NAMES: Partial<Record<SupportedLanguage, string>> = {
   typescript: "source.ts",
   tsx: "source.tsx",
   javascript: "source.js",
-  python: "source.py",
-  java: "source.java",
-  kotlin: "source.kt",
-  go: "source.go",
-  rust: "source.rs",
-  swift: "source.swift",
-  dart: "source.dart",
-  c: "source.c",
-  cpp: "source.cpp",
 };
 
 export function getLanguageAdapterForLanguage(
   language: SupportedLanguage,
 ): LanguageAdapter | null {
-  return getLanguageAdapter(LANGUAGE_FILE_NAMES[language]);
+  const fileName = LANGUAGE_FILE_NAMES[language];
+  return fileName ? getLanguageAdapter(fileName) : null;
 }
 
 export function parseSource(
   source: string,
   filePath: string,
+  expectedLanguage?: SupportedLanguage,
 ): ParsedSource | undefined {
   const adapter = getLanguageAdapter(filePath);
 
-  if (!adapter) {
+  if (!adapter || (expectedLanguage !== undefined && adapter.language !== expectedLanguage)) {
     return undefined;
   }
 
