@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript 7.0.2, Node.js >=22, pnpm 11.22.0, `tree-sitter` 0.25.1 native Node bindings, SQLite through `node:sqlite`, `node:test`, existing listr2 CLI/MCP/UI stack.
 
-**Spec:** [2026-09-07-phase14b-multilanguage-resolver-typeenvironment-v2-design-revised.md](<HOME>/code-atlas/docs/superpowers/specs/2026-09-07-phase14b-multilanguage-resolver-typeenvironment-v2-design-revised.md)
+**Spec:** [2026-09-07-phase14b-multilanguage-resolver-typeenvironment-v2-design.md](<HOME>/code-atlas/docs/superpowers/specs/2026-09-07-phase14b-multilanguage-resolver-typeenvironment-v2-design.md). This revised file is the sole committed Phase 14B canonical specification in this checkout; no non-revised Phase 14B design file exists.
 
 ## Global Constraints
 
@@ -26,6 +26,7 @@
 - All eleven target languages must pass their applicable support floor before Phase14B is complete as an eleven-language feature.
 - Existing Phase13/read-only, Phase14A cache/generation, CLI, MCP, optional semantic-provider, WAL, and freshness contracts remain intact.
 - `package.json` and `pnpm-lock.yaml` may change only in the language-enablement dependency task; no other task owns them.
+- Native parser acceptance is executable on both required platforms: Task 3.1 runs the local macOS arm64 probe and commits `.github/workflows/phase14b-parser-platform.yml`, whose `ubuntu-latest` Linux x64 job runs the same parser-packaging test after a frozen install. No platform claim relies on an unrun manual instruction.
 
 ## Current repository anchors
 
@@ -40,20 +41,22 @@
 ## Dependency DAG
 
 ```text
-14B-0 version/invalidation/candidate-scope prerequisites
+14B-0 (0.1–0.4) version/invalidation/candidate-scope prerequisites
         ↓
-14B-1 ParsedFacts v2 contract and cache compatibility
+14B-1 (1.1–1.3) ParsedFacts contract and cache compatibility
         ↓
-14B-2 evidence, TypeEnvironment, decisions, strategies, determinism
+14B-2 (2.1–2.5) contracts → budgets/memo → TypeEnvironment → decisions/context → injected graph resolver
         ↓
-14B-3 language enablement ───────────────┐
-        ↓                                │
-14B-4 provenance/storage/diagnostics ←───┘
+14B-3 (3.1–3.10) parser integration, independent language floors, semantic registry
         ↓
-14B-5 generation/incremental/conformance/regression closure
+14B-4 (4.1–4.3) provenance/storage/diagnostics
+        ↓
+14B-5 (5.1–5.4) pipeline assembly, conformance, regression closure
+
+Total executable implementation tasks: 29 (4 + 3 + 5 + 10 + 3 + 4). Tasks 3.5 Go, 3.6 Rust, 3.7 Swift, and 3.8 Dart are independent after Task 3.1; Task 3.10 is their serialized integration gate.
 ```
 
-Track 14B-3 family implementations can execute in parallel after 14B-1, but the parser/scanner/package integration task is single-owner and runs before registry conformance. Track 14B-4 can begin its type/schema work after 14B-2 contracts exist, but persistence integration waits until the language adapters and resolver outputs are stable. Track 14B-5 is sequential after all previous tracks.
+Track 14B-3 family implementations can execute in parallel after 14B-1/2 and Task 3.1: 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, and 3.9 have disjoint language-owned files. Task 3.10 waits for all family floors. Track 14B-4 type/provenance work can begin after 14B-2, while storage integration waits for resolver output contracts. Track 14B-5 is sequential after 14B-4 and Task 3.10.
 
 ## Track ownership and conflict boundaries
 
@@ -61,12 +64,38 @@ Track 14B-3 family implementations can execute in parallel after 14B-1, but the 
 |---|---|---|
 | 14B-0 | version domains, invalidation scope, candidate resolution scope, importer provenance | facts payload shape, resolver algorithms, package manifest |
 | 14B-1 | facts types, extraction contract, codec/identity, fact fixtures | resolver target selection, storage edge columns |
-| 14B-2 | resolver contracts, evidence normalization, environment, decisions, strategies, resolver-side graph integration | language grammar modules, SQLite migrations |
-| 14B-3 integration owner | scanner, registry, grammar dependencies, parser identities, family adapter modules and fixtures | storage, candidate publication |
-| 14B-4 | graph edge provenance, schema migrations, legacy mapping, diagnostics/coverage primitives | language extraction and resolver strategy semantics |
+| 14B-2 | resolver contracts, deterministic budgets/memo, TypeEnvironment, decisions/generation context, injectable facts-only graph resolver | language grammar modules, SQLite migrations |
+| 14B-3 integration owner | scanner, parser registry, grammar dependencies, parser identities, family adapter modules and fixtures, separate semantic adapter registry | storage, candidate publication |
+| 14B-4 | graph edge provenance including logical endpoint rebind keys, schema migrations, legacy mapping, diagnostics/coverage primitives | language extraction and resolver strategy semantics |
 | 14B-5 | pipeline assembly, end-to-end fixtures, equivalence, regression and packaging closure | new language semantics or new storage fields |
 
-High-conflict files have one owner: `package.json`/`pnpm-lock.yaml` → 14B-3 integration; `registry.ts`/`languages.ts` → 14B-3 integration; `facts.types.ts`/`facts-codec.ts` → 14B-1; `build-graph.ts`/`build-file-updates.ts` → 14B-2 then 14B-5 integration; `atlas.schema.ts`/`atlas.store.ts` → 14B-4; `index-pipeline.service.ts` → 14B-0 scope helper followed by 14B-5 orchestration integration.
+High-conflict files have one owner: `package.json`/`pnpm-lock.yaml` → 14B-3 Task 3.1; parser `registry.ts`/`languages.ts` → 14B-3 Task 3.1; `adapter-registry.ts` → 14B-3 Task 3.10; `facts.types.ts`/`facts-codec.ts` → 14B-1; `build-graph.ts`/`build-file-updates.ts` → 14B-2 then 14B-5 integration; `atlas.schema.ts`/`atlas.store.ts` → 14B-4 only; `index-pipeline.service.ts` → 14B-0 scope helper followed by 14B-5 orchestration integration.
+
+### Version-bump owner
+
+Task 0.1 adds `factsSchemaVersion` and independent `RESOLUTION_VERSION` without changing current facts values. Task 1.3 is the sole owner of the coordinated `FACTS_SCHEMA_VERSION` and `FACTS_VERSION` bump to `2.0.0`, after the complete fact model, extractor contract, codec, identity, and cache compatibility are present. No other task changes either facts version.
+
+### Shared-file ownership table
+
+| File/interface | Single owner | Consumers/integration only |
+|---|---|---|
+| `src/core/graph/parsers/languages.ts`, `registry.ts` | 14B-3 Task 3.1 | 14B-3 family tasks read the registry |
+| `src/core/graph/resolver/adapter-registry.ts` | 14B-3 Task 3.10 | 14B-2/5 consume semantic adapters |
+| `src/core/facts/facts.types.ts`, `facts-codec.ts`, `facts-identity.ts` | 14B-1 | 14B-0/2/3/5 consume fact contracts |
+| `src/core/graph/build-graph.ts`, `build-file-updates.ts` | 14B-2 implementation, 14B-5 orchestration integration | 14B-5 may call APIs but does not redefine resolver semantics |
+| `src/storage/atlas/atlas.schema.ts`, `atlas.store.ts` | 14B-4 | 14B-5 calls existing candidate-write/migration-safe APIs only |
+| `src/core/indexing/index-pipeline.service.ts` | 14B-0 scope API, 14B-5 pipeline integration | Changes are sequential, never parallel |
+
+Sequential ownership is intentional where a later task integrates an earlier contract: 14B-0 owns version fields and scope/importer functions, then 14B-5 owns pipeline assembly; 14B-1 owns fact records/codec/cache identity, then 14B-3 registers extractors; 14B-2 owns resolver graph construction, then 14B-5 owns carry-forward; 14B-4.2 owns schema columns and 14B-4.3 owns legacy/read-only behavior. No parallel task edits the same owned interface.
+
+### Helper ownership table
+
+| Helper | Created/extended by | Consumers |
+|---|---|---|
+| `test/helpers/phase14b-facts.ts` (`range`, `makeFacts`, `expectation`) | 14B-1 Task 1.1 | facts/cache tests; earlier-track tests use local fixtures |
+| `test/helpers/phase14b-language-fixtures.ts` (`parserFixtures`, registry-independent `runLanguageFixture`) | 14B-3 Task 3.1 | Tasks 3.2–3.10 |
+| `test/helpers/phase14b-conformance.ts` (`runPhase14bFixture`, `runPackedMcpInitialize`) | 14B-5 Task 5.4 | conformance and packed-MCP tests |
+| all other test helpers named by a task | local to that task's test file, with signatures listed in its `Interfaces` block | no cross-task ownership |
 
 ## Execution tracks
 
@@ -81,9 +110,9 @@ High-conflict files have one owner: `package.json`/`pnpm-lock.yaml` → 14B-3 in
 
 - **After 14B-0:** version-domain tests prove independent invalidation; planner tests prove safe bounded scope and mandatory repository fallback; no candidate scope can omit a graph unit.
 - **After 14B-1:** every required objective fact has a codec round trip, path-neutral identity, coordinated facts schema/version behavior, and no resolver source-text fallback is needed for the declared fact contract.
-- **After 14B-2:** resolver-core fixtures prove exact/strong/weak, all five terminal outcomes, deterministic budgets, memo equivalence, canonical ordering, and generation isolation without language-specific target selection.
+- **After 14B-2:** shared contracts have no forward dependencies; budgets/memo precede TypeEnvironment; TypeEnvironment precedes decisions/context; injected resolver fixtures prove exact/strong/weak, all five terminal outcomes, deterministic budgets, memo equivalence, canonical ordering, and no facts-path source fallback without requiring Track 14B-3.
 - **After 14B-3:** every target language is scanner-registered, parser-packaged, fact-extracted, adapter-normalized, capability-profiled, and has floor/ambiguity/unknown/budget/determinism fixtures. A language is not advertised before its floor passes.
-- **After 14B-4:** accepted edges persist strategy, categorical confidence, bounded provenance, and `resolutionVersion`; legacy rows remain readable without fabricated Phase14B evidence; read-only opens perform no migration.
+- **After 14B-4:** accepted edges persist strategy, categorical confidence, bounded provenance, logical source/target rebind keys, and `resolutionVersion`; legacy rows remain readable without fabricated Phase14B evidence; read-only opens perform no migration.
 - **After 14B-5:** incremental normalized graph equals clean rebuild, resolution-only changes parse zero files, candidate failure preserves active state, all required regressions and packaging/MCP gates pass.
 
 ## Spec-to-plan coverage map
@@ -91,16 +120,16 @@ High-conflict files have one owner: `package.json`/`pnpm-lock.yaml` → 14B-3 in
 | Design sections | Plan coverage |
 |---|---|
 | §§1–4 | Global constraints, Track 14B-1, Track 14B-2, Track 14B-3 |
-| §§5–7 | Track 14B-1 Tasks 1.1–1.2; Track 14B-2 Task 2.1; Track 14B-3 Tasks 3.1–3.7 |
-| §§8–14 | Track 14B-2 Tasks 2.1–2.4 |
+| §§5–7 | Track 14B-1 Tasks 1.1–1.2; Track 14B-2 Task 2.1; Track 14B-3 Tasks 3.1–3.9 |
+| §§8–14 | Track 14B-2 Tasks 2.1–2.4 in dependency order: contracts, work controls, environment, decisions/context |
 | §§15–17 | Track 14B-4 Tasks 4.1–4.3 |
 | §18 | Track 14B-3 Tasks 3.2–3.7 and language fixture checkpoint |
 | §§19–21 | Track 14B-0 Task 0.1; Track 14B-1 Tasks 1.1–1.3; Track 14B-3 capability task |
 | §§22–30 | Track 14B-0 Tasks 0.2–0.4; Track 14B-2 Task 2.4; Track 14B-5 Tasks 5.1–5.3 |
 | §§31–36 | Track 14B-4 Tasks 4.1 and 4.3; global scope constraints |
-| §§37–39 | Track 14B-3 language fixtures; Track 14B-5 Task 5.4 |
+| §§37–39 | Track 14B-3 language fixtures Tasks 3.2–3.10; Track 14B-5 Task 5.4 |
 | §§40–41 | Track 14B-5 Tasks 5.2–5.4 |
-| §§42–46 | Track 14B-3 Task 3.8; Track 14B-5 Task 5.4 |
+| §§42–46 | Track 14B-3 Task 3.10; Track 14B-5 Task 5.4 |
 | §47 | Track 14B-0 Task 0.1; Track 14B-1 Task 1.3; Track 14B-4 Tasks 4.2–4.3; Track 14B-5 Task 5.3 |
 | §§48–51 | Track 14B-4 diagnostics; Track 14B-5 regression and public compatibility gates |
 | §§52–55 | Global constraints, scope checkpoint, and final closure gate |

@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript 7.0.2, Node 22, SQLite-backed AtlasStore, `node:test`, existing `IndexManifest` and `IndexPipeline` types.
 
-**Spec:** [Phase14B revised design](<HOME>/code-atlas/docs/superpowers/specs/2026-09-07-phase14b-multilanguage-resolver-typeenvironment-v2-design-revised.md), §§21–27, 45, 47.
+**Spec:** [Phase14B revised design](<HOME>/code-atlas/docs/superpowers/specs/2026-09-07-phase14b-multilanguage-resolver-typeenvironment-v2-design.md), §§21–27, 45, 47.
 
 ## Global Constraints
 
@@ -26,6 +26,7 @@
 - Modify: `src/core/repository/index-version.ts` (`CURRENT_INDEX_VERSION_DOMAINS`)
 - Modify: `src/config/constants.ts` (new independent `RESOLUTION_VERSION`)
 - Test: `test/phase14b-version-domains.test.ts`
+- Modify: `test/phase14a-invalidation.test.ts` (add the new required version-domain field to existing planner fixtures)
 
 **Interfaces:**
 - Produces `IndexVersionDomains = { schemaVersion, factsSchemaVersion, factsVersion, resolutionVersion, derivedVersion }` with all five values independently supplied.
@@ -51,7 +52,26 @@ Expected: FAIL because `factsSchemaVersion` is absent from `IndexVersionDomains`
 
 - [ ] **Step 3: Implement the minimal version-domain change**
 
-Add `factsSchemaVersion` to `IndexVersionDomains`, export `RESOLUTION_VERSION = "1.0.0"`, export/use `FACTS_SCHEMA_VERSION = "2.0.0"` and `FACTS_VERSION = "2.0.0"` for the coordinated facts contract, and build `CURRENT_INDEX_VERSION_DOMAINS` from those independent constants. Keep `GRAPH_INDEX_VERSION = "2.0.0"` for existing graph capability compatibility.
+Add only the independent field and resolution constant. Preserve the current valid facts values in this prerequisite task; the single facts bump is owned by Task 1.3 after the complete facts contract, codec, identity, and cache compatibility exist.
+
+```ts
+export type IndexVersionDomains = {
+  schemaVersion: string;
+  factsSchemaVersion: string;
+  factsVersion: string;
+  resolutionVersion: string;
+  derivedVersion: string;
+};
+
+export const RESOLUTION_VERSION = "1.0.0";
+export const CURRENT_INDEX_VERSION_DOMAINS: IndexVersionDomains = {
+  schemaVersion: ATLAS_SCHEMA_VERSION,
+  factsSchemaVersion: FACTS_SCHEMA_VERSION,
+  factsVersion: FACTS_VERSION,
+  resolutionVersion: RESOLUTION_VERSION,
+  derivedVersion: DERIVED_VERSION,
+};
+```
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -74,13 +94,26 @@ git commit -m "feat(index): separate Phase 14B version domains"
 - Test: `test/phase14b-invalidation.test.ts`
 
 **Interfaces:**
-- Produces `type ResolutionScopeReason = "changed_source" | "direct_importer" | "resolution_version" | "uncertain_importer" | "module_move" | "facts_change"`.
+- Produces `type InvalidationReasonCode = "source_changed" | "direct_importer" | "resolution_version_changed" | "unresolved_import_ownership" | "path_moved" | "path_renamed" | "module_config_changed" | "export_ambiguous" | "dependency_provenance_incomplete" | "facts_version_changed"` and makes `InvalidationPlan.reasons` use that exact union.
+- Produces `type ResolutionScopeReason = "changed_source" | "direct_importer" | "resolution_version" | "uncertain_importer" | "module_move" | "module_rename" | "module_config" | "export_ambiguity" | "incomplete_provenance" | "facts_change"`.
 - Produces `type ResolutionScope = { mode: "bounded" | "repository"; paths: readonly string[]; reasons: readonly ResolutionScopeReason[] }`.
-- Produces `createResolutionScope(plan: InvalidationPlan): ResolutionScope` with sorted unique paths.
+- Produces `toResolutionScopeReason(reason: InvalidationReasonCode): ResolutionScopeReason` as an exhaustive switch with an `assertNever(value: never): never` branch; no type assertion converts arbitrary planner strings into scope reasons.
+- Produces `createResolutionScope(plan: InvalidationPlan): ResolutionScope` with sorted unique paths/reasons.
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
+const repositoryCases = [
+  ["resolution_version_changed", "resolution_version"],
+  ["unresolved_import_ownership", "uncertain_importer"],
+  ["path_moved", "module_move"],
+  ["path_renamed", "module_rename"],
+  ["module_config_changed", "module_config"],
+  ["export_ambiguous", "export_ambiguity"],
+  ["dependency_provenance_incomplete", "incomplete_provenance"],
+  ["facts_version_changed", "facts_change"],
+] as const;
+
 test("resolution scope is bounded for a changed file and its direct importer", () => {
   const plan = planInvalidation(fixtureInput({ changed: "src/dep.ts" }));
   assert.deepEqual(createResolutionScope(plan), {
@@ -90,10 +123,14 @@ test("resolution scope is bounded for a changed file and its direct importer", (
   });
 });
 
-test("resolution scope is repository-wide for uncertain importer evidence", () => {
-  const plan = planInvalidation(fixtureInput({ uncertainModule: true }));
-  assert.equal(createResolutionScope(plan).mode, "repository");
-  assert.deepEqual(createResolutionScope(plan).paths, ["src/a.ts", "src/b.ts", "src/c.ts"]);
+test("every unsafe invalidation reason forces repository resolution", () => {
+  for (const [planReason, scopeReason] of repositoryCases) {
+    const plan = planWithReason(planReason);
+    const scope = createResolutionScope(plan);
+    assert.equal(scope.mode, "repository", planReason);
+    assert.ok(scope.reasons.includes(scopeReason), planReason);
+    assert.deepEqual(scope.paths, allResolutionCapablePaths);
+  }
 });
 ```
 
@@ -101,22 +138,50 @@ test("resolution scope is repository-wide for uncertain importer evidence", () =
 
 Run: `node --import tsx/esm --test test/phase14b-invalidation.test.ts`
 
-Expected: FAIL because no `ResolutionScope` contract or constructor exists.
+Expected: FAIL because the planner reasons are not a closed typed domain and no exhaustive `ResolutionScope` mapping exists.
 
-- [ ] **Step 3: Implement the minimal scope contract**
+- [ ] **Step 3: Implement the exhaustive scope contract**
 
-Derive reasons from existing planner fields. Use `mode: "repository"` when `fullGraphResolution` is true; otherwise use sorted `resolvePaths`. Keep `parsePaths`, `reusePaths`, `removedPaths`, and `fullGraphResolution` unchanged for existing callers.
+Normalize the planner to `InvalidationReasonCode` at the point each reason is added. Repository-wide causes remain explicit and testable; do not infer safety from a string cast. Keep `parsePaths`, `reusePaths`, `removedPaths`, `resolvePaths`, and `fullGraphResolution` unchanged for existing callers.
+
+```ts
+function assertNever(value: never): never {
+  throw new Error(`unhandled invalidation reason: ${String(value)}`);
+}
+
+export function toResolutionScopeReason(reason: InvalidationReasonCode): ResolutionScopeReason {
+  switch (reason) {
+    case "source_changed": return "changed_source";
+    case "direct_importer": return "direct_importer";
+    case "resolution_version_changed": return "resolution_version";
+    case "unresolved_import_ownership": return "uncertain_importer";
+    case "path_moved": return "module_move";
+    case "path_renamed": return "module_rename";
+    case "module_config_changed": return "module_config";
+    case "export_ambiguous": return "export_ambiguity";
+    case "dependency_provenance_incomplete": return "incomplete_provenance";
+    case "facts_version_changed": return "facts_change";
+    default: return assertNever(reason);
+  }
+}
+
+export function createResolutionScope(plan: InvalidationPlan): ResolutionScope {
+  const reasons = [...new Set(plan.reasons.map(toResolutionScopeReason))].sort();
+  const paths = [...new Set(plan.resolvePaths)].sort();
+  return { mode: plan.fullGraphResolution ? "repository" : "bounded", paths, reasons };
+}
+```
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `node --import tsx/esm --test test/phase14b-invalidation.test.ts test/phase14a-invalidation.test.ts`
 
-Expected: PASS for bounded, resolution-version, uncertain, rename, add, delete, and existing Phase14A planner assertions.
+Expected: PASS for bounded source/importer cases and every repository-wide cause: resolution-version change, unresolved ownership, move, rename, module config, export ambiguity, incomplete provenance, and broad facts change.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/core/indexing/invalidation-planner.ts src/core/indexing/indexing.types.ts test/phase14b-invalidation.test.ts test/phase14a-invalidation.test.ts
+git add src/core/indexing/invalidation-planner.ts src/core/indexing/indexing.types.ts test/phase14b-invalidation.test.ts
 git commit -m "feat(index): expose safe resolution scopes"
 ```
 
@@ -129,6 +194,7 @@ git commit -m "feat(index): expose safe resolution scopes"
 
 **Interfaces:**
 - Produces `buildFactReverseImporterIndex(inputs: ReadonlyMap<string, ParsedFactsBlob>): ReadonlyMap<string, ReadonlySet<string>>`.
+- Owns `importFactTargets(importerPath: string, fact: ImportFact): readonly string[]`: relative imports return normalized candidate file keys from the existing `resolveImportCandidates`; bare/external specifiers return `module:<specifier>`; unresolved relative candidates are retained as `unresolved:<candidate>` instead of being promoted to resolved ownership.
 - The index records relative module targets, `module:<specifier>` targets, and `unresolved:<candidate>` targets from facts; it never requires resolved graph edge IDs.
 
 - [ ] **Step 1: Write the failing test**
@@ -153,7 +219,25 @@ Expected: FAIL because the current helper accepts legacy `ImportReference` value
 
 - [ ] **Step 3: Implement objective-fact provenance**
 
-Normalize each `ImportFact` through `resolveImportCandidates` only for relative imports; retain module and unresolved keys when ownership cannot be proven. Make output sorted and deduplicated. Do not mark an unresolved target as a resolved file.
+Normalize each `ImportFact` through `resolveImportCandidates` only for relative imports; retain module and unresolved keys when ownership cannot be proven. Make output sorted and deduplicated. Do not mark an unresolved target as a resolved file. The test-local `factsWithImports(...specifiers: string[])` helper is declared in `test/phase14b-importer-provenance.test.ts`; it returns a complete `ParsedFactsBlob`.
+
+```ts
+export function buildFactReverseImporterIndex(
+  inputs: ReadonlyMap<string, ParsedFactsBlob>,
+): ReadonlyMap<string, ReadonlySet<string>> {
+  const reverse = new Map<string, Set<string>>();
+  for (const [importer, facts] of [...inputs.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    for (const fact of facts.imports) {
+      for (const target of importFactTargets(importer, fact)) {
+        const importers = reverse.get(target) ?? new Set<string>();
+        importers.add(importer);
+        reverse.set(target, importers);
+      }
+    }
+  }
+  return new Map([...reverse.entries()].sort(([a], [b]) => a.localeCompare(b)));
+}
+```
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -200,7 +284,22 @@ Expected: FAIL because the candidate-resolution input type and constructor do no
 
 - [ ] **Step 3: Implement the immutable input contract**
 
-Copy and sort unit references without copying database rows. Reject a scope path that is not present in `allUnits`; for repository mode, normalize `scope.paths` to all unit paths. Keep previous graph optional because a cold generation has no carry-forward source.
+Copy and sort unit references without copying database rows. Reject a scope path that is not present in `allUnits`; for repository mode, normalize `scope.paths` to all unit paths. Keep previous graph optional because a cold generation has no carry-forward source. The test-local `units(...paths: string[])` helper returns `IndexedSourceUnit[]` and `graph` is a `CodeGraph` fixture.
+
+```ts
+export function createCandidateResolutionInput(
+  units: readonly IndexedSourceUnit[],
+  scope: ResolutionScope,
+  previousGenerationId: string | undefined,
+  previousGraph: CodeGraph | undefined,
+): CandidateResolutionInput {
+  const allUnits = [...units].sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+  const known = new Set(allUnits.map((unit) => unit.relativePath));
+  const paths = scope.mode === "repository" ? allUnits.map((unit) => unit.relativePath) : [...scope.paths].sort();
+  if (paths.some((path) => !known.has(path))) throw new Error("resolution scope contains an unknown path");
+  return { allUnits, scope: { ...scope, paths }, previousGenerationId, previousGraph };
+}
+```
 
 - [ ] **Step 4: Run test to verify it passes**
 
