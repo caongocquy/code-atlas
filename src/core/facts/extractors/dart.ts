@@ -106,7 +106,8 @@ function extractDartTreeFacts(parsed: ParsedSource | undefined, input: LanguageF
         const selector = node.namedChildren.find((child) => ["unconditional_assignable_selector", "assignable_selector"].includes(child.type));
         const parent = node.parent?.type === "selector" || node.parent?.type === "expression_statement" ? node.parent : undefined;
         const receiver = parent?.namedChildren.find((child) => child.type === "identifier");
-        const memberName = selector?.text?.replace(/^\./, "");
+        const selectorText = selector?.text;
+        const memberName = selectorText?.startsWith(".") ? selectorText.slice(1) : selectorText;
         if (receiver && memberName) members.push({ localId: next("member"), receiverId: addExpression(receiver, "identifier").localId, memberName, memberKind: "property", access: "instance", range: range(node) });
         if (node.namedChildren.some((child) => child.type === "argument_part") && receiver) calls.push({ localId: next("call"), calleeText: `${receiver.text}.${memberName ?? node.text}`, callerId: callableStack.at(-1)?.localId, scopeId: scopeStack.at(-1), range: range(node) });
       } else if (node.type === "identifier" && node.parent?.type !== "import_or_export") references.push({ localId: next("reference"), name: node.text, ownerId: callableStack.at(-1)?.localId, scopeId: scopeStack.at(-1), range: range(node) });

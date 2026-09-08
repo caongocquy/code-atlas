@@ -45,7 +45,14 @@ export function normalizeDartFacts(facts: ParsedFactsBlob, context: AdapterConte
     const ownerName = ownerType.kind === "known" ? ownerType.symbol.qualifiedName.split(".").at(-1) : ownerType.kind === "named" ? ownerType.name : undefined;
     if (!ownerName) continue;
     const relations = facts.implementations.filter((relation) => relation.subjectId === facts.symbols.find((symbol) => symbol.name === ownerName)?.localId && relation.relationKind === "mixin");
-    const extensionMembers = facts.members.filter((member) => member.memberName === item.memberName && member.access === "extension" && facts.implementations.some((relation) => relation.subjectId === member.ownerSymbolId && relation.relationKind === "extension" && relation.targetName === ownerName)).map((member) => member.ownerSymbolId);
+    const extensionMembers = facts.members
+      .filter((member) => member.memberName === item.memberName && member.access === "extension")
+      .flatMap((member) => {
+        const extension = member.ownerSymbolId ? facts.symbols.find((symbol) => symbol.localId === member.ownerSymbolId) : undefined;
+        const relation = extension && facts.implementations.find((candidate) => candidate.subjectId === extension.localId && candidate.relationKind === "extension" && candidate.targetName === ownerName);
+        if (!extension || !relation) return [];
+        return facts.symbols.filter((symbol) => symbol.name === member.memberName && symbol.declaredQualifiedName === `${extension.declaredQualifiedName}.${member.memberName}`).map((symbol) => symbol.localId);
+      });
     const directCandidates = facts.symbols.filter((candidate) => candidate.name === item.memberName && candidate.declaredQualifiedName?.startsWith(`${ownerName}.`));
     const candidates = directCandidates.length > 0
       ? directCandidates

@@ -74,6 +74,13 @@ test("Dart preserves mixin selection ambiguity and excludes dynamic/framework se
   const receiverResult = await runFixtureThroughResolver({ name: "dart-receivers", cases: [{ filePath, source, language: "dart" }], sites: [...receiverSites, { sourceUnit: { repositoryId: "phase14b-fixtures", relativePath: filePath, language: "dart" as const }, localId: binding.localId }] }, [outcome.facts], dartSemanticAdapter);
   const evidence = normalizeDartFacts(outcome.facts, { generationId: "dart-test", repositoryIdentity: { id: "phase14b-fixtures", identityKey: "phase14b-fixtures", rootPath: "/phase14b-fixtures", displayName: "phase14b-fixtures" }, sourceUnit: { repositoryId: "phase14b-fixtures", relativePath: filePath, language: "dart" }, resolutionVersion: "14b-2" });
   assert.ok(evidence.diagnostics.some((item) => item.code === "flutter_semantics_excluded"));
+  const resetEvidence = evidence.members.find((item) => item.memberName === "reset");
+  assert.ok(resetEvidence);
+  assert.equal(resetEvidence?.access, "extension");
+  assert.equal(resetEvidence?.member.qualifiedName, "extension:WorkerTools.reset");
+  assert.equal(resetEvidence?.ownerType.kind, "known");
+  if (resetEvidence?.ownerType.kind === "known") assert.equal(resetEvidence.ownerType.symbol.qualifiedName, "Worker");
+  assert.equal(evidence.members.some((item) => item.memberName === "reset" && item.access !== "extension"), false);
   const dynamicMember = outcome.facts.members.find((item) => item.memberName === "run" && outcome.facts.expressions.some((expression) => expression.localId === item.receiverId && expression.text === "dynamicWorker"));
   assert.ok(dynamicMember);
   assert.equal(evidence.members.some((item) => item.evidenceId.endsWith(`member:${dynamicMember.localId}`)), false);
