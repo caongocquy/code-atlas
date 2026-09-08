@@ -58,6 +58,9 @@ function extractSwiftTreeFacts(parsed: ParsedSource | undefined, input: Language
     const callableStack: ParsedSymbolFact[] = [];
     const symbolByName = new Map<string, ParsedSymbolFact[]>();
     const extensionOwners = new Set<FactLocalId>();
+    const typeDeclarationCounts = new Map<string, number>();
+    const deferredExtensions: Parser.SyntaxNode[] = [];
+    let processingDeferredExtension = false;
     let sequence = 0;
     const next = (kind: string) => id(kind, ++sequence);
     const addSymbol = (node: Parser.SyntaxNode, name: string, kind: ParsedSymbolFact["kind"], qualifiedName = name): ParsedSymbolFact => {
@@ -77,6 +80,16 @@ function extractSwiftTreeFacts(parsed: ParsedSource | undefined, input: Language
       return value;
     };
     const currentType = () => typeStack.at(-1);
+    const collectTypeDeclarations = (node: Parser.SyntaxNode): void => {
+      const typeNode = field(node, "name");
+      const isProtocol = node.type === "protocol_declaration";
+      const isExtension = node.type === "class_declaration" && typeNode?.type === "user_type";
+      if (!isExtension && (isProtocol || node.type === "class_declaration") && typeNode?.type === "type_identifier") {
+        typeDeclarationCounts.set(typeNode.text, (typeDeclarationCounts.get(typeNode.text) ?? 0) + 1);
+      }
+      for (const child of node.namedChildren) collectTypeDeclarations(child);
+    };
+    collectTypeDeclarations(parsed.tree.rootNode);
     const visit = (node: Parser.SyntaxNode): void => {
       const typeNode = field(node, "name");
       const isProtocol = node.type === "protocol_declaration";
@@ -93,6 +106,12 @@ function extractSwiftTreeFacts(parsed: ParsedSource | undefined, input: Language
 
       let declared: ParsedSymbolFact | undefined;
       let extensionOwned = false;
+      if (isExtension && !processingDeferredExtension) {
+        const extensionName = typeNode?.text.split(".").at(-1);
+        if (extensionName && typeDeclarationCounts.get(extensionName) === 1) deferredExtensions.push(node);
+        if (isScope) scopeStack.pop();
+        return;
+      }
       if (node.type === "import_declaration") {
         const imported = node.namedChildren.find((child) => child.type === "identifier");
         const module = imported?.namedChildren.map((child) => child.text).join(".") || imported?.text?.split(".")[0];
@@ -187,6 +206,9 @@ function extractSwiftTreeFacts(parsed: ParsedSource | undefined, input: Language
       if (isScope) scopeStack.pop();
     };
     visit(parsed.tree.rootNode);
+    processingDeferredExtension = true;
+    for (const extension of deferredExtensions) visit(extension);
+    processingDeferredExtension = false;
     modules.push({ localId: next("module"), name: input.filePath, moduleKind: "file", exported: false, range: range(parsed.tree.rootNode) });
     const diagnostics = nodeDiagnostics(parsed.tree.rootNode);
     return { kind: "facts", facts: {

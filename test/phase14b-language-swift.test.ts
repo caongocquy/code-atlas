@@ -78,6 +78,16 @@ test("Swift extracts imports, declarations, initializers, methods, and explicit 
 });
 
 test("Swift drops extension ownership when the static owner name is not unique", () => {
+  const beforeOwner = swiftFactExtractor.extract(factExtractorInput({
+    filePath: "phase14b/swift/before-owner.swift",
+    language: "swift",
+    source: "extension Early { func beforeOwner() {} }\nclass Early {}\n",
+  }));
+  assert.equal(beforeOwner.kind, "facts");
+  if (beforeOwner.kind !== "facts") return;
+  assert.equal(beforeOwner.facts.implementations.filter((item) => item.relationKind === "extension" && item.targetName === "Early").length, 1);
+  assert.equal(beforeOwner.facts.members.filter((item) => item.memberName === "beforeOwner" && item.access === "extension").length, 1);
+
   const ambiguous = swiftFactExtractor.extract(factExtractorInput({
     filePath: "phase14b/swift/ambiguous.swift",
     language: "swift",

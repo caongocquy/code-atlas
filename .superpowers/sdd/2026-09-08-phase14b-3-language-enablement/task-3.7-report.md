@@ -41,3 +41,15 @@ and the fixture asserts struct scope identity, warm memo reuse, and budget
 exhaustion.
 
 Follow-up validation: `node --import tsx/esm --test test/phase14b-language-swift.test.ts test/phase14b-language-jvm.test.ts test/phase14b-language-go.test.ts test/phase14b-language-rust.test.ts test/phase14b-language-python.test.ts test/phase14b-language-ecmascript.test.ts test/phase14b-facts-contract.test.ts test/phase14b-resolver-contract.test.ts` — 46/46 passed.
+
+## Extension-order follow-up
+
+Swift extension ownership is now resolved after an AST-only declaration pre-scan,
+so a uniquely named owner is found regardless of traversal order while duplicate
+owners remain dropped. The fixture covers extension-before-owner resolution and
+duplicate-owner ambiguity.
+
+- `node --import tsx/esm --test test/phase14b-language-swift.test.ts` — 6/6 passed.
+- Cross-language focused test command above — 46/46 passed.
+- `CI=true pnpm exec tsc --noEmit` — passed.
+- `git diff --check` — passed.
