@@ -1,0 +1,15 @@
+{
+  "language": "rust",
+  "grammar": "tree-sitter-rust@0.24.0",
+  "requiredFacts": ["modules", "use-aliases", "structs", "enums", "impl-trait-ownership", "associated-functions", "let-assignments"],
+  "uncertainty": {
+    "genericTraitDispatch": "unknown",
+    "deref": "unknown",
+    "macro": "unsupported",
+    "traitDispatch": "unknown"
+  },
+  "resolverCases": {
+    "repeatedExtraction": "deterministic",
+    "coldWarmFixture": "equivalent"
+  }
+}
