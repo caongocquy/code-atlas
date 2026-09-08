@@ -229,9 +229,9 @@ export async function runFixtureThroughResolver(
     return resolveSite({ facts: factsBlob, evidence: evidence[index], environment: state.typeEnvironment, context: state.context }, site);
   });
   const expected = fixture.expectedDecisionStatuses;
-  const floorPassed = expected
-    ? expected.length > 0 && decisions.length === expected.length && decisions.every((decision, index) => decision.status === expected[index])
-    : decisions.every((decision) => decision.status === "resolved");
+  const floorPassed = decisions.length > 0 && (expected
+    ? expected.length === decisions.length && decisions.every((decision, index) => decision.status === expected[index])
+    : decisions.every((decision) => decision.status === "resolved"));
   return { decisions, usedSourceSemanticFallback: false, floorPassed, normalizedFacts: facts, resolverState: state };
 }
 

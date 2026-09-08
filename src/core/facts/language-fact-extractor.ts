@@ -32,8 +32,8 @@ export type LanguageFactExtractor = {
 const extractors = new Map<LanguageId, LanguageFactExtractor>();
 
 export function registerLanguageFactExtractor(extractor: LanguageFactExtractor): void {
-  if (extractor.extract.name === "extractFactsForLanguage" && extractors.has(extractor.language)) {
-    return;
+  if (extractors.has(extractor.language)) {
+    throw new Error(`Language fact extractor already registered for ${extractor.language}`);
   }
   extractors.set(extractor.language, extractor);
 }

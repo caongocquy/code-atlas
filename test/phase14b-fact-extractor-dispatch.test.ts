@@ -28,11 +28,11 @@ test("fact extraction dispatches by registered TypeScript language and preserves
   }
 });
 
-test("fact extraction rejects an unregistered language", () => {
+test("fact extraction rejects an unknown language", () => {
   const result = extractParsedFacts({
     source: "def run():\n  return 1\n",
     filePath: "src/run.py",
-    language: "python",
+    language: "unknown" as never,
     contentHash: "python-1",
     factsVersion: "2.0.0",
     factsSchemaVersion: "2.0.0",
@@ -54,32 +54,13 @@ test("fact extraction rejects a file path whose parser language mismatches input
   assert.equal(result.kind, "infrastructure_failure");
 });
 
-test("fact extraction dispatches through exactly one registered extractor", () => {
+test("duplicate extractor registration fails loudly", () => {
   const original = getLanguageFactExtractor("typescript");
   assert.ok(original);
-  let calls = 0;
   const countingExtractor: LanguageFactExtractor = {
     language: "typescript",
-    extract(input) {
-      calls += 1;
-      return original.extract(input);
-    },
+    extract: original.extract,
   };
-  registerLanguageFactExtractor(countingExtractor);
-
-  try {
-    const result = extractParsedFacts({
-      source: "const value = 1;\n",
-      filePath: "src/value.ts",
-      language: "typescript",
-      contentHash: "dispatch-1",
-      factsVersion: "2.0.0",
-      factsSchemaVersion: "2.0.0",
-    });
-
-    assert.equal(result.kind, "facts");
-    assert.equal(calls, 1);
-  } finally {
-    registerLanguageFactExtractor(original);
-  }
+  assert.throws(() => registerLanguageFactExtractor(countingExtractor), /already registered for typescript/);
+  assert.strictEqual(getLanguageFactExtractor("typescript"), original);
 });
