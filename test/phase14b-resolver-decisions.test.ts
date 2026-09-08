@@ -8,12 +8,11 @@ import { uniqueTargetGate } from "../src/core/graph/resolver/decision.js";
 import type { ParsedFactsBlob } from "../src/core/facts/facts.types.js";
 import type {
   LanguageSemanticAdapter,
-  ResolutionCandidate,
   ResolutionSiteIdentity,
-  ResolverInput,
   SemanticEvidenceBatch,
   SymbolIdentity,
 } from "../src/core/graph/resolver/types.js";
+import type { ResolutionCandidate, ResolverInput } from "../src/core/graph/resolver/decision.js";
 
 const sourceUnit = { repositoryId: "repo", relativePath: "src/app.ts", language: "typescript" } as const;
 const site: ResolutionSiteIdentity = { sourceUnit, localId: "call:1" };
@@ -49,6 +48,7 @@ test("unique gate accepts strong single target and drops weak or ambiguous candi
 
 test("gate preserves explicit budget exhaustion and trace collection is in-memory", () => {
   const resolverInput = input(0);
+  assert.equal(resolverInput.context.budget.consume("candidateExpansions"), false);
   const decision = uniqueTargetGate(resolverInput, site, [], ["lexical-local"]);
   assert.equal(decision.status, "budget_exhausted");
   const events = resolverInput.context.diagnostics;
@@ -57,4 +57,12 @@ test("gate preserves explicit budget exhaustion and trace collection is in-memor
     { status: "budget_exhausted", reason: "candidate_expansion_limit" },
     { status: "unknown", reason: "weak_only" },
   ]);
+});
+
+test("same target merges all supporting evidence IDs in canonical order", () => {
+  const target = candidate("target", "strong");
+  const duplicate = { ...target, evidenceIds: ["evidence:z", "evidence:a"] as never };
+  const decision = uniqueTargetGate(input(), site, [target, duplicate], ["lexical-local"]);
+  assert.equal(decision.status, "resolved");
+  assert.deepEqual(decision.evidenceIds, ["evidence:a", "evidence:target", "evidence:z"]);
 });

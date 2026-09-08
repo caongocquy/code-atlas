@@ -51,6 +51,28 @@ export type ResolverInput = {
 const evidenceIds = (candidates: readonly ResolutionCandidate[]): readonly EvidenceId[] =>
   [...new Set(candidates.flatMap((candidate) => candidate.evidenceIds))].sort();
 
+function mergeCandidates(candidates: readonly ResolutionCandidate[]): readonly ResolutionCandidate[] {
+  const merged = new Map<string, ResolutionCandidate>();
+  for (const candidate of candidates) {
+    const key = symbolIdentityKey(candidate.target);
+    const current = merged.get(key);
+    if (!current) {
+      merged.set(key, { ...candidate, evidenceIds: [...new Set(candidate.evidenceIds)].sort() });
+      continue;
+    }
+    const confidence = current.confidence === "exact" || candidate.confidence === "exact"
+      ? "exact"
+      : current.confidence === "strong" || candidate.confidence === "strong" ? "strong" : "weak";
+    merged.set(key, {
+      ...current,
+      confidence,
+      strategy: current.confidence === "exact" || candidate.confidence !== "exact" ? current.strategy : candidate.strategy,
+      evidenceIds: [...new Set([...current.evidenceIds, ...candidate.evidenceIds])].sort(),
+    });
+  }
+  return [...merged.values()].sort((left, right) => symbolIdentityKey(left.target).localeCompare(symbolIdentityKey(right.target)));
+}
+
 function edgeKind(facts: ParsedFactsBlob, site: ResolutionSiteIdentity): ResolvableEdgeKind {
   if (facts.implementations?.some((item) => item.localId === site.localId)) return "implements";
   if (facts.inheritances?.some((item) => item.localId === site.localId)) return "extends";
@@ -70,10 +92,29 @@ function base(input: ResolverInput, site: ResolutionSiteIdentity, attemptedStrat
   };
 }
 
-function unsupportedLanguage(input: ResolverInput): UnsupportedReason | undefined {
-  const hasAdapter = input.context.languageRegistry.some((adapter) => adapter.languages.includes(input.facts.language));
+function unsupportedLanguage(input: ResolverInput, attemptedStrategies: readonly ResolutionStrategyId[]): UnsupportedReason | undefined {
+  const adapters = input.context.languageRegistry.filter((adapter) => adapter.languages.includes(input.facts.language));
   const diagnostic = input.evidence.diagnostics.find((item) => item.code === "language_capability_unsupported");
-  return diagnostic || !hasAdapter ? "language_capability_unsupported" : undefined;
+  if (diagnostic || adapters.length === 0) return "language_capability_unsupported";
+  const unsupportedStrategies = new Set(input.context.diagnostics.snapshot()
+    .filter((event) => event.status === "unsupported" && event.strategy)
+    .map((event) => event.strategy));
+  return attemptedStrategies.length > 0 && attemptedStrategies.every((strategy) => unsupportedStrategies.has(strategy))
+    ? "language_capability_unsupported"
+    : undefined;
+}
+
+function budgetReason(input: ResolverInput): BudgetReason | undefined {
+  const mapping: Readonly<Record<string, BudgetReason>> = {
+    candidateExpansions: "candidate_expansion_limit",
+    bindingHops: "binding_hop_limit",
+    returnDepth: "return_depth_limit",
+    inheritanceDepth: "inheritance_depth_limit",
+    memberCandidates: "member_candidate_limit",
+    expressionNodes: "expression_node_limit",
+    propagationRounds: "propagation_round_limit",
+  };
+  return input.context.budget.failedOperations().map((kind) => mapping[kind]).find(Boolean);
 }
 
 export function uniqueTargetGate(
@@ -82,15 +123,10 @@ export function uniqueTargetGate(
   candidates: readonly ResolutionCandidate[],
   attemptedStrategies: readonly ResolutionStrategyId[],
 ): ResolutionDecision {
-  const accepted = candidates.filter((candidate) => candidate.confidence !== "weak");
-  const grouped = new Map<string, ResolutionCandidate>();
-  for (const candidate of accepted) {
-    const key = symbolIdentityKey(candidate.target);
-    const existing = grouped.get(key);
-    if (!existing || (existing.confidence === "strong" && candidate.confidence === "exact")) grouped.set(key, candidate);
-  }
-  const ordered = [...grouped.values()].sort((left, right) => symbolIdentityKey(left.target).localeCompare(symbolIdentityKey(right.target)));
-  const decisionBase = base(input, site, attemptedStrategies, candidates);
+  const merged = mergeCandidates(candidates);
+  const accepted = merged.filter((candidate) => candidate.confidence !== "weak");
+  const ordered = accepted;
+  const decisionBase = base(input, site, attemptedStrategies, merged);
   if (ordered.length === 1) {
     const candidate = ordered[0];
     return { ...decisionBase, status: "resolved", target: candidate.target, strategy: candidate.strategy, confidence: candidate.confidence as "exact" | "strong" };
@@ -101,12 +137,11 @@ export function uniqueTargetGate(
     return decision;
   }
   const weak = candidates.some((candidate) => candidate.confidence === "weak");
-  const reason = input.context.budget.remaining("candidateExpansions") === 0
-    ? "budget_exhausted"
-    : weak ? "weak_only" : unsupportedLanguage(input) ? "unsupported" : "unknown";
-  if (reason === "budget_exhausted") {
-    input.context.diagnostics.add({ site, status: "budget_exhausted", reason: "candidate_expansion_limit" });
-    return { ...decisionBase, status: "budget_exhausted", reason: "candidate_expansion_limit" };
+  const exhausted = budgetReason(input);
+  const reason = exhausted ? "budget_exhausted" : weak ? "weak_only" : unsupportedLanguage(input, attemptedStrategies) ? "unsupported" : "unknown";
+  if (reason === "budget_exhausted" && exhausted) {
+    input.context.diagnostics.add({ site, status: "budget_exhausted", reason: exhausted });
+    return { ...decisionBase, status: "budget_exhausted", reason: exhausted };
   }
   if (reason === "unsupported") {
     input.context.diagnostics.add({ site, status: "unsupported", reason: "language_capability_unsupported" });

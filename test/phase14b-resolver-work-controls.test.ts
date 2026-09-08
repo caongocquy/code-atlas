@@ -152,3 +152,15 @@ test("memo clones caller-owned entries and freezes returned snapshots", () => {
     (snapshot.values[0] as { kind: "known"; symbol: SymbolIdentity }).symbol.qualifiedName = "Changed";
   }, TypeError);
 });
+
+test("budget ledger records failed operations separately from remaining capacity", () => {
+  const ledger = createBudgetLedger({ candidateExpansions: 1, bindingHops: 1, returnDepth: 1, inheritanceDepth: 1, memberCandidates: 1, expressionNodes: 1, propagationRounds: 1 });
+  assert.equal(ledger.remaining("candidateExpansions"), 1);
+  assert.equal(ledger.failed("candidateExpansions"), false);
+  assert.equal(ledger.consume("candidateExpansions"), true);
+  assert.equal(ledger.remaining("candidateExpansions"), 0);
+  assert.equal(ledger.failed("candidateExpansions"), false);
+  assert.equal(ledger.consume("candidateExpansions"), false);
+  assert.equal(ledger.failed("candidateExpansions"), true);
+  assert.deepEqual(ledger.failedOperations(), ["candidateExpansions"]);
+});

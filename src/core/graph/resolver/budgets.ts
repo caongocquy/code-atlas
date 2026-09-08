@@ -24,6 +24,8 @@ export type BudgetLedger = {
   consume(kind: BudgetKind, amount?: number): boolean;
   remaining(kind: BudgetKind): number;
   snapshot(): Readonly<ResolverBudgets>;
+  failed(kind: BudgetKind): boolean;
+  failedOperations(): readonly BudgetKind[];
 };
 
 function assertValidOperationCount(value: number, label: string): void {
@@ -37,14 +39,20 @@ export function createBudgetLedger(budgets: ResolverBudgets): BudgetLedger {
     assertValidOperationCount(budgets[kind], kind);
   }
   const state: ResolverBudgets = { ...budgets };
+  const failures = new Set<BudgetKind>();
   return {
     consume(kind, amount = 1) {
       assertValidOperationCount(amount, "amount");
-      if (state[kind] < amount) return false;
+      if (state[kind] < amount) {
+        failures.add(kind);
+        return false;
+      }
       state[kind] -= amount;
       return true;
     },
     remaining: (kind) => state[kind],
     snapshot: () => ({ ...state }),
+    failed: (kind) => failures.has(kind),
+    failedOperations: () => budgetKinds.filter((kind) => failures.has(kind)),
   };
 }
