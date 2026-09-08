@@ -1,0 +1,6 @@
+{
+  "language": "java",
+  "grammar": "tree-sitter-java@0.23.5",
+  "requiredFacts": ["packages", "imports", "classes", "interfaces", "extends", "implements", "constructors", "fields", "members", "parameters", "returns"],
+  "uncertainty": { "overloads": "ambiguous", "compilerDispatch": "unknown" }
+}

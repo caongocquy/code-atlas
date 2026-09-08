@@ -1,0 +1,6 @@
+{
+  "language": "kotlin",
+  "grammar": "tree-sitter-kotlin@0.3.8",
+  "requiredFacts": ["packages", "imports", "classes", "interfaces", "extends", "implements", "primaryConstructors", "fields", "members", "parameters", "returns", "nullableTypes", "objects", "companions", "typealiases"],
+  "uncertainty": { "extensions": "unsupported", "overloads": "ambiguous", "compilerDispatch": "unknown" }
+}
