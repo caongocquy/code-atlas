@@ -1,0 +1,7 @@
+{
+  "language": "c",
+  "grammar": "tree-sitter-c@0.24.1",
+  "requiredFacts": ["functions", "direct-calls", "variables", "typedefs", "structs", "includes", "aliases", "exact-function-pointers"],
+  "uncertainty": { "functionPointerAmbiguity": "ambiguous", "partialParse": "unsupported" },
+  "resolverCases": { "directCall": "resolved", "zeroCandidateBudget": "budget_exhausted", "repeatedExtraction": "deterministic", "coldWarmFixture": "equivalent" }
+}

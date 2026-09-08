@@ -1,0 +1,7 @@
+{
+  "language": "cpp",
+  "grammar": "tree-sitter-cpp@0.23.4",
+  "requiredFacts": ["namespaces", "classes", "structs", "methods", "constructors", "inheritance", "direct-members", "aliases"],
+  "unsupported": ["templates", "overload-resolution", "ADL", "SFINAE", "concepts", "preprocessor-dependent-semantics"],
+  "resolverCases": { "template": "unsupported", "repeatedExtraction": "deterministic", "coldWarmFixture": "equivalent" }
+}
