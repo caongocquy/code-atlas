@@ -32,13 +32,15 @@ export function normalizeDartFacts(facts: ParsedFactsBlob, context: AdapterConte
     const ownerFact = item.ownerSymbolId ? facts.symbols.find((candidate) => candidate.localId === item.ownerSymbolId) : undefined;
     const receiver = item.receiverId ? expressionById.get(item.receiverId) : undefined;
     const binding = receiver ? bindingByName.get(receiver.text ?? "") : undefined;
-    const ownerType = ownerFact ? typeOf(ownerFact.name) : binding ? typeByBinding.get(binding.localId) : undefined;
+    const extensionOwner = ownerFact ? facts.implementations.find((relation) => relation.subjectId === ownerFact.localId && relation.relationKind === "extension") : undefined;
+    const ownerType = extensionOwner ? typeOf(extensionOwner.targetName) : ownerFact ? typeOf(ownerFact.name) : binding ? typeByBinding.get(binding.localId) : undefined;
     if (!ownerType) { if (item.receiverId) result.diagnostics = [...result.diagnostics, { ...base("member", item.localId, item.range), code: "dynamic_expression", message: `Dart receiver type is dynamic or unknown for ${item.memberName}` }]; continue; }
     const ownerName = ownerType.kind === "known" ? ownerType.symbol.qualifiedName.split(".").at(-1) : ownerType.kind === "named" ? ownerType.name : undefined;
     if (!ownerName) continue;
     const relations = facts.implementations.filter((relation) => relation.subjectId === facts.symbols.find((symbol) => symbol.name === ownerName)?.localId && relation.relationKind === "mixin");
-    const candidates = facts.symbols.filter((candidate) => candidate.name === item.memberName && (candidate.declaredQualifiedName?.startsWith(`${ownerName}.`) || relations.some((relation) => candidate.declaredQualifiedName?.startsWith(`${relation.targetName}.`))));
-    if (candidates.length > 1) { result.diagnostics = [...result.diagnostics, { ...base("mixin", item.localId, item.range), code: "mixin_selection_ambiguity", message: `Dart mixin selection is not statically unique for ${item.memberName}` }]; for (const candidate of candidates) result.members = [...result.members, { ...base("member", item.localId, item.range), kind: "member", ownerType, memberName: item.memberName, member: symbols.get(candidate.localId)!, access: item.access }]; }
+    const extensionMembers = facts.members.filter((member) => member.memberName === item.memberName && member.access === "extension" && facts.implementations.some((relation) => relation.subjectId === member.ownerSymbolId && relation.relationKind === "extension" && relation.targetName === ownerName)).map((member) => member.ownerSymbolId);
+    const candidates = facts.symbols.filter((candidate) => candidate.name === item.memberName && (candidate.declaredQualifiedName?.startsWith(`${ownerName}.`) || relations.some((relation) => candidate.declaredQualifiedName?.startsWith(`${relation.targetName}.`)) || extensionMembers.includes(candidate.localId)));
+    if (candidates.length > 1) { result.diagnostics = [...result.diagnostics, { ...base("mixin", item.localId, item.range), code: "mixin_selection_ambiguity", message: `Dart mixin selection is not statically unique for ${item.memberName}`, candidates: candidates.map((candidate) => symbols.get(candidate.localId)!).filter((candidate): candidate is SymbolIdentity => Boolean(candidate)) }]; }
     else if (candidates.length === 1) result.members = [...result.members, { ...base("member", item.localId, item.range), kind: "member", ownerType, memberName: item.memberName, member: symbols.get(candidates[0]!.localId)!, access: item.access }];
   }
   for (const item of facts.callSites) result.calls = [...result.calls, { ...base("call", item.localId, item.range), kind: "call", site: { sourceUnit: unit, localId: item.localId }, calleeName: item.calleeText, arguments: [] }];

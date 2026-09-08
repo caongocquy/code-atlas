@@ -188,6 +188,7 @@ export type AdapterDiagnostic = {
   message: string;
   sourceUnit: SourceUnitIdentity;
   range?: SourceRangeFact;
+  candidates?: readonly SymbolIdentity[];
 };
 
 export type SemanticEvidenceBatch = {

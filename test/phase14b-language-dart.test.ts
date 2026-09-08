@@ -46,8 +46,20 @@ test("Dart extracts parser identity, ownership, imports, constructors, receivers
   assert.ok(outcome.facts.inheritances.some((item) => item.targetName === "Base"));
   assert.ok(outcome.facts.implementations.some((item) => item.relationKind === "mixin" && item.targetName === "LoggableOne"));
   assert.ok(outcome.facts.implementations.some((item) => item.relationKind === "extension" && item.targetName === "Worker"));
+  const extension = outcome.facts.symbols.find((item) => item.name === "WorkerTools");
+  const extensionRelation = outcome.facts.implementations.find((item) => item.relationKind === "extension");
+  const reset = outcome.facts.members.find((item) => item.memberName === "reset");
+  assert.ok(extension);
+  assert.ok(extensionRelation);
+  assert.ok(reset);
+  assert.equal(extensionRelation.subjectId, extension.localId);
+  assert.equal(reset.ownerSymbolId, extension.localId);
+  assert.equal(reset.access, "extension");
   assert.ok(outcome.facts.members.some((item) => item.memberName === "run" && item.receiverId));
-  assert.ok(outcome.facts.assignments.some((item) => item.assignmentKind === "reassignment"));
+  const reassignment = outcome.facts.assignments.find((item) => item.assignmentKind === "reassignment");
+  assert.ok(reassignment);
+  assert.ok(outcome.facts.members.some((item) => item.localId === reassignment.targetId && item.memberName === "value"));
+  assert.equal(outcome.facts.bindingSeeds.some((item) => item.localId === reassignment.targetId), false);
 });
 
 test("Dart preserves mixin selection ambiguity and excludes dynamic/framework semantics", async () => {
@@ -65,7 +77,20 @@ test("Dart preserves mixin selection ambiguity and excludes dynamic/framework se
   const dynamicMember = outcome.facts.members.find((item) => item.memberName === "run" && outcome.facts.expressions.some((expression) => expression.localId === item.receiverId && expression.text === "dynamicWorker"));
   assert.ok(dynamicMember);
   assert.equal(evidence.members.some((item) => item.evidenceId.endsWith(`member:${dynamicMember.localId}`)), false);
-  assert.ok(receiverResult.decisions.some((decision) => decision.status === "ambiguous"));
+  assert.ok(expected.uncertain.includes("mixin-selection"));
+  assert.ok(expected.uncertain.includes("dynamic-member"));
+  assert.ok(expected.uncertain.includes("framework-semantics"));
+  const pingMember = outcome.facts.members.find((item) => item.memberName === "ping" && outcome.facts.expressions.some((expression) => expression.localId === item.receiverId && expression.text === "worker"));
+  assert.ok(pingMember);
+  const pingDecision = receiverResult.decisions.find((decision) => decision.site.localId === pingMember.localId);
+  assert.equal(pingDecision?.status, "ambiguous");
+  assert.notEqual(pingDecision?.status, "resolved");
+  assert.equal(pingDecision && "target" in pingDecision, false);
+  assert.equal(evidence.members.some((item) => item.evidenceId.endsWith(`member:${pingMember.localId}`)), false);
+  assert.equal(evidence.diagnostics.find((item) => item.code === "mixin_selection_ambiguity")?.candidates?.length, 2);
+  const reassignment = outcome.facts.assignments.find((item) => item.assignmentKind === "reassignment");
+  assert.ok(reassignment);
+  assert.equal(evidence.assignments.find((item) => item.evidenceId.endsWith(`assignment:${reassignment.localId}`))?.targetBindingId, reassignment.targetId);
   const dynamicDecision = receiverResult.decisions.find((decision) => decision.site.localId === dynamicMember.localId);
   assert.ok(dynamicDecision);
   assert.notEqual(dynamicDecision.status, "resolved");
@@ -84,12 +109,23 @@ test("Dart is deterministic, reuses warm memo state, and reports budget exhausti
   const sites = [...outcome.facts.members.filter((item) => item.receiverId).map((item) => ({ sourceUnit: { repositoryId: "phase14b-fixtures", relativePath: filePath, language: "dart" as const }, localId: item.localId })), { sourceUnit: { repositoryId: "phase14b-fixtures", relativePath: filePath, language: "dart" as const }, localId: binding.localId }];
   const fixture = { name: "dart-controls", cases: [{ filePath, source, language: "dart" as const }], sites };
   const cold = await runFixtureThroughResolver(fixture, [outcome.facts], dartSemanticAdapter);
+  const coldMemoHits = cold.resolverState.memoHitCount;
   const warm = await runFixtureThroughResolver(fixture, [outcome.facts], dartSemanticAdapter, "warm", true, cold.resolverState);
-  const exhausted = await runFixtureThroughResolver(fixture, [outcome.facts], dartSemanticAdapter, "cold", false, undefined, { memberCandidates: 0 });
+  const budgetPath = "phase14b/dart/budget.dart";
+  const budgetSource = "class BudgetWorker { BudgetWorker(); void run() {} }\nvoid main() { final worker = BudgetWorker(); worker.run(); }";
+  const budgetOutcome = dartFactExtractor.extract(factExtractorInput({ filePath: budgetPath, source: budgetSource, language: "dart" }));
+  assert.equal(budgetOutcome.kind, "facts");
+  if (budgetOutcome.kind !== "facts") return;
+  const budgetSite = budgetOutcome.facts.members.find((item) => item.memberName === "run" && item.receiverId);
+  assert.ok(budgetSite);
+  const exhausted = await runFixtureThroughResolver({ name: "dart-budget", cases: [{ filePath: budgetPath, source: budgetSource, language: "dart" as const }], sites: [{ sourceUnit: { repositoryId: "phase14b-fixtures", relativePath: budgetPath, language: "dart" as const }, localId: budgetSite.localId }] }, [budgetOutcome.facts], dartSemanticAdapter, "cold", false, undefined, { candidateExpansions: 0, memberCandidates: 0 });
   assert.deepEqual(warm.decisions, cold.decisions);
+  assert.deepEqual(warm.decisions.map((decision) => decision.status), cold.decisions.map((decision) => decision.status));
+  assert.equal(warm.floorPassed, cold.floorPassed);
   assert.equal(warm.resolverState, cold.resolverState);
-  assert.ok(warm.resolverState.memoHitCount > 0);
-  assert.ok(exhausted.decisions.some((decision) => decision.status === "budget_exhausted"));
+  assert.equal(cold.floorPassed, false);
+  assert.ok(warm.resolverState.memoHitCount > coldMemoHits);
+  assert.equal(exhausted.decisions.some((decision) => decision.status === "budget_exhausted"), true, JSON.stringify(exhausted.decisions));
 });
 
 test("Dart adapter exposes its floor and rejects other languages", () => {

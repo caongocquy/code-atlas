@@ -13,6 +13,7 @@ const range = (node: Parser.SyntaxNode): SourceRangeFact => ({ startLine: node.s
 const field = (node: Parser.SyntaxNode | null | undefined, name: string) => node?.childForFieldName(name) ?? undefined;
 const id = (kind: string, value: number) => `${kind}:${value}` as FactLocalId;
 const nameOf = (node: Parser.SyntaxNode | null | undefined): string | undefined => node?.text?.split(".").at(-1);
+const stripQuotes = (value: string): string => value.length >= 2 && ((value.startsWith("'") && value.endsWith("'")) || (value.startsWith('"') && value.endsWith('"'))) ? value.slice(1, -1) : value;
 
 function diagnostics(root: Parser.SyntaxNode): string[] {
   const values: string[] = [];
@@ -34,7 +35,8 @@ function extractDartTreeFacts(parsed: ParsedSource | undefined, input: LanguageF
     const parameters: ParameterFact[] = [], returns: ReturnFact[] = [], constructors: ConstructorFact[] = [], inheritances: InheritanceFact[] = [], implementations: ImplementationFact[] = [], modules: ModuleFact[] = [];
     const scopeStack: FactLocalId[] = [], typeStack: ParsedSymbolFact[] = [], callableStack: ParsedSymbolFact[] = [];
     const symbolsByName = new Map<string, ParsedSymbolFact[]>();
-    const extensionNodes: Array<{ node: Parser.SyntaxNode; ownerName: string; scopePath: FactLocalId[] }> = [];
+    const extensionNodes: Array<{ node: Parser.SyntaxNode; ownerName: string; extensionSymbol: ParsedSymbolFact; scopePath: FactLocalId[] }> = [];
+    let extensionContext: { symbol: ParsedSymbolFact } | undefined;
     let sequence = 0;
     const next = (kind: string) => id(kind, ++sequence);
     const addSymbol = (node: Parser.SyntaxNode, name: string, kind: ParsedSymbolFact["kind"], qualifiedName = name): ParsedSymbolFact => {
@@ -49,12 +51,21 @@ function extractDartTreeFacts(parsed: ParsedSource | undefined, input: LanguageF
       const isExtension = node.type === "extension_declaration";
       const isCallable = ["function_signature", "constructor_signature"].includes(node.type) && Boolean(field(node, "name"));
       const isScope = node.type === "program" || isType || isCallable || node.type === "function_body" || node.type === "class_body" || node.type === "extension_body";
-      if (isExtension) { const ownerName = nameOf(field(node, "class")); if (ownerName) extensionNodes.push({ node, ownerName, scopePath: [...scopeStack] }); return; }
+      if (isExtension) {
+        const ownerName = nameOf(field(node, "class"));
+        const extensionName = nameOf(field(node, "name"));
+        if (ownerName && extensionName) {
+          const extensionSymbol = addSymbol(node, extensionName, "type", `extension:${extensionName}`);
+          extensionNodes.push({ node, ownerName, extensionSymbol, scopePath: [...scopeStack] });
+        }
+        return;
+      }
       if (isScope) { const scope = { localId: next("scope"), kind: node.type, name: nameOf(field(node, "name")), parentId: scopeStack.at(-1), range: range(node) }; scopes.push(scope); scopeStack.push(scope.localId); }
       let declared: ParsedSymbolFact | undefined;
       if (node.type === "import_or_export") {
-        const uri = node.descendantsOfType("string_literal")[0]?.text?.replace(/^['"]|['"]$/g, "");
-        if (uri) imports.push({ localId: next("import"), moduleSpecifier: uri, localName: nameOf(node.namedChildren.at(-1)), kind: "import", range: range(node) });
+        const uri = node.descendantsOfType("string_literal")[0]?.text;
+        const moduleSpecifier = uri ? stripQuotes(uri) : undefined;
+        if (moduleSpecifier) imports.push({ localId: next("import"), moduleSpecifier, localName: nameOf(node.namedChildren.at(-1)), kind: "import", range: range(node) });
       } else if (isType) {
         const name = nameOf(field(node, "name")) ?? nameOf(node.namedChildren.find((child) => child.type === "identifier"));
         if (name) { declared = addSymbol(node, name, "class"); typeStack.push(declared); }
@@ -66,15 +77,16 @@ function extractDartTreeFacts(parsed: ParsedSource | undefined, input: LanguageF
         if (declared && interfaces) for (const item of interfaces.namedChildren) implementations.push({ localId: next("implementation"), subjectId: declared.localId, targetName: item.text, relationKind: "implements", range: range(item) });
       } else if (node.type === "function_signature") {
         const name = nameOf(field(node, "name"));
-        if (name) { const owner = currentType(); declared = addSymbol(node, name, owner ? "method" : "function", owner ? `${owner.name}.${name}` : name); callableStack.push(declared); if (owner) members.push({ localId: next("member"), ownerSymbolId: owner.localId, memberName: name, memberKind: "method", access: "instance", range: range(node) }); const returnType = field(node, "return_type"); if (returnType) returns.push({ localId: next("return"), ownerSymbolId: declared.localId, typeText: returnType.text, range: range(returnType) }); }
+        if (name) { const owner = extensionContext?.symbol ?? currentType(); declared = addSymbol(node, name, owner ? "method" : "function", owner ? `${owner.declaredQualifiedName}.${name}` : name); callableStack.push(declared); if (owner) members.push({ localId: next("member"), ownerSymbolId: owner.localId, memberName: name, memberKind: "method", access: extensionContext ? "extension" : "instance", range: range(node) }); const returnType = field(node, "return_type"); if (returnType) returns.push({ localId: next("return"), ownerSymbolId: declared.localId, typeText: returnType.text, range: range(returnType) }); }
       } else if (node.type === "constructor_signature") {
         const owner = currentType();
         if (owner) { declared = addSymbol(node, "new", "method", `${owner.name}.new`); callableStack.push(declared); constructors.push({ localId: next("constructor"), ownerSymbolId: declared.localId, constructedTypeName: owner.name, range: range(node) }); }
       } else if (node.type === "formal_parameter_list" && callableStack.at(-1)) {
         for (const parameter of node.descendantsOfType("formal_parameter")) { const name = nameOf(parameter.namedChildren.find((child) => child.type === "identifier")); if (!name) continue; const type = parameter.namedChildren.find((child) => ["type_identifier", "built_in_type"].includes(child.type)); const binding = addBinding(parameter, name, "parameter"); parameters.push({ localId: next("parameter"), ownerSymbolId: callableStack.at(-1)!.localId, name, bindingId: binding.localId, typeText: type?.text, index: parameters.filter((item) => item.ownerSymbolId === callableStack.at(-1)!.localId).length, range: range(parameter) }); if (type) types.push({ localId: next("type"), ownerId: binding.localId, text: type.text, range: range(type) }); }
-      } else if (node.type === "declaration" && currentType() && !callableStack.at(-1)) {
-        const name = nameOf(node.namedChildren.find((child) => child.type === "initialized_identifier")?.namedChildren.find((child) => child.type === "identifier"));
-        if (name) { const member = addSymbol(node, name, "variable", `${currentType()!.name}.${name}`); members.push({ localId: next("member"), ownerSymbolId: currentType()!.localId, memberName: name, memberKind: "field", access: "instance", range: range(node) }); const type = node.namedChildren.find((child) => child.type === "type_identifier"); if (type) types.push({ localId: next("type"), ownerId: member.localId, text: type.text, range: range(type) }); }
+      } else if (node.type === "declaration" && (currentType() || extensionContext) && !callableStack.at(-1)) {
+        const owner = extensionContext?.symbol ?? currentType();
+        const name = nameOf(node.descendantsOfType("initialized_identifier")[0]?.namedChildren.find((child) => child.type === "identifier"));
+        if (name && owner) { const member = addSymbol(node, name, "variable", `${owner.declaredQualifiedName}.${name}`); members.push({ localId: next("member"), ownerSymbolId: owner.localId, memberName: name, memberKind: "field", access: extensionContext ? "extension" : "instance", range: range(node) }); const type = node.namedChildren.find((child) => child.type === "type_identifier"); if (type) types.push({ localId: next("type"), ownerId: member.localId, text: type.text, range: range(type) }); }
       } else if (node.type === "initialized_variable_definition") {
         const name = nameOf(field(node, "name"));
         if (name) { const binding = addBinding(node, name, "local"); const value = node.namedChildren.find((child) => child.type === "selector"); const constructorType = field(node, "value"); const expression = value ? addExpression(value, "call") : undefined; assignments.push({ localId: next("assignment"), targetId: binding.localId, sourceExpressionId: expression?.localId, assignmentKind: "declaration", range: range(node) }); if (constructorType) constructors.push({ localId: next("constructor"), constructedTypeName: constructorType.text, callExpressionId: expression?.localId, resultBindingId: binding.localId, range: range(value ?? node) }); const type = node.namedChildren.find((child) => child.type === "type_identifier"); if (type) types.push({ localId: next("type"), ownerId: binding.localId, text: type.text, range: range(type) }); }
@@ -82,7 +94,14 @@ function extractDartTreeFacts(parsed: ParsedSource | undefined, input: LanguageF
         const name = nameOf(node.namedChildren.find((child) => child.type === "identifier") ?? node.descendantsOfType("identifier").at(-1));
         if (name) bindings.push({ localId: next("binding"), name, bindingKind: "local", ownerId: scopeStack.at(-1), range: range(node) });
       } else if (node.type === "assignment_expression") {
-        const target = node.childForFieldName("left"); if (target) assignments.push({ localId: next("assignment"), targetId: next("binding"), sourceName: node.childForFieldName("right")?.text, assignmentKind: "reassignment", range: range(node) });
+        const target = node.childForFieldName("left");
+        const receiver = target?.namedChildren.find((child) => child.type === "identifier");
+        const selector = target?.namedChildren.find((child) => child.type === "unconditional_assignable_selector");
+        const memberName = selector?.text?.startsWith(".") ? selector.text.slice(1) : selector?.text;
+        if (target && receiver && memberName) {
+          const existingMember = members.find((item) => item.memberName === memberName && item.ownerSymbolId && !item.receiverId);
+          if (existingMember) assignments.push({ localId: next("assignment"), targetId: existingMember.localId, sourceName: node.childForFieldName("right")?.text, assignmentKind: "reassignment", range: range(node) });
+        }
       } else if (node.type === "selector") {
         const selector = node.namedChildren.find((child) => ["unconditional_assignable_selector", "assignable_selector"].includes(child.type));
         const parent = node.parent?.type === "selector" || node.parent?.type === "expression_statement" ? node.parent : undefined;
@@ -100,9 +119,8 @@ function extractDartTreeFacts(parsed: ParsedSource | undefined, input: LanguageF
     for (const extension of extensionNodes) {
       const owners = symbolsByName.get(extension.ownerName)?.filter((item) => item.kind === "class") ?? [];
       if (owners.length !== 1) continue;
-      const owner = owners[0]!;
-      implementations.push({ localId: next("implementation"), subjectId: owner.localId, targetName: extension.ownerName, relationKind: "extension", range: range(extension.node) });
-      scopeStack.push(...extension.scopePath); typeStack.push(owner); for (const child of extension.node.namedChildren) if (child.type === "extension_body") visit(child); typeStack.length -= 1; scopeStack.length -= extension.scopePath.length;
+      implementations.push({ localId: next("implementation"), subjectId: extension.extensionSymbol.localId, targetName: extension.ownerName, relationKind: "extension", range: range(extension.node) });
+      scopeStack.push(...extension.scopePath); extensionContext = { symbol: extension.extensionSymbol }; for (const child of extension.node.namedChildren) if (child.type === "extension_body") visit(child); extensionContext = undefined; scopeStack.length -= extension.scopePath.length;
     }
     modules.push({ localId: next("module"), name: input.filePath, moduleKind: "file", exported: false, range: range(parsed.tree.rootNode) });
     const parserDiagnostics = diagnostics(parsed.tree.rootNode);

@@ -142,6 +142,12 @@ export function uniqueTargetGate(
     input.context.diagnostics.add({ site, status: uncertainty.status, reason: uncertainty.reason });
     return { ...decisionBase, ...uncertainty };
   }
+  const explicitAmbiguity = input.evidence.diagnostics.find((diagnostic) => diagnostic.code === "mixin_selection_ambiguity" && (diagnostic.candidates?.length ?? 0) > 1);
+  if (explicitAmbiguity?.candidates) {
+    const decision: ResolutionDecision = { ...decisionBase, status: "ambiguous", candidates: explicitAmbiguity.candidates, reason: "multiple_candidates" };
+    input.context.diagnostics.add({ site, status: "ambiguous", reason: decision.reason });
+    return decision;
+  }
   if (ordered.length === 1) {
     const candidate = ordered[0];
     return { ...decisionBase, status: "resolved", target: candidate.target, strategy: candidate.strategy, confidence: candidate.confidence as "exact" | "strong" };
