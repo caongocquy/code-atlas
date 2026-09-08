@@ -1,7 +1,28 @@
+import type { LanguageId } from "../graph/resolution.types.js";
+import type { GraphEdgeType } from "../graph/types.js";
 import type { ResolutionCoverage, ResolutionDiagnostic } from "../graph/resolution.types.js";
 import type { CapabilityState } from "../../storage/atlas/atlas.types.js";
 import type { ChangedFile } from "../change/change.types.js";
 import type { SymbolReference } from "../change/test-intelligence.types.js";
+
+export type ResolverDiagnosticKind =
+  | "resolved"
+  | "ambiguous"
+  | "unknown"
+  | "unsupported"
+  | "budgetExhausted"
+  | "weakEvidenceDropped"
+  | "candidateOverflow";
+
+export type ResolverDiagnostic = {
+  kind: ResolverDiagnosticKind;
+  language: LanguageId;
+  file: string;
+  strategy?: string;
+  edgeKind?: GraphEdgeType;
+  count: number;
+  reason?: string;
+};
 
 export type CoverageGapKind =
   | "dynamic_dispatch"
@@ -52,6 +73,7 @@ export type CoverageDiagnosticsInput = {
   graphState?: CapabilityState;
   resolutionCoverage?: ResolutionCoverage;
   resolutionDiagnostics?: ResolutionDiagnostic[];
+  resolverDiagnostics?: ResolverDiagnostic[];
   internalCallResolution?: { resolved: number; total: number };
   change?: {
     files?: ChangedFile[];

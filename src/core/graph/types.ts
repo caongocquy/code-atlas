@@ -38,6 +38,7 @@ export type GraphEdge = {
   evidenceKind?: import("./resolution.types.js").ResolutionEvidenceKind;
   confidence?: number;
   resolutionSource?: import("./resolution.types.js").ResolutionLocation;
+  resolution?: import("./resolution.types.js").EdgeResolutionProvenance;
 };
 
 export type CodeGraph = {
