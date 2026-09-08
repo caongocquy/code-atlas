@@ -82,15 +82,17 @@ function extractSwiftTreeFacts(parsed: ParsedSource | undefined, input: Language
       const isProtocol = node.type === "protocol_declaration";
       const isType = (node.type === "class_declaration" || isProtocol) && ["type_identifier", "user_type"].includes(typeNode?.type ?? "");
       const isExtension = node.type === "class_declaration" && typeNode?.type === "user_type";
-      const isCallable = node.type === "function_declaration" || node.type === "init_declaration";
+      const isCallable = ["function_declaration", "protocol_function_declaration", "init_declaration"].includes(node.type);
       const isScope = node.type === "source_file" || isType || isCallable || node.type === "function_body";
       if (isScope) {
-        const scope = { localId: next("scope"), kind: node.type, name: text(typeNode), parentId: scopeStack.at(-1), range: range(node) };
+        const scopeKind = node.type === "class_declaration" && node.children.some((child) => child.type === "struct") ? "struct_declaration" : node.type;
+        const scope = { localId: next("scope"), kind: scopeKind, name: text(typeNode), parentId: scopeStack.at(-1), range: range(node) };
         scopes.push(scope);
         scopeStack.push(scope.localId);
       }
 
       let declared: ParsedSymbolFact | undefined;
+      let extensionOwned = false;
       if (node.type === "import_declaration") {
         const imported = node.namedChildren.find((child) => child.type === "identifier");
         const module = imported?.namedChildren.map((child) => child.text).join(".") || imported?.text?.split(".")[0];
@@ -99,9 +101,11 @@ function extractSwiftTreeFacts(parsed: ParsedSource | undefined, input: Language
         const name = typeNode.text.split(".").at(-1);
         if (name) {
           if (isExtension) {
-            const owner = symbolByName.get(name)?.find((item) => ["class", "interface", "enum"].includes(item.kind));
+            const owners = symbolByName.get(name)?.filter((item) => ["class", "interface", "enum"].includes(item.kind)) ?? [];
+            const owner = owners.length === 1 ? owners[0] : undefined;
             if (owner) {
               typeStack.push(owner);
+              extensionOwned = true;
               extensionOwners.add(owner.localId);
               implementations.push({ localId: next("implementation"), subjectId: owner.localId, targetName: name, relationKind: "extension", range: range(node) });
             }
@@ -115,11 +119,11 @@ function extractSwiftTreeFacts(parsed: ParsedSource | undefined, input: Language
             if (inherited) implementations.push({ localId: next("implementation"), subjectId: declared.localId, targetName: inherited, relationKind: kind === "interface" ? "interface" : "protocol_conformance", range: range(node) });
           }
         }
-      } else if (node.type === "function_declaration") {
+      } else if (node.type === "function_declaration" || node.type === "protocol_function_declaration") {
         const name = text(field(node, "name"));
         if (name) {
           const owner = currentType();
-          declared = addSymbol(node, name, "method", owner ? `${owner.name}.${name}` : name);
+          declared = addSymbol(node, name, owner ? "method" : "function", owner ? `${owner.name}.${name}` : name);
           callableStack.push(declared);
           if (owner) members.push({ localId: next("member"), ownerSymbolId: owner.localId, memberName: name, memberKind: "method", access: extensionOwners.has(owner.localId) ? "extension" : "instance", range: range(node) });
           const returnType = field(node, "return_type");
@@ -143,14 +147,14 @@ function extractSwiftTreeFacts(parsed: ParsedSource | undefined, input: Language
       } else if (node.type === "property_declaration") {
         const name = field(node, "name")?.text;
         const owner = currentType();
-        if (name && owner) {
+        if (name && owner && !callableStack.at(-1)) {
           const member = addSymbol(node, name, "variable", `${owner.name}.${name}`);
           members.push({ localId: next("member"), ownerSymbolId: owner.localId, memberName: name, memberKind: field(node, "computed_value") ? "property" : "field", access: extensionOwners.has(owner.localId) ? "extension" : "instance", range: range(node) });
           const annotation = field(node, "type_annotation")?.childForFieldName("name");
           if (annotation) types.push({ localId: next("type"), ownerId: member.localId, text: annotation.text, range: range(annotation) });
         } else if (name && callableStack.at(-1)) {
           const binding = addBinding(node, name, "local");
-          const value = field(node, "computed_value")?.namedChildren[0];
+          const value = field(node, "computed_value") ?? node.namedChildren.find((child) => child.type === "call_expression");
           const expression = value ? addExpression(value, value.type === "call_expression" ? "call" : "other") : undefined;
           assignments.push({ localId: next("assignment"), targetId: binding.localId, sourceExpressionId: expression?.localId, assignmentKind: "declaration", range: range(node) });
           if (value?.type === "call_expression") {
@@ -179,7 +183,7 @@ function extractSwiftTreeFacts(parsed: ParsedSource | undefined, input: Language
 
       for (const child of node.namedChildren) visit(child);
       if (isCallable && declared) callableStack.pop();
-      if (isType && (declared || isExtension) && typeStack.length) typeStack.pop();
+      if (isType && (declared || extensionOwned) && typeStack.length) typeStack.pop();
       if (isScope) scopeStack.pop();
     };
     visit(parsed.tree.rootNode);

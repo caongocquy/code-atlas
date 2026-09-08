@@ -3,8 +3,8 @@ import { symbolIdentity, type ModuleIdentity, type ScopeIdentity } from "../iden
 import type { AdapterContext, LanguageSemanticAdapter, SemanticCapabilities, SemanticEvidenceBatch, TypeRef } from "../types.js";
 
 export const SWIFT_CAPABILITIES: SemanticCapabilities = {
-  moduleImport: "full", localBinding: "full", directCall: "full", declaredType: "full", constructorType: "full",
-  receiverMember: "partial", assignment: "partial", parameterFlow: "full", returnFlow: "partial", inheritance: "partial",
+  moduleImport: "partial", localBinding: "full", directCall: "partial", declaredType: "partial", constructorType: "partial",
+  receiverMember: "partial", assignment: "partial", parameterFlow: "partial", returnFlow: "partial", inheritance: "partial",
 };
 const empty = (): SemanticEvidenceBatch => ({ bindings: [], imports: [], exports: [], typeAnnotations: [], constructors: [], assignments: [], parameters: [], returns: [], members: [], inheritance: [], implementations: [], aliases: [], modules: [], calls: [], diagnostics: [] });
 
@@ -37,16 +37,45 @@ export function normalizeSwiftFacts(facts: ParsedFactsBlob, context: AdapterCont
   for (const item of facts.parameters) { const callable = symbols.get(item.ownerSymbolId); if (callable) result.parameters = [...result.parameters, { ...base("parameter", item.localId, item.range), kind: "parameter", callable, index: item.index, bindingId: item.bindingId ?? item.localId, type: typeOf(item.typeText) }]; }
   for (const item of facts.returns) { const callable = symbols.get(item.ownerSymbolId); if (callable) result.returns = [...result.returns, { ...base("return", item.localId, item.range), kind: "return", callable, type: typeOf(item.typeText) }]; }
   for (const item of facts.implementations) { const subject = symbols.get(item.subjectId); if (subject) result.implementations = [...result.implementations, { ...base("implementation", item.localId, item.range), kind: "implementation", subject, target: typeOf(item.targetName) ?? { kind: "named", name: item.targetName }, relation: item.relationKind }]; }
+  const expressions = new Map(facts.expressions.map((item) => [item.localId, item]));
+  const parentScope = (localId: FactLocalId | undefined): FactLocalId | undefined => localId ? scopes.get(localId)?.parentId : undefined;
+  const enclosingProtocol = (localId: FactLocalId | undefined): ParsedFactsBlob["symbols"][number] | undefined => {
+    let current = localId;
+    while (current) {
+      const scope = scopes.get(current);
+      if (scope?.kind === "protocol_declaration") return facts.symbols.find((symbol) => symbol.scopeId === current && symbol.kind === "interface");
+      current = parentScope(current);
+    }
+    return undefined;
+  };
+  const protocolMethodNames = new Set(facts.symbols.filter((symbol) => symbol.kind === "method" && enclosingProtocol(symbol.scopeId)).map((symbol) => symbol.name));
+  const overloadedNames = new Set<string>();
+  for (const name of new Set(facts.symbols.filter((symbol) => ["function", "method"].includes(symbol.kind)).map((symbol) => symbol.name))) {
+    if (facts.symbols.filter((symbol) => ["function", "method"].includes(symbol.kind) && symbol.name === name).length > 1) overloadedNames.add(name);
+  }
+  for (const name of overloadedNames) {
+    const first = facts.symbols.find((symbol) => symbol.name === name)!;
+    result.diagnostics = [...result.diagnostics,
+      { ...base("overload", first.localId, first.range), code: "overload_ambiguity", message: `Swift overload set requires declared argument types: ${name}`, sourceUnit: unit },
+      { ...base("dispatch", first.localId, first.range), code: "compiler_dispatch_unknown", message: `Swift compiler dispatch is underdetermined: ${name}`, sourceUnit: unit },
+    ];
+  }
   for (const item of facts.members) {
     const ownerFact = item.ownerSymbolId ? facts.symbols.find((candidate) => candidate.localId === item.ownerSymbolId) : undefined;
-    const ownerType = ownerFact ? typeOf(ownerFact.name) : undefined;
-    const memberFact = facts.symbols.find((candidate) => candidate.name === item.memberName && candidate.declaredQualifiedName?.endsWith(`.${item.memberName}`))
-      ?? facts.symbols.find((candidate) => candidate.name === item.memberName);
+    const receiver = item.receiverId ? expressions.get(item.receiverId) : undefined;
+    const receiverBinding = receiver ? facts.bindingSeeds.find((binding) => binding.name === receiver.text) : undefined;
+    const ownerType = ownerFact ? typeOf(ownerFact.name) : receiverBinding ? typeByBinding.get(receiverBinding.localId) : undefined;
+    const ownerName = ownerType?.kind === "known" ? ownerType.symbol.qualifiedName : undefined;
+    const memberCandidates = facts.symbols.filter((candidate) => candidate.name === item.memberName && (!ownerName || candidate.declaredQualifiedName?.startsWith(`${ownerName}.`)));
+    const memberFact = memberCandidates.length === 1 ? memberCandidates[0] : undefined;
     const member = memberFact ? symbols.get(memberFact.localId) : undefined;
     if (item.receiverId) {
-      if (ownerType && member) result.members = [...result.members, { ...base("member", item.localId, item.range), kind: "member", ownerType, memberName: item.memberName, member, access: item.access }];
-      result.diagnostics = [...result.diagnostics, { ...base("member", item.localId, item.range), code: "swift_protocol_witness", message: `Swift protocol witness dispatch is not statically unique for ${item.memberName}` }];
-      result.diagnostics = [...result.diagnostics, { ...base("member", item.localId, item.range), code: "language_capability_unsupported", message: `Swift witness/overload dispatch is not compiler-resolved for ${item.memberName}` }];
+      const ownerSymbol = ownerType?.kind === "known" ? facts.symbols.find((candidate) => symbols.get(candidate.localId) === ownerType.symbol) : undefined;
+      const protocolWitness = Boolean(ownerSymbol && facts.implementations.some((implementation) => implementation.subjectId === ownerSymbol.localId && implementation.relationKind === "protocol_conformance") && protocolMethodNames.has(item.memberName));
+      const overload = memberCandidates.length > 1 || overloadedNames.has(item.memberName);
+      if (protocolWitness) result.diagnostics = [...result.diagnostics, { ...base("member", item.localId, item.range), code: "protocol_witness_ambiguity", message: `Swift protocol witness dispatch is not statically unique for ${item.memberName}`, sourceUnit: unit }];
+      else if (overload) result.diagnostics = [...result.diagnostics, { ...base("member", item.localId, item.range), code: "overload_ambiguity", message: `Swift overload set is not statically unique for ${item.memberName}`, sourceUnit: unit }];
+      else if (ownerType && member) result.members = [...result.members, { ...base("member", item.localId, item.range), kind: "member", ownerType, memberName: item.memberName, member, access: item.access }];
     } else if (ownerType && member) result.members = [...result.members, { ...base("member", item.localId, item.range), kind: "member", ownerType, memberName: item.memberName, member, access: item.access }];
   }
   for (const item of facts.callSites) result.calls = [...result.calls, { ...base("call", item.localId, item.range), kind: "call", site: { sourceUnit: unit, localId: item.localId }, calleeName: item.calleeText, arguments: [] }];

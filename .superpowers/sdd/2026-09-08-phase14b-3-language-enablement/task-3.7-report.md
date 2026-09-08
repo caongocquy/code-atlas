@@ -29,3 +29,15 @@ reparse source, use regex semantics, or use a compiler/runtime/source fallback.
 Changed only the Swift adapter constraint normalization and this report after
 the existing Task 3.7 implementation commit. No package, registry, or unrelated
 worktree changes were made.
+
+## Follow-up review
+
+The follow-up closes the independent-review gaps without changing shared
+package or registry surfaces: Swift capabilities now report partial coverage
+where compiler-grade resolution is unavailable; extension ownership is
+unique-or-drop; AST-derived overload and protocol-witness uncertainty is
+diagnosed explicitly; local constructor bindings preserve resolver controls;
+and the fixture asserts struct scope identity, warm memo reuse, and budget
+exhaustion.
+
+Follow-up validation: `node --import tsx/esm --test test/phase14b-language-swift.test.ts test/phase14b-language-jvm.test.ts test/phase14b-language-go.test.ts test/phase14b-language-rust.test.ts test/phase14b-language-python.test.ts test/phase14b-language-ecmascript.test.ts test/phase14b-facts-contract.test.ts test/phase14b-resolver-contract.test.ts` — 46/46 passed.
