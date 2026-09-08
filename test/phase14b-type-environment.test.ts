@@ -6,7 +6,9 @@ import { createResolverMemo } from "../src/core/graph/resolver/memo.js";
 import type { SourceRangeFact } from "../src/core/facts/facts.types.js";
 import type {
   BindingEvidence,
+  InheritanceEvidence,
   MemberEvidence,
+  ReturnEvidence,
   SemanticEvidenceBatch,
   ScopeIdentity,
   SymbolIdentity,
@@ -38,7 +40,8 @@ const symbol = (qualifiedName: string, discriminator = qualifiedName): SymbolIde
 });
 
 export function scope(name: string): ScopeIdentity {
-  return { sourceUnit, localId: name, ...(name === "run" ? { parentLocalId: "module" } : {}) };
+  const parentLocalId = { inner: "run", run: "function", function: "module" }[name];
+  return { sourceUnit, localId: name, ...(parentLocalId ? { parentLocalId } : {}) };
 }
 
 export function environmentInput(options: { shadowedBindings?: boolean; memberCandidates?: number } = {}): TypeEnvironmentInput {
@@ -111,3 +114,93 @@ test("environment returns deterministic budget exhaustion without memoizing it",
   assert.equal(input.memo.size(), 0);
 });
 
+test("environment keeps memo entries isolated by generation", () => {
+  const memo = createResolverMemo();
+  const first = environmentInput();
+  const second = environmentInput();
+  first.generationId = "generation:one";
+  second.generationId = "generation:two";
+  first.memo = memo;
+  second.memo = memo;
+  first.evidence = [{ ...first.evidence[0], typeAnnotations: [{ ...base, evidenceId: "type:one" as never, kind: "type_annotation", subjectLocalId: "value", type: { kind: "named", name: "First" } }] }];
+  second.evidence = [{ ...second.evidence[0], typeAnnotations: [{ ...base, evidenceId: "type:two" as never, kind: "type_annotation", subjectLocalId: "value", type: { kind: "named", name: "Second" } }] }];
+
+  const expression = { sourceUnit, localId: "value" };
+  assert.deepEqual(createTypeEnvironment(first).inferType(expression), {
+    status: "found", values: [{ kind: "named", name: "First" }], evidenceIds: ["type:one"],
+  });
+  assert.deepEqual(createTypeEnvironment(second).inferType(expression), {
+    status: "found", values: [{ kind: "named", name: "Second" }], evidenceIds: ["type:two"],
+  });
+  assert.equal(memo.size(), 2);
+});
+
+test("environment matches expression evidence by source unit and local id", () => {
+  const otherSourceUnit = { ...sourceUnit, relativePath: "src/other.ts" };
+  const input = environmentInput();
+  input.evidence = [{ ...input.evidence[0], typeAnnotations: [{ ...base, sourceUnit: otherSourceUnit, evidenceId: "type:other" as never, kind: "type_annotation", subjectLocalId: "value", type: { kind: "named", name: "Other" } }] }];
+  assert.deepEqual(createTypeEnvironment(input).inferType({ sourceUnit, localId: "value" }), {
+    status: "unknown", reason: "insufficient_evidence", evidenceIds: [],
+  });
+});
+
+test("environment compares full qualified names for known inheritance types", () => {
+  const input = environmentInput();
+  const subject = symbol("pkg.Service", "class:service");
+  const inheritance: InheritanceEvidence = {
+    ...base,
+    evidenceId: "inheritance:1" as never,
+    kind: "inheritance",
+    subject,
+    target: { kind: "named", name: "Base", qualification: ["pkg"] },
+    relation: "extends",
+  };
+  input.evidence = [{ ...input.evidence[0], inheritance: [inheritance] }];
+  assert.deepEqual(createTypeEnvironment(input).resolveInheritance({ kind: "known", symbol: subject }), {
+    status: "found",
+    values: [{ kind: "named", name: "Base", qualification: ["pkg"] }],
+    evidenceIds: ["inheritance:1"],
+  });
+});
+
+test("environment traverses every enclosing scope when resolving shadowed bindings", () => {
+  const input = environmentInput();
+  const anchors: BindingEvidence[] = [
+    { ...base, evidenceId: "binding:run" as never, kind: "binding", scope: scope("run"), name: "other", bindingId: "run" },
+    { ...base, evidenceId: "binding:function" as never, kind: "binding", scope: scope("function"), name: "other", bindingId: "function" },
+  ];
+  input.evidence = [{ ...input.evidence[0], bindings: [...anchors, ...input.evidence[0].bindings] }];
+  const result = createTypeEnvironment(input).lookupBinding(scope("inner"), "service");
+  assert.equal(result.status, "found");
+  if (result.status === "found") assert.deepEqual(result.values.map((value) => value.bindingId), ["outer"]);
+});
+
+test("environment canonically sorts values and evidence regardless of insertion order", () => {
+  const input = environmentInput({ memberCandidates: 2 });
+  const batch = input.evidence[0];
+  const reversedMembers = [...batch.members].reverse();
+  const reversedTypes = [
+    { ...base, evidenceId: "type:2" as never, kind: "type_annotation" as const, subjectLocalId: "value", type: { kind: "named" as const, name: "Zed" } },
+    { ...base, evidenceId: "type:1" as never, kind: "type_annotation" as const, subjectLocalId: "value", type: { kind: "named" as const, name: "Amy" } },
+  ];
+  const returns: ReturnEvidence[] = [
+    { ...base, evidenceId: "return:2" as never, kind: "return", callable: symbol("run"), type: { kind: "named", name: "Zed" } },
+    { ...base, evidenceId: "return:1" as never, kind: "return", callable: symbol("run"), type: { kind: "named", name: "Amy" } },
+  ];
+  input.evidence = [{ ...batch, members: reversedMembers, typeAnnotations: reversedTypes, returns }];
+  const environment = createTypeEnvironment(input);
+  const members = environment.resolveMember({ kind: "named", name: "Service" }, "refresh");
+  assert.equal(members.status, "found");
+  if (members.status === "found") {
+    assert.deepEqual(members.values.map((value) => value.qualifiedName), ["Service.refresh1", "Service.refresh2"]);
+    assert.deepEqual(members.evidenceIds, ["member:1", "member:2"]);
+  }
+  assert.deepEqual(environment.inferType({ sourceUnit, localId: "value" }), {
+    status: "found",
+    values: [{ kind: "named", name: "Amy" }, { kind: "named", name: "Zed" }],
+    evidenceIds: ["type:1", "type:2"],
+  });
+  const returnsResult = environment.resolveReturn(symbol("run"));
+  assert.equal(returnsResult.status, "found");
+  if (returnsResult.status === "found") assert.deepEqual(returnsResult.values, [{ kind: "named", name: "Amy" }, { kind: "named", name: "Zed" }]);
+});

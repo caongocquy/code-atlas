@@ -1,6 +1,7 @@
 import type { ParsedFactsBlob, SourceRangeFact } from "../../facts/facts.types.js";
 import type { RepositoryIdentity } from "../../repository/repository-identity.js";
 import type { SupportedLanguage } from "../parsers/types.js";
+import type { BudgetLedger } from "./budgets.js";
 import type {
   ExpressionIdentity,
   ModuleIdentity,
@@ -9,6 +10,7 @@ import type {
   SourceUnitIdentity,
   SymbolIdentity,
 } from "./identities.js";
+import type { ResolverMemo } from "./memo.js";
 
 export type LanguageId = SupportedLanguage;
 
@@ -204,6 +206,14 @@ export type SemanticEvidenceBatch = {
   modules: readonly ModuleEvidence[];
   calls: readonly CallEvidence[];
   diagnostics: readonly AdapterDiagnostic[];
+};
+
+export type TypeEnvironmentInput = {
+  generationId: string;
+  symbols: readonly SymbolIdentity[];
+  evidence: readonly SemanticEvidenceBatch[];
+  budget: BudgetLedger;
+  memo: ResolverMemo;
 };
 
 export type AdapterContext = {

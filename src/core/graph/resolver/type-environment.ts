@@ -9,6 +9,7 @@ import type {
   MemberEvidence,
   ReturnEvidence,
   SemanticEvidenceBatch,
+  TypeEnvironmentInput,
   TypeRef,
   UnknownReason,
   UnsupportedReason,
@@ -20,13 +21,7 @@ export type LookupResult<T> =
   | { status: "unsupported"; reason: UnsupportedReason; evidenceIds: readonly EvidenceId[] }
   | { status: "budget_exhausted"; reason: BudgetReason; evidenceIds: readonly EvidenceId[] };
 
-export type TypeEnvironmentInput = {
-  generationId: string;
-  symbols: readonly SymbolIdentity[];
-  evidence: readonly SemanticEvidenceBatch[];
-  budget: BudgetLedger;
-  memo: ResolverMemo;
-};
+export type { TypeEnvironmentInput } from "./types.js";
 
 export type TypeEnvironment = {
   lookupBinding(scope: ScopeIdentity, name: string): LookupResult<BindingEvidence>;
@@ -39,6 +34,19 @@ export type TypeEnvironment = {
 
 const evidenceIds = (values: readonly { evidenceId: EvidenceId }[]): readonly EvidenceId[] =>
   [...new Set(values.map((value) => value.evidenceId))].sort();
+
+const sortedEvidenceIds = (values: readonly EvidenceId[]): readonly EvidenceId[] =>
+  [...new Set(values)].sort();
+
+const bindingParents = new WeakMap<object, ReadonlyMap<string, string | undefined>>();
+
+function canonicalValueKey(value: unknown): string {
+  if (typeof value === "object" && value !== null && "evidenceId" in value) return String(value.evidenceId);
+  if (typeof value === "object" && value !== null && "repositoryId" in value && "qualifiedName" in value) {
+    return symbolIdentityKey(value as SymbolIdentity);
+  }
+  return JSON.stringify(value);
+}
 
 function unsupportedReason(evidence: readonly SemanticEvidenceBatch[]): UnsupportedReason | undefined {
   const codes: readonly UnsupportedReason[] = [
@@ -63,7 +71,11 @@ function exhausted<T>(reason: BudgetReason, values: readonly { evidenceId: Evide
 }
 
 function found<T>(values: readonly T[], source: readonly { evidenceId: EvidenceId }[]): LookupResult<T> {
-  return { status: "found", values, evidenceIds: evidenceIds(source) };
+  return {
+    status: "found",
+    values: [...values].sort((left, right) => canonicalValueKey(left).localeCompare(canonicalValueKey(right))),
+    evidenceIds: evidenceIds(source),
+  };
 }
 
 function scopeKey(scope: ScopeIdentity): string {
@@ -80,34 +92,41 @@ function sameType(left: TypeRef, right: TypeRef): boolean {
   return false;
 }
 
-function typeName(type: TypeRef): string | undefined {
-  if (type.kind === "named") return type.name;
-  if (type.kind === "known") return type.symbol.qualifiedName.split(".").at(-1);
+function qualifiedTypeName(type: TypeRef): string | undefined {
+  if (type.kind === "named") return [...(type.qualification ?? []), type.name].join(".");
+  if (type.kind === "known") return type.symbol.qualifiedName;
   return undefined;
 }
 
 export function indexBindings(evidence: readonly SemanticEvidenceBatch[]): ReadonlyMap<string, readonly BindingEvidence[]> {
   const index = new Map<string, BindingEvidence[]>();
+  const parents = new Map<string, string | undefined>();
   for (const batch of evidence) {
     for (const binding of batch.bindings) {
       const key = scopeKey(binding.scope);
       const values = index.get(key) ?? [];
       values.push(binding);
       index.set(key, values);
+      parents.set(key, binding.scope.parentLocalId);
     }
   }
-  return new Map([...index].map(([key, values]) => [key, [...values].sort((left, right) => left.evidenceId.localeCompare(right.evidenceId))]));
+  const result = new Map([...index].map(([key, values]) => [key, [...values].sort((left, right) => left.evidenceId.localeCompare(right.evidenceId))]));
+  bindingParents.set(result, parents);
+  return result;
 }
 
 export function lookupInnermost(index: ReadonlyMap<string, readonly BindingEvidence[]>, scope: ScopeIdentity, name: string, budget: BudgetLedger): LookupResult<BindingEvidence> {
   let current: ScopeIdentity | undefined = scope;
   const considered: BindingEvidence[] = [];
-  while (current) {
+  const visited = new Set<string>();
+  while (current && !visited.has(scopeKey(current))) {
+    visited.add(scopeKey(current));
     if (!budget.consume("bindingHops")) return exhausted("binding_hop_limit", considered);
     const candidates = (index.get(scopeKey(current)) ?? []).filter((binding) => binding.name === name);
     considered.push(...candidates);
     if (candidates.length > 0) return found(candidates, candidates);
-    current = current.parentLocalId ? { sourceUnit: current.sourceUnit, localId: current.parentLocalId } : undefined;
+    const parentLocalId: string | undefined = current.parentLocalId ?? bindingParents.get(index)?.get(scopeKey(current));
+    current = parentLocalId ? { sourceUnit: current.sourceUnit, localId: parentLocalId } : undefined;
   }
   return unknown("insufficient_evidence", considered);
 }
@@ -116,9 +135,28 @@ function expressionMemoKey(expression: ExpressionIdentity): string {
   return `expression:${JSON.stringify([expression.sourceUnit.repositoryId, expression.sourceUnit.relativePath, expression.sourceUnit.language, expression.localId])}`;
 }
 
+function generationScopedMemo(generationId: string, memo: ResolverMemo): ResolverMemo {
+  const prefix = `generation:${generationId}:`;
+  return {
+    get: (key) => memo.get(`${prefix}${key}`),
+    set: (key, value) => memo.set(`${prefix}${key}`, value),
+    size: () => memo.size(),
+  };
+}
+
+function sameSourceUnit(left: ExpressionIdentity["sourceUnit"], right: ExpressionIdentity["sourceUnit"]): boolean {
+  return left.repositoryId === right.repositoryId && left.relativePath === right.relativePath && left.language === right.language;
+}
+
 function memoResult(entry: MemoEntry): LookupResult<TypeRef> | undefined {
-  if (entry.kind === "types") return { status: "found", values: entry.values, evidenceIds: entry.evidenceIds };
-  if (entry.kind === "unknown") return { status: "unknown", reason: entry.reason, evidenceIds: entry.evidenceIds };
+  if (entry.kind === "types") {
+    return {
+      status: "found",
+      values: [...entry.values].sort((left, right) => canonicalValueKey(left).localeCompare(canonicalValueKey(right))),
+      evidenceIds: sortedEvidenceIds(entry.evidenceIds),
+    };
+  }
+  if (entry.kind === "unknown") return { status: "unknown", reason: entry.reason, evidenceIds: sortedEvidenceIds(entry.evidenceIds) };
   return undefined;
 }
 
@@ -128,8 +166,8 @@ export function inferFromEvidence(evidence: readonly SemanticEvidenceBatch[], ex
   if (cached) return memoResult(cached) ?? unknown("insufficient_evidence");
   if (!budget.consume("expressionNodes")) return exhausted("expression_node_limit");
 
-  const annotations = evidence.flatMap((batch) => batch.typeAnnotations).filter((item) => item.subjectLocalId === expression.localId);
-  const assignments = evidence.flatMap((batch) => batch.assignments).filter((item) => item.sourceExpression?.localId === expression.localId && item.sourceType);
+  const annotations = evidence.flatMap((batch) => batch.typeAnnotations).filter((item) => sameSourceUnit(item.sourceUnit, expression.sourceUnit) && item.subjectLocalId === expression.localId);
+  const assignments = evidence.flatMap((batch) => batch.assignments).filter((item) => item.sourceExpression && sameSourceUnit(item.sourceExpression.sourceUnit, expression.sourceUnit) && item.sourceExpression.localId === expression.localId && item.sourceType);
   const values = [...annotations.map((item) => item.type), ...assignments.flatMap((item) => item.sourceType ? [item.sourceType] : [])];
   const sources = [...annotations, ...assignments];
   if (values.length === 0) {
@@ -138,14 +176,15 @@ export function inferFromEvidence(evidence: readonly SemanticEvidenceBatch[], ex
     return result;
   }
   const resultValues = [...new Map(values.map((value) => [JSON.stringify(value), value])).values()];
-  const resultEvidenceIds = evidenceIds(sources);
-  memo.set(key, { kind: "types", values: resultValues, evidenceIds: resultEvidenceIds });
-  return { status: "found", values: resultValues, evidenceIds: resultEvidenceIds };
+  const result = found(resultValues, sources);
+  if (result.status !== "found") return result;
+  memo.set(key, { kind: "types", values: result.values, evidenceIds: result.evidenceIds });
+  return result;
 }
 
 export function lookupMembers(evidence: readonly SemanticEvidenceBatch[], owner: TypeRef, member: string, budget: BudgetLedger): LookupResult<SymbolIdentity> {
   if (owner.kind === "union" || owner.kind === "unknown") return unknown("receiver_type_unknown");
-  const candidates = evidence.flatMap((batch) => batch.members).filter((item) => item.memberName === member && sameType(item.ownerType, owner));
+  const candidates = evidence.flatMap((batch) => batch.members).filter((item) => item.memberName === member && sameType(item.ownerType, owner)).sort((left, right) => left.evidenceId.localeCompare(right.evidenceId));
   if (candidates.length === 0) return unsupportedReason(evidence) ? unsupported(unsupportedReason(evidence)!) : unknown("insufficient_evidence");
   const accepted: MemberEvidence[] = [];
   for (const candidate of candidates) {
@@ -156,7 +195,7 @@ export function lookupMembers(evidence: readonly SemanticEvidenceBatch[], owner:
 }
 
 export function lookupReturns(evidence: readonly SemanticEvidenceBatch[], callable: SymbolIdentity, budget: BudgetLedger): LookupResult<TypeRef> {
-  const candidates = evidence.flatMap((batch) => batch.returns).filter((item) => symbolIdentityKey(item.callable) === symbolIdentityKey(callable) && item.type);
+  const candidates = evidence.flatMap((batch) => batch.returns).filter((item) => symbolIdentityKey(item.callable) === symbolIdentityKey(callable) && item.type).sort((left, right) => left.evidenceId.localeCompare(right.evidenceId));
   if (candidates.length === 0) return unknown("insufficient_evidence");
   const accepted: ReturnEvidence[] = [];
   for (const candidate of candidates) {
@@ -167,8 +206,8 @@ export function lookupReturns(evidence: readonly SemanticEvidenceBatch[], callab
 }
 
 export function lookupInheritance(evidence: readonly SemanticEvidenceBatch[], type: TypeRef, budget: BudgetLedger): LookupResult<TypeRef> {
-  const name = typeName(type);
-  const candidates = evidence.flatMap((batch) => batch.inheritance).filter((item) => name && item.subject.qualifiedName === name);
+  const name = qualifiedTypeName(type);
+  const candidates = evidence.flatMap((batch) => batch.inheritance).filter((item) => name && item.subject.qualifiedName === name).sort((left, right) => left.evidenceId.localeCompare(right.evidenceId));
   if (candidates.length === 0) return unknown("insufficient_evidence");
   const accepted: InheritanceEvidence[] = [];
   for (const candidate of candidates) {
@@ -179,7 +218,7 @@ export function lookupInheritance(evidence: readonly SemanticEvidenceBatch[], ty
 }
 
 export function lookupImports(evidence: readonly SemanticEvidenceBatch[], module: ModuleIdentity, _budget: BudgetLedger): LookupResult<SymbolIdentity> {
-  const candidates = evidence.flatMap((batch) => batch.imports).filter((item) => sameModule(item.module, module) || item.specifier === module.normalizedName || item.resolvedPath === module.relativePath);
+  const candidates = evidence.flatMap((batch) => batch.imports).filter((item) => sameModule(item.module, module) || item.specifier === module.normalizedName || item.resolvedPath === module.relativePath).sort((left, right) => left.evidenceId.localeCompare(right.evidenceId));
   if (candidates.length === 0) return unsupportedReason(evidence) ? unsupported(unsupportedReason(evidence)!) : unknown("unresolved_import");
   for (const candidate of candidates) {
     if (!_budget.consume("candidateExpansions")) return exhausted("candidate_expansion_limit", candidates.slice(0, candidates.indexOf(candidate)));
@@ -189,9 +228,10 @@ export function lookupImports(evidence: readonly SemanticEvidenceBatch[], module
 
 export function createTypeEnvironment(input: TypeEnvironmentInput): TypeEnvironment {
   const bindings = indexBindings(input.evidence);
+  const memo = generationScopedMemo(input.generationId, input.memo);
   return {
     lookupBinding: (scope, name) => lookupInnermost(bindings, scope, name, input.budget),
-    inferType: (expression) => inferFromEvidence(input.evidence, expression, input.budget, input.memo),
+    inferType: (expression) => inferFromEvidence(input.evidence, expression, input.budget, memo),
     resolveMember: (owner, member) => lookupMembers(input.evidence, owner, member, input.budget),
     resolveReturn: (callable) => lookupReturns(input.evidence, callable, input.budget),
     resolveInheritance: (type) => lookupInheritance(input.evidence, type, input.budget),
