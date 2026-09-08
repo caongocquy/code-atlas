@@ -56,15 +56,23 @@ test("scanner prunes ignored and built-in dependency trees before walking", asyn
     await mkdir(path.join(repoPath, "ignored-by-gitignore"), { recursive: true });
     await writeFile(path.join(repoPath, "src", "a.ts"), "export const a = true;\n");
     await writeFile(path.join(repoPath, "src", "b.ts"), "export const b = true;\n");
+    await writeFile(path.join(repoPath, "src", "main.go"), "package main\n");
     await writeFile(path.join(repoPath, "node_modules", "pkg", "fake.ts"), "export const fake = true;\n");
     await writeFile(path.join(repoPath, "voice", ".venv", "lib", "fake.py"), "fake = True\n");
     await writeFile(path.join(repoPath, "references", "deepseek-harness", "packages", "fake.py"), "fake = True\n");
     await writeFile(path.join(repoPath, "references", "kept", "source.ts"), "export const kept = true;\n");
     await writeFile(path.join(repoPath, "ignored-by-gitignore", "fake.ts"), "export const fake = true;\n");
+    await writeFile(path.join(repoPath, "README.md"), "# docs\n");
     await writeFile(path.join(repoPath, ".gitignore"), "ignored-by-gitignore/\n");
 
     const files = (await scanRepo(repoPath)).map((file) => path.relative(repoPath, file));
-    assert.deepEqual(files, ["references/kept/source.ts", "src/a.ts", "src/b.ts"]);
+    assert.deepEqual(files, [
+      "README.md",
+      "references/kept/source.ts",
+      "src/a.ts",
+      "src/b.ts",
+      "src/main.go",
+    ]);
   } finally {
     await rm(repoPath, { recursive: true, force: true });
   }

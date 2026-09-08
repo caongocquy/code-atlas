@@ -6,7 +6,20 @@ import { canonicalRepositoryPath } from "./repository-identity.js";
 
 export { getRepoId } from "./repository-identity.js";
 
-const allowedExtensions = new Set(LANGUAGE_CONFIGS.flatMap((config) => config.extensions));
+const BASELINE_ALLOWED_EXTENSIONS = [
+  ".ts",
+  ".tsx",
+  ".js",
+  ".jsx",
+  ".dart",
+  ".py",
+  ".md",
+] as const;
+
+const allowedExtensions = new Set([
+  ...BASELINE_ALLOWED_EXTENSIONS,
+  ...LANGUAGE_CONFIGS.flatMap((config) => config.extensions),
+]);
 
 const ignoredDirectories = new Set([
   ".git",
