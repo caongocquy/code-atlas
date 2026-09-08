@@ -13,11 +13,11 @@ function parsedFacts(contentHash: string): ParsedFactsBlob {
     language: "typescript",
     parserIdentity: {
       language: "typescript",
-      parserName: "test",
-      parserVersion: "1",
+      runtimeName: "tree-sitter",
+      runtimeVersion: "1",
+      packageName: "test",
       grammarName: "test",
       grammarVersion: "1",
-      adapterVersion: "1",
     },
     parseStatus: "complete",
     parserDiagnostics: [],
@@ -29,6 +29,17 @@ function parsedFacts(contentHash: string): ParsedFactsBlob {
     callSites: [],
     bindingSeeds: [],
     declaredTypeAnnotations: [],
+    expressions: [],
+    members: [],
+    assignments: [],
+    parameters: [],
+    returns: [],
+    constructors: [],
+    inheritances: [],
+    implementations: [],
+    aliases: [],
+    modules: [],
+    namespaces: [],
   };
 }
 

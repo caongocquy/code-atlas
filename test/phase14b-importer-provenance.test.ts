@@ -7,11 +7,11 @@ import { buildFactReverseImporterIndex } from "../src/core/indexing/invalidation
 function factsWithImports(...specifiers: string[]): ParsedFactsBlob {
   const parserIdentity = {
     language: "typescript" as const,
-    parserName: "tree-sitter",
-    parserVersion: "0.25.1",
+    runtimeName: "tree-sitter" as const,
+    runtimeVersion: "0.25.1",
+    packageName: "tree-sitter-typescript",
     grammarName: "tree-sitter-typescript",
     grammarVersion: "0.23.2",
-    adapterVersion: "1",
   };
 
   const imports: ImportFact[] = specifiers.map((moduleSpecifier, index) => ({
@@ -37,6 +37,17 @@ function factsWithImports(...specifiers: string[]): ParsedFactsBlob {
     callSites: [],
     bindingSeeds: [],
     declaredTypeAnnotations: [],
+    expressions: [],
+    members: [],
+    assignments: [],
+    parameters: [],
+    returns: [],
+    constructors: [],
+    inheritances: [],
+    implementations: [],
+    aliases: [],
+    modules: [],
+    namespaces: [],
   };
 }
 

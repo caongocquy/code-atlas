@@ -42,7 +42,7 @@ function range(node: Parser.SyntaxNode): SourceRangeFact {
   };
 }
 
-function id(kind: FactLocalId extends `${infer Prefix}:${number}` ? Prefix : never, value: number): FactLocalId {
+function id(kind: string, value: number): FactLocalId {
   return `${kind}:${value}` as FactLocalId;
 }
 
@@ -319,7 +319,7 @@ export function extractParsedFacts(input: FactExtractionInput): FactExtractionOu
       }
 
       if (node.type === "type_annotation") {
-        declaredTypeAnnotations.push({ localId: id("type", ++typeNumber), ownerId: currentScope ?? "scope:1", text: node.text.replace(/^:\s*/, ""), range: range(node) });
+        declaredTypeAnnotations.push({ localId: id("type", ++typeNumber), ownerId: currentScope ?? ("scope:1" as FactLocalId), text: node.text.replace(/^:\s*/, ""), range: range(node) });
       }
 
       if (node.type === "identifier" && !isDeclarationIdentifier(node) && !isInsideImport(node) && node.parent?.type !== "type_annotation") {
@@ -357,6 +357,17 @@ export function extractParsedFacts(input: FactExtractionInput): FactExtractionOu
       callSites,
       bindingSeeds,
       declaredTypeAnnotations,
+      expressions: [],
+      members: [],
+      assignments: [],
+      parameters: [],
+      returns: [],
+      constructors: [],
+      inheritances: [],
+      implementations: [],
+      aliases: [],
+      modules: [],
+      namespaces: [],
     };
     return { kind: "facts", facts };
   } catch (error) {

@@ -32,11 +32,11 @@ function facts(contentHash: string): ParsedFactsBlob {
     language: "typescript",
     parserIdentity: {
       language: "typescript",
-      parserName: "tree-sitter",
-      parserVersion: "0.25.1",
+      runtimeName: "tree-sitter",
+      runtimeVersion: "0.25.1",
+      packageName: "tree-sitter-typescript",
       grammarName: "tree-sitter-typescript",
       grammarVersion: "0.23.2",
-      adapterVersion: "1",
     },
     parseStatus: "complete",
     parserDiagnostics: [],
@@ -48,6 +48,17 @@ function facts(contentHash: string): ParsedFactsBlob {
     callSites: [],
     bindingSeeds: [],
     declaredTypeAnnotations: [],
+    expressions: [],
+    members: [],
+    assignments: [],
+    parameters: [],
+    returns: [],
+    constructors: [],
+    inheritances: [],
+    implementations: [],
+    aliases: [],
+    modules: [],
+    namespaces: [],
   };
 }
 

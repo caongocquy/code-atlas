@@ -8,11 +8,11 @@ export const javascriptAdapter: LanguageAdapter = {
   extensions: [".js", ".jsx"],
   grammar: JavaScript,
   metadata: {
-    parserName: "tree-sitter",
-    parserVersion: "0.25.1",
+    runtimeName: "tree-sitter",
+    runtimeVersion: "0.25.1",
+    packageName: "tree-sitter-javascript",
     grammarName: "tree-sitter-javascript",
     grammarVersion: "0.25.0",
-    adapterVersion: "1",
   },
   extractSymbols(root) {
     return extractJavaScriptSymbols(root);

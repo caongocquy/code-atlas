@@ -13,11 +13,11 @@ import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
 
 const parserIdentity = {
   language: "typescript" as const,
-  parserName: "tree-sitter",
-  parserVersion: "0.25.1",
+  runtimeName: "tree-sitter" as const,
+  runtimeVersion: "0.25.1",
+  packageName: "tree-sitter-typescript",
   grammarName: "tree-sitter-typescript",
   grammarVersion: "0.23.2",
-  adapterVersion: "1",
 };
 
 function facts(overrides: Partial<ParsedFactsBlob> = {}): ParsedFactsBlob {
@@ -37,6 +37,17 @@ function facts(overrides: Partial<ParsedFactsBlob> = {}): ParsedFactsBlob {
     callSites: [],
     bindingSeeds: [],
     declaredTypeAnnotations: [],
+    expressions: [],
+    members: [],
+    assignments: [],
+    parameters: [],
+    returns: [],
+    constructors: [],
+    inheritances: [],
+    implementations: [],
+    aliases: [],
+    modules: [],
+    namespaces: [],
     ...overrides,
   };
 }
@@ -67,6 +78,17 @@ test("fact blobs round-trip deterministically and validate", () => {
     parserDiagnostics: value.parserDiagnostics,
     parseStatus: value.parseStatus,
     parserIdentity: { ...value.parserIdentity },
+    expressions: value.expressions,
+    members: value.members,
+    assignments: value.assignments,
+    parameters: value.parameters,
+    returns: value.returns,
+    constructors: value.constructors,
+    inheritances: value.inheritances,
+    implementations: value.implementations,
+    aliases: value.aliases,
+    modules: value.modules,
+    namespaces: value.namespaces,
     language: value.language,
     contentHash: value.contentHash,
     factsVersion: value.factsVersion,
@@ -111,7 +133,7 @@ test("fact codec reports every miss reason", () => {
     [encodeFacts({ ...value, factsVersion: "2" }), expected, "version_mismatch"],
     [encodeFacts({ ...value, factsSchemaVersion: "2" }), expected, "schema_mismatch"],
     [encodeFacts({ ...value, language: "javascript", parserIdentity: { ...value.parserIdentity, language: "javascript" } }), expected, "parser_identity_mismatch"],
-    [encodeFacts({ ...value, parserIdentity: { ...value.parserIdentity, adapterVersion: "2" } }), expected, "parser_identity_mismatch"],
+    [encodeFacts({ ...value, parserIdentity: { ...value.parserIdentity, runtimeVersion: "0.25.2" } }), expected, "parser_identity_mismatch"],
   ];
 
   for (const [payload, current, reason] of cases) {
@@ -193,6 +215,17 @@ test("valid fact rows stay immutable across sequential writers", async () => {
       parserDiagnostics: value.parserDiagnostics,
       parseStatus: value.parseStatus,
       parserIdentity: { ...value.parserIdentity },
+      expressions: value.expressions,
+      members: value.members,
+      assignments: value.assignments,
+      parameters: value.parameters,
+      returns: value.returns,
+      constructors: value.constructors,
+      inheritances: value.inheritances,
+      implementations: value.implementations,
+      aliases: value.aliases,
+      modules: value.modules,
+      namespaces: value.namespaces,
       language: value.language,
       contentHash: value.contentHash,
       factsVersion: value.factsVersion,

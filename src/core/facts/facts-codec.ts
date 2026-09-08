@@ -43,11 +43,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function hasParserIdentity(value: unknown): value is ParserIdentity {
   return isRecord(value)
     && isSupportedLanguage(value.language)
-    && typeof value.parserName === "string"
-    && typeof value.parserVersion === "string"
+    && value.runtimeName === "tree-sitter"
+    && typeof value.runtimeVersion === "string"
+    && typeof value.packageName === "string"
     && typeof value.grammarName === "string"
-    && typeof value.grammarVersion === "string"
-    && typeof value.adapterVersion === "string";
+    && typeof value.grammarVersion === "string";
 }
 
 const SYMBOL_TYPES: ReadonlySet<SymbolType> = new Set([
@@ -68,7 +68,7 @@ function isOptionalString(value: unknown): boolean {
 
 function isFactId(value: unknown): boolean {
   return typeof value === "string"
-    && /^(symbol|scope|import|export|reference|call|binding|type):(0|[1-9]\d*)$/.test(value);
+    && /^(symbol|scope|import|export|reference|call|binding|type|expression|member|assignment|parameter|return|constructor|inheritance|implementation|alias|module|namespace):(0|[1-9]\d*)$/.test(value);
 }
 
 function isInteger(value: unknown): value is number {
@@ -197,7 +197,18 @@ function hasFactsShape(value: unknown): value is ParsedFactsBlob {
     && isFactArray(value.references, isReferenceFact)
     && isFactArray(value.callSites, isCallFact)
     && isFactArray(value.bindingSeeds, isBindingFact)
-    && isFactArray(value.declaredTypeAnnotations, isDeclaredTypeFact);
+    && isFactArray(value.declaredTypeAnnotations, isDeclaredTypeFact)
+    && Array.isArray(value.expressions)
+    && Array.isArray(value.members)
+    && Array.isArray(value.assignments)
+    && Array.isArray(value.parameters)
+    && Array.isArray(value.returns)
+    && Array.isArray(value.constructors)
+    && Array.isArray(value.inheritances)
+    && Array.isArray(value.implementations)
+    && Array.isArray(value.aliases)
+    && Array.isArray(value.modules)
+    && Array.isArray(value.namespaces);
 }
 
 function canonicalJson(value: unknown): string {
@@ -214,11 +225,11 @@ function canonicalJson(value: unknown): string {
 
 function sameParserIdentity(left: ParserIdentity, right: ParserIdentity): boolean {
   return left.language === right.language
-    && left.parserName === right.parserName
-    && left.parserVersion === right.parserVersion
+    && left.runtimeName === right.runtimeName
+    && left.runtimeVersion === right.runtimeVersion
+    && left.packageName === right.packageName
     && left.grammarName === right.grammarName
-    && left.grammarVersion === right.grammarVersion
-    && left.adapterVersion === right.adapterVersion;
+    && left.grammarVersion === right.grammarVersion;
 }
 
 export function decodeFacts(

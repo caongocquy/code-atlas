@@ -50,3 +50,41 @@ Implemented and committed on the task branch.
 ## Commit
 
 See the task commit recorded with this report.
+
+## Loop round 1 compatibility fix
+
+Independent review and the controller typecheck found that the initial type
+contract was not wired through its existing producers and consumers. The fix
+kept the change compatibility-only:
+
+- Updated `facts-codec.ts` and `facts-identity.ts` to use
+  `runtimeName`, `runtimeVersion`, `packageName`, `grammarName`, and
+  `grammarVersion`.
+- Updated the TypeScript and JavaScript parser adapters to emit the new
+  metadata shape.
+- Made parser filename lookup partial so the expanded language union does not
+  claim unimplemented adapters.
+- Widened pipeline language annotations to `SupportedLanguage`.
+- Updated extractor local-ID construction for the branded `FactLocalId` and
+  initialized every Phase 14B array with an empty deterministic array.
+- Updated affected Phase 14A/14B cache, generation, race, and importer test
+  fixtures to the complete fact shape.
+- Added regression coverage for parser identity round-tripping and complete
+  extraction output.
+
+No semantic resolution was added. `FACTS_SCHEMA_VERSION` and `FACTS_VERSION`
+were not changed.
+
+Validation:
+
+- `pnpm exec tsc --noEmit` — passed.
+- Focused fact/cache suite — 30 passed, 0 failed.
+- `pnpm test` — 318 passed, 0 failed.
+- `git diff --check` — passed.
+
+GitNexus impact checks for the changed fact symbols were unavailable in the
+stale index (`UNKNOWN`, zero indexed targets); the indexed `runPipeline` path
+reported LOW risk with four impacted symbols.
+
+The compatibility fix is committed separately after the original Task 1.1
+commit.

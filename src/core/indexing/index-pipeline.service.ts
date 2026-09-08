@@ -13,6 +13,7 @@ import type { LexicalFileUpdate } from "../../storage/atlas/atlas.types.js";
 import type { SemanticIndexResult } from "../semantic/semantic-index.service.js";
 import { prepareSemanticCandidateFromFacts, type SemanticCandidate } from "../semantic/semantic-index.service.js";
 import type { FactBlobKey } from "../facts/facts.types.js";
+import type { SupportedLanguage } from "../graph/parsers/types.js";
 import { AtlasStore } from "../../storage/atlas/atlas.store.js";
 import { getRepositoryIdentity, canonicalRepositoryPath } from "../repository/repository-identity.js";
 import { createFileHash } from "../repository/file-hash.js";
@@ -93,7 +94,7 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
     recordIndexWork(counters, "filesHashed", changes.fileHashes.size);
     const previousManifest = store.getGenerationManifest(repoId);
     const previousBindings = new Map(previousManifest?.files.map((file) => [file.relativePath, file]) ?? []);
-    const currentFiles = new Map<string, { contentHash: string; language: "typescript" | "tsx" | "javascript" }>();
+    const currentFiles = new Map<string, { contentHash: string; language: SupportedLanguage }>();
     const sources = new Map<string, string>();
 
     for (const relativePath of changes.relativeFiles) {
@@ -105,7 +106,7 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
     }
 
     const units: IndexedSourceUnit[] = [];
-    const bindings: Array<{ repositoryId: string; relativePath: string; generationId: string; factBlobKey: FactBlobKey; contentHash: string; language: "typescript" | "tsx" | "javascript" }> = [];
+    const bindings: Array<{ repositoryId: string; relativePath: string; generationId: string; factBlobKey: FactBlobKey; contentHash: string; language: SupportedLanguage }> = [];
 
     for (const [relativePath, current] of currentFiles) {
       let source = sources.get(relativePath);
