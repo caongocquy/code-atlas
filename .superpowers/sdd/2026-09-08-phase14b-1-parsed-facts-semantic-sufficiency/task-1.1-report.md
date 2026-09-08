@@ -88,3 +88,28 @@ reported LOW risk with four impacted symbols.
 
 The compatibility fix is committed separately after the original Task 1.1
 commit.
+
+## Loop round 2 codec validation fix
+
+Re-review found that `hasFactsShape` only checked the eleven Phase 14B fields
+were arrays, allowing malformed records such as `expressions: [null]` to be
+decoded as a cache hit. This fix:
+
+- Added strict record-level validators for expression, member, assignment,
+  parameter, return, constructor, inheritance, implementation, alias, module,
+  and namespace facts.
+- Validated required branded-ID-shaped strings, optional ownership references,
+  enum fields, scalar fields, and source ranges for every new DTO.
+- Wired all eleven validators into `hasFactsShape`.
+- Added malformed `null` and empty-record regression cases for every objective
+  array.
+- Kept version values unchanged and added no semantic behavior.
+
+Validation:
+
+- `node --import tsx/esm --test test/phase14b-facts-contract.test.ts test/phase14a-cache.test.ts test/phase14a-facts.test.ts` — 20 passed, 0 failed.
+- `pnpm exec tsc --noEmit` — passed.
+- `pnpm test` — 319 passed, 0 failed.
+- `git diff --check` — passed.
+
+This round is committed separately after the compatibility fix.

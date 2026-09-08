@@ -59,3 +59,21 @@ test("fact extraction returns every objective array and complete parser identity
     grammarVersion: "0.23.2",
   });
 });
+
+test("fact codec rejects malformed records in every objective array", () => {
+  const objectiveFields = [
+    "expressions", "members", "assignments", "parameters", "returns",
+    "constructors", "inheritances", "implementations", "aliases", "modules", "namespaces",
+  ] as const;
+
+  for (const field of objectiveFields) {
+    for (const malformed of [null, {}]) {
+      const facts = makeFacts({ [field]: [malformed] });
+      assert.deepEqual(
+        decodeFacts(encodeFacts(facts), expectation(facts)),
+        { kind: "miss", reason: "schema_mismatch" },
+        `${field} should reject ${malformed === null ? "null" : "an empty record"}`,
+      );
+    }
+  }
+});

@@ -174,6 +174,134 @@ function isDeclaredTypeFact(value: unknown): boolean {
     && isRange(value.range);
 }
 
+const EXPRESSION_KINDS = new Set(["identifier", "literal", "call", "construct", "member", "type_ref", "other"]);
+const MEMBER_KINDS = new Set(["field", "method", "property"]);
+const MEMBER_ACCESS = new Set(["instance", "static", "extension"]);
+const ASSIGNMENT_KINDS = new Set(["declaration", "reassignment", "alias", "function_pointer"]);
+const INHERITANCE_KINDS = new Set(["extends", "base", "trait", "protocol", "mixin"]);
+const IMPLEMENTATION_KINDS = new Set(["implements", "interface", "trait_impl", "protocol_conformance", "extension", "mixin"]);
+const ALIAS_KINDS = new Set(["import", "type", "namespace", "value"]);
+const MODULE_KINDS = new Set(["file", "module", "package", "namespace"]);
+
+function isOptionalFactId(value: unknown): boolean {
+  return value === undefined || isFactId(value);
+}
+
+function isExpressionFact(value: unknown): boolean {
+  return isRecord(value)
+    && isFactId(value.localId)
+    && typeof value.kind === "string"
+    && EXPRESSION_KINDS.has(value.kind)
+    && isOptionalString(value.text)
+    && isOptionalFactId(value.ownerScopeId)
+    && isRange(value.range);
+}
+
+function isMemberFact(value: unknown): boolean {
+  return isRecord(value)
+    && isFactId(value.localId)
+    && isOptionalFactId(value.ownerSymbolId)
+    && isOptionalFactId(value.receiverId)
+    && typeof value.memberName === "string"
+    && typeof value.memberKind === "string"
+    && MEMBER_KINDS.has(value.memberKind)
+    && typeof value.access === "string"
+    && MEMBER_ACCESS.has(value.access)
+    && isRange(value.range);
+}
+
+function isAssignmentFact(value: unknown): boolean {
+  return isRecord(value)
+    && isFactId(value.localId)
+    && isFactId(value.targetId)
+    && isOptionalFactId(value.sourceExpressionId)
+    && isOptionalString(value.sourceName)
+    && typeof value.assignmentKind === "string"
+    && ASSIGNMENT_KINDS.has(value.assignmentKind)
+    && isRange(value.range);
+}
+
+function isParameterFact(value: unknown): boolean {
+  return isRecord(value)
+    && isFactId(value.localId)
+    && isFactId(value.ownerSymbolId)
+    && typeof value.name === "string"
+    && isOptionalFactId(value.bindingId)
+    && isOptionalString(value.typeText)
+    && isInteger(value.index)
+    && value.index >= 0
+    && (value.receiverKind === undefined || value.receiverKind === "method_receiver" || value.receiverKind === "go_receiver")
+    && isRange(value.range);
+}
+
+function isReturnFact(value: unknown): boolean {
+  return isRecord(value)
+    && isFactId(value.localId)
+    && isFactId(value.ownerSymbolId)
+    && isOptionalFactId(value.expressionId)
+    && isOptionalString(value.typeText)
+    && isRange(value.range);
+}
+
+function isConstructorFact(value: unknown): boolean {
+  return isRecord(value)
+    && isFactId(value.localId)
+    && isOptionalFactId(value.ownerSymbolId)
+    && typeof value.constructedTypeName === "string"
+    && isOptionalFactId(value.callExpressionId)
+    && isOptionalFactId(value.resultBindingId)
+    && isRange(value.range);
+}
+
+function isInheritanceFact(value: unknown): boolean {
+  return isRecord(value)
+    && isFactId(value.localId)
+    && isFactId(value.subjectId)
+    && typeof value.targetName === "string"
+    && typeof value.relationKind === "string"
+    && INHERITANCE_KINDS.has(value.relationKind)
+    && isRange(value.range);
+}
+
+function isImplementationFact(value: unknown): boolean {
+  return isRecord(value)
+    && isFactId(value.localId)
+    && isFactId(value.subjectId)
+    && typeof value.targetName === "string"
+    && typeof value.relationKind === "string"
+    && IMPLEMENTATION_KINDS.has(value.relationKind)
+    && isRange(value.range);
+}
+
+function isAliasFact(value: unknown): boolean {
+  return isRecord(value)
+    && isFactId(value.localId)
+    && typeof value.aliasName === "string"
+    && typeof value.targetName === "string"
+    && isOptionalFactId(value.targetId)
+    && typeof value.aliasKind === "string"
+    && ALIAS_KINDS.has(value.aliasKind)
+    && isRange(value.range);
+}
+
+function isModuleFact(value: unknown): boolean {
+  return isRecord(value)
+    && isFactId(value.localId)
+    && typeof value.name === "string"
+    && typeof value.moduleKind === "string"
+    && MODULE_KINDS.has(value.moduleKind)
+    && typeof value.exported === "boolean"
+    && isRange(value.range);
+}
+
+function isNamespaceFact(value: unknown): boolean {
+  return isRecord(value)
+    && isFactId(value.localId)
+    && typeof value.name === "string"
+    && isOptionalFactId(value.ownerId)
+    && isRange(value.range);
+}
+
 function isFactArray(value: unknown, item: (value: unknown) => boolean): boolean {
   return Array.isArray(value) && value.every(item);
 }
@@ -198,17 +326,17 @@ function hasFactsShape(value: unknown): value is ParsedFactsBlob {
     && isFactArray(value.callSites, isCallFact)
     && isFactArray(value.bindingSeeds, isBindingFact)
     && isFactArray(value.declaredTypeAnnotations, isDeclaredTypeFact)
-    && Array.isArray(value.expressions)
-    && Array.isArray(value.members)
-    && Array.isArray(value.assignments)
-    && Array.isArray(value.parameters)
-    && Array.isArray(value.returns)
-    && Array.isArray(value.constructors)
-    && Array.isArray(value.inheritances)
-    && Array.isArray(value.implementations)
-    && Array.isArray(value.aliases)
-    && Array.isArray(value.modules)
-    && Array.isArray(value.namespaces);
+    && isFactArray(value.expressions, isExpressionFact)
+    && isFactArray(value.members, isMemberFact)
+    && isFactArray(value.assignments, isAssignmentFact)
+    && isFactArray(value.parameters, isParameterFact)
+    && isFactArray(value.returns, isReturnFact)
+    && isFactArray(value.constructors, isConstructorFact)
+    && isFactArray(value.inheritances, isInheritanceFact)
+    && isFactArray(value.implementations, isImplementationFact)
+    && isFactArray(value.aliases, isAliasFact)
+    && isFactArray(value.modules, isModuleFact)
+    && isFactArray(value.namespaces, isNamespaceFact);
 }
 
 function canonicalJson(value: unknown): string {
