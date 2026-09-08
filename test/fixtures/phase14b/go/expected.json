@@ -1,0 +1,7 @@
+{
+  "language": "go",
+  "grammar": "tree-sitter-go@0.25.0",
+  "requiredFacts": ["packages", "imports", "receivers", "interfaces", "method-sets", "direct-calls"],
+  "uncertainty": { "interfaceDispatch": "ambiguous", "partialParse": "unsupported" },
+  "resolverCases": { "concreteReceiver": "resolved", "interfaceDispatch": "ambiguous", "zeroCandidateBudget": "budget_exhausted", "repeatedExtraction": "deterministic", "coldWarmFixture": "equivalent" }
+}
