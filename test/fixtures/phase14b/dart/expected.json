@@ -1,0 +1,7 @@
+{
+  "language": "dart",
+  "grammar": "@driftlog/tree-sitter-dart@1.0.4",
+  "imports": ["package:flutter/material.dart", "dart:math"],
+  "ownership": ["Base", "LoggableOne", "LoggableTwo", "Runnable", "Worker"],
+  "uncertain": ["mixin-selection", "dynamic-member", "framework-semantics"]
+}
