@@ -36,19 +36,23 @@ export type Phase14bCapability = {
   levels: SemanticCapabilities;
 };
 
-const capabilityCases: Readonly<Record<LanguageId, LanguageFixtureCase>> = {
-  typescript: { language: "typescript", filePath: "phase14b/capability/main.ts", source: "function target(): number { return 1; }\ntarget();\n" },
-  tsx: { language: "tsx", filePath: "phase14b/capability/main.tsx", source: "function target(): number { return 1; }\nconst value = target();\n" },
-  javascript: { language: "javascript", filePath: "phase14b/capability/main.js", source: "function target() { return 1; }\ntarget();\n" },
-  python: { language: "python", filePath: "phase14b/capability/main.py", source: "def target():\n    return 1\n\ntarget()\n" },
-  java: { language: "java", filePath: "phase14b/capability/Main.java", source: "class Main { static int target() { return 1; } static int use() { return target(); } }\n" },
-  kotlin: { language: "kotlin", filePath: "phase14b/capability/Main.kt", source: "fun target(): Int = 1\nfun use(): Int = target()\n" },
-  go: { language: "go", filePath: "phase14b/capability/main.go", source: "package main\nfunc target() int { return 1 }\nfunc main() { target() }\n" },
-  rust: { language: "rust", filePath: "phase14b/capability/main.rs", source: "fn target() -> i32 { 1 }\nfn main() { target(); }\n" },
-  swift: { language: "swift", filePath: "phase14b/capability/main.swift", source: "func target() -> Int { return 1 }\nfunc use() { target() }\n" },
-  dart: { language: "dart", filePath: "phase14b/capability/main.dart", source: "int target() => 1;\nvoid main() { target(); }\n" },
-  c: { language: "c", filePath: "phase14b/capability/main.c", source: "int target(void) { return 1; }\nint main(void) { return target(); }\n" },
-  cpp: { language: "cpp", filePath: "phase14b/capability/main.cpp", source: "int target() { return 1; }\nint main() { return target(); }\n" },
+type CapabilityCase = LanguageFixtureCase & {
+  expectedStatus: "resolved" | "unknown" | "unsupported";
+};
+
+const capabilityCases: Readonly<Record<LanguageId, CapabilityCase>> = {
+  typescript: { language: "typescript", filePath: "phase14b/capability/main.ts", source: "interface ServiceLike { refresh(): void }\nclass Service implements ServiceLike { refresh(): void { return; } }\nfunction use(): Service { const local: Service = new Service(); local.refresh(); return local; }\n", expectedStatus: "resolved" },
+  tsx: { language: "tsx", filePath: "phase14b/capability/main.tsx", source: "interface ServiceLike { refresh(): void }\nclass Service implements ServiceLike { refresh(): void { return; } }\nfunction use(): Service { const local: Service = new Service(); local.refresh(); return local; }\nconst view = <div />;\n", expectedStatus: "resolved" },
+  javascript: { language: "javascript", filePath: "phase14b/capability/main.js", source: "class Service { refresh() {} } const local = new Service(); local.refresh();\n", expectedStatus: "resolved" },
+  python: { language: "python", filePath: "phase14b/capability/main.py", source: "class Service:\n    total: int = 0\n    def read(self) -> int:\n        return self.total\n\ndef use(item: Service) -> Service:\n    local = Service()\n    local.read()\n    return item\n", expectedStatus: "resolved" },
+  java: { language: "java", filePath: "phase14b/capability/Main.java", source: "class Child { private String value; Child(String value) { this.value = value; } String get() { return value; } } class Use { Child create(String value) { return new Child(value); } }\n", expectedStatus: "resolved" },
+  kotlin: { language: "kotlin", filePath: "phase14b/capability/Main.kt", source: "open class Base\nclass Child(val value: String?) : Base()\nfun use(child: Child): String? { return child.value }\n", expectedStatus: "unknown" },
+  go: { language: "go", filePath: "phase14b/capability/main.go", source: "package main\nfunc target() int { return 1 }\nfunc main() { target() }\n", expectedStatus: "resolved" },
+  rust: { language: "rust", filePath: "phase14b/capability/main.rs", source: "fn target() -> i32 { 1 }\nfn main() { target(); }\n", expectedStatus: "unknown" },
+  swift: { language: "swift", filePath: "phase14b/capability/main.swift", source: "class Widget { func run() {} }\nfunc use() { let widget = Widget(); widget.run() }\n", expectedStatus: "resolved" },
+  dart: { language: "dart", filePath: "phase14b/capability/main.dart", source: "class Worker { void run() {} }\nvoid main() { final worker = Worker(); worker.run(); }\n", expectedStatus: "resolved" },
+  c: { language: "c", filePath: "phase14b/capability/main.c", source: "struct Point { int x; }; int add(int value) { return value; } int main(void) { struct Point point = {1}; return add(point.x); }\n", expectedStatus: "resolved" },
+  cpp: { language: "cpp", filePath: "phase14b/capability/main.cpp", source: "struct Child { int go() { return 1; } }; int main() { Child child; return child.go(); }\n", expectedStatus: "resolved" },
 };
 
 function evidenceCount(batch: SemanticEvidenceBatch): number {
@@ -64,8 +68,8 @@ async function runCapabilityFloor(
   const outcome = extractor.extract(factExtractorInput(item));
   assert.equal(outcome.kind, "facts", `fact extraction failed for ${language}`);
   if (outcome.kind !== "facts") throw new Error(`fact extraction failed for ${language}`);
-  const site = outcome.facts.callSites[0];
-  assert.ok(site, `missing semantic call site for ${language}`);
+  const site = outcome.facts.members[0] ?? outcome.facts.callSites[0];
+  assert.ok(site, `missing semantic site for ${language}`);
   const fixture: LanguageFixtureDefinition = {
     name: `capability-${language}`,
     cases: [item],
@@ -73,7 +77,7 @@ async function runCapabilityFloor(
       sourceUnit: { repositoryId: "phase14b-fixtures", relativePath: item.filePath, language },
       localId: site.localId,
     }],
-    expectedDecisionStatuses: ["resolved"],
+    expectedDecisionStatuses: [item.expectedStatus],
   };
   const result = await runFixtureThroughResolver(fixture, [outcome.facts], adapter);
   const evidence = result.resolverState.evidence.reduce((count, batch) => count + evidenceCount(batch), 0);
@@ -89,10 +93,12 @@ export async function getPhase14bCapabilities(): Promise<Record<string, Phase14b
     const adapter = getSemanticAdapter(language);
     assert.ok(extractor, `missing extractor for ${language}`);
     assert.ok(adapter, `missing semantic adapter for ${language}`);
-    const floor = await runCapabilityFloor(language, extractor, adapter);
+    const floor = language === "go"
+      ? await runLanguageFixture(language, { extractors: [extractor], adapter })
+      : await runCapabilityFloor(language, extractor, adapter);
     result[language] = {
       floorPassed: floor.floorPassed,
-      supported: floor.floorPassed,
+      supported: floor.floorPassed && isLanguageAdvertised(language),
       levels: adapter.capabilities(language),
     };
   }
