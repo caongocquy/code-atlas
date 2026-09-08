@@ -15,6 +15,24 @@ import type {
   ResolutionDecision,
 } from "../src/core/graph/resolution.types.js";
 import type { GraphEdge } from "../src/core/graph/types.js";
+import { symbolIdentity, symbolIdentityKey } from "../src/core/graph/resolver/identities.js";
+
+const sourceIdentity = symbolIdentity({
+  repositoryId: "repo",
+  relativePath: "source.ts",
+  language: "typescript",
+  kind: "function",
+  qualifiedName: "source",
+  discriminator: "1",
+});
+const targetIdentity = symbolIdentity({
+  repositoryId: "repo",
+  relativePath: "target.ts",
+  language: "typescript",
+  kind: "function",
+  qualifiedName: "target",
+  discriminator: "1",
+});
 
 function edgeWithProvenance(
   input: Pick<EdgeResolutionProvenance, "strategy" | "confidence" | "resolutionVersion">
@@ -31,8 +49,8 @@ function edgeWithProvenance(
         endLine: index + 2,
         evidenceId: `evidence-${index}`,
       })),
-      sourceLogicalIdentity: input.sourceLogicalIdentity ?? "source-key",
-      targetLogicalIdentity: input.targetLogicalIdentity ?? "target-key",
+      sourceLogicalIdentity: input.sourceLogicalIdentity ?? symbolIdentityKey(sourceIdentity),
+      targetLogicalIdentity: input.targetLogicalIdentity ?? symbolIdentityKey(targetIdentity),
     },
   );
 }
@@ -58,8 +76,8 @@ test("accepted edge provenance is categorical and bounded", () => {
   assert.equal(typeof edge.confidence, "undefined");
   assert.equal(edge.resolution?.evidence.length, MAX_COMPACT_EVIDENCE);
   assert.deepEqual(edge.resolution?.evidence.slice(0, 2).map((item) => item.sourceUnit), ["a.ts", "a.ts"]);
-  assert.equal(edge.resolution?.sourceLogicalIdentity, "source-key");
-  assert.equal(edge.resolution?.targetLogicalIdentity, "target-key");
+  assert.equal(edge.resolution?.sourceLogicalIdentity, symbolIdentityKey(sourceIdentity));
+  assert.equal(edge.resolution?.targetLogicalIdentity, symbolIdentityKey(targetIdentity));
   assert.equal(edge.from, "sqlite-source");
   assert.equal(edge.to, "sqlite-target");
 });
@@ -75,10 +93,35 @@ test("weak evidence produces a diagnostic and no accepted edge", () => {
   }), /cannot use weak confidence/);
 });
 
-test("diagnostic reasons are bounded and decision kinds map deterministically", () => {
+test("malformed logical identities are rejected", () => {
+  assert.throws(() => edgeWithProvenance({
+    strategy: "receiver-member",
+    confidence: "strong",
+    resolutionVersion: "1.0.0",
+    sourceLogicalIdentity: "sqlite-source",
+  }), /canonical symbol identity/);
+  assert.throws(() => edgeWithProvenance({
+    strategy: "receiver-member",
+    confidence: "strong",
+    resolutionVersion: "1.0.0",
+    targetLogicalIdentity: JSON.stringify(["repo", "target.ts", "typescript", "function", " target ", "1"]),
+  }), /canonical symbol identity/);
+});
+
+test("resolved diagnostic mapping accepts a complete decision", () => {
+  const decision = {
+    status: "resolved",
+    language: "typescript",
+    strategy: "receiver-member",
+    confidence: "strong",
+    targetLogicalIdentity: symbolIdentityKey(targetIdentity),
+  } as const satisfies ResolutionDecision;
+  assert.equal(diagnosticFor(decision, "main.ts", "typescript").kind, "resolved");
+});
+
+test("non-resolved diagnostic reasons are bounded and map deterministically", () => {
   const reason = "x".repeat(MAX_DIAGNOSTIC_REASON_LENGTH + 20);
   const statuses = [
-    ["resolved", "resolved"],
     ["ambiguous", "ambiguous"],
     ["unknown", "unknown"],
     ["unsupported", "unsupported"],

@@ -3,6 +3,7 @@ import type {
   EdgeResolutionProvenance,
 } from "../resolution.types.js";
 import type { GraphEdge } from "../types.js";
+import { isSymbolIdentityKey } from "./identities.js";
 
 export type { CompactEvidence, EdgeResolutionProvenance } from "../resolution.types.js";
 
@@ -32,6 +33,9 @@ export function withProvenance(edge: GraphEdge, provenance: EdgeResolutionProven
   }
   if (!provenance.strategy || !provenance.resolutionVersion || !provenance.sourceLogicalIdentity || !provenance.targetLogicalIdentity) {
     throw new TypeError("edge provenance requires strategy, version, and logical identities");
+  }
+  if (!isSymbolIdentityKey(provenance.sourceLogicalIdentity) || !isSymbolIdentityKey(provenance.targetLogicalIdentity)) {
+    throw new TypeError("edge provenance requires canonical symbol identity keys");
   }
   for (const item of provenance.evidence) validateEvidence(item);
 

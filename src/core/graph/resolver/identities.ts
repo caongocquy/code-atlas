@@ -1,3 +1,4 @@
+import { LANGUAGE_IDS, type SupportedLanguage } from "../parsers/types.js";
 import type { LanguageId } from "./types.js";
 
 export type SourceUnitIdentity = {
@@ -56,4 +57,23 @@ export function symbolIdentityKey(input: SymbolIdentity): string {
     value.qualifiedName,
     value.discriminator,
   ]);
+}
+
+export function isSymbolIdentityKey(value: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!Array.isArray(parsed) || parsed.length !== 6 || parsed.some((item) => typeof item !== "string" || item.length === 0)) return false;
+    const [repositoryId, relativePath, language, kind, qualifiedName, discriminator] = parsed;
+    if (!LANGUAGE_IDS.includes(language as SupportedLanguage)) return false;
+    return symbolIdentityKey({
+      repositoryId,
+      relativePath,
+      language: language as SupportedLanguage,
+      kind,
+      qualifiedName,
+      discriminator,
+    }) === value;
+  } catch {
+    return false;
+  }
 }
