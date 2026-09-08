@@ -1,0 +1,6 @@
+{
+  "language": "swift",
+  "grammar": "tree-sitter-swift@0.7.1",
+  "extensionOwnership": "Widget",
+  "uncertain": ["protocol-witness", "overload"]
+}
