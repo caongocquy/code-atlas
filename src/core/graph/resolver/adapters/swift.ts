@@ -19,7 +19,10 @@ export function normalizeSwiftFacts(facts: ParsedFactsBlob, context: AdapterCont
   const scopeOf = (localId: string | undefined): ScopeIdentity => ({ sourceUnit: unit, localId: localId ?? "scope:1", parentLocalId: localId ? scopes.get(localId as FactLocalId)?.parentId : undefined });
   const typeOf = (value: string | undefined): TypeRef | undefined => {
     if (!value) return undefined;
-    const name = value.replace(/^\s*:/, "").replace(/\?$/, "").trim().split(".").at(-1) ?? value;
+    let normalized = value.trim();
+    if (normalized.startsWith(":")) normalized = normalized.slice(1).trim();
+    if (normalized.endsWith("?")) normalized = normalized.slice(0, -1).trim();
+    const name = normalized.split(".").at(-1) ?? normalized;
     const candidate = byName.get(name);
     return candidate?.length === 1 ? { kind: "known", symbol: candidate[0]! } : { kind: "named", name };
   };

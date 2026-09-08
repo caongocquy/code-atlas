@@ -1,0 +1,31 @@
+# Task 3.7 report: Swift semantic floor
+
+## Result
+
+Swift AST extraction and semantic normalization are present for imports, classes,
+structs, enums, protocols, explicitly named extensions, initializers, methods,
+properties, constructors, and member calls. Extension ownership is emitted only
+when the owner is statically named and found in the AST. Protocol witness and
+overload dispatch remain explicit diagnostics/uncertainty; no compiler or
+runtime semantics are guessed.
+
+The implementation uses the existing native `tree-sitter` parser runtime and
+`tree-sitter-swift@0.7.1`. It does not add packages or registry integration,
+reparse source, use regex semantics, or use a compiler/runtime/source fallback.
+
+## Verification
+
+- `node --import tsx/esm --test test/phase14b-language-swift.test.ts test/phase14b-facts-contract.test.ts test/phase14b-resolver-contract.test.ts` — 11/11 passed.
+- `CI=true pnpm exec tsc --noEmit` — passed.
+- `git diff --check` — passed.
+- GitNexus `impact` was attempted for the Swift symbols, but the available index
+  is stale and belongs to another worktree/branch; both lookups returned
+  `Target not found`, so no definitive blast-radius claim is made.
+- `detect_changes` is run before commit as required; the stale-index limitation
+  is recorded here if it remains in the output.
+
+## Scope
+
+Changed only the Swift adapter constraint normalization and this report after
+the existing Task 3.7 implementation commit. No package, registry, or unrelated
+worktree changes were made.
