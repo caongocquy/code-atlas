@@ -1,10 +1,6 @@
 import type Parser from "tree-sitter";
 
-import {
-  getLanguageAdapterForLanguage,
-  parserMetadata,
-  parseSource,
-} from "../graph/parsers/code-parser.js";
+import { parserMetadata, parseSource } from "../graph/parsers/code-parser.js";
 import type {
   BindingSeedFact,
   CallSiteFact,
@@ -19,14 +15,15 @@ import type {
   ReferenceFact,
   SourceRangeFact,
 } from "./facts.types.js";
-import type { SupportedLanguage } from "../graph/parsers/types.js";
+import type { LanguageId } from "../graph/parsers/types.js";
+import {
+  getLanguageFactExtractor,
+  registerLanguageFactExtractor,
+  type LanguageFactExtractorInput,
+} from "./language-fact-extractor.js";
 
-export type FactExtractionInput = {
-  source: string;
-  language: SupportedLanguage;
-  contentHash: string;
-  factsVersion: string;
-  factsSchemaVersion: string;
+export type FactExtractionInput = Omit<LanguageFactExtractorInput, "filePath"> & {
+  filePath?: string;
 };
 
 export type FactExtractionOutcome =
@@ -207,20 +204,14 @@ function scopeForSymbol(
       || left.localId.localeCompare(right.localId))[0]?.localId;
 }
 
-export function extractParsedFacts(input: FactExtractionInput): FactExtractionOutcome {
+export function extractFactsForLanguage(input: LanguageFactExtractorInput): FactExtractionOutcome {
   try {
-    if (!getLanguageAdapterForLanguage(input.language)) {
-      return { kind: "infrastructure_failure", error: new Error(`No parser adapter for ${input.language}`) };
-    }
-
-    const extension = input.language === "typescript"
-      ? "ts"
-      : input.language === "tsx"
-        ? "tsx"
-        : "js";
-    const parsed = parseSource(input.source, `source.${extension}`);
+    const parsed = parseSource(input.source, input.filePath);
     if (!parsed) {
       return { kind: "infrastructure_failure", error: new Error(`Unable to parse ${input.language} source`) };
+    }
+    if (parsed.adapter.language !== input.language) {
+      return { kind: "infrastructure_failure", error: new Error(`Parser identity mismatch for ${input.language}`) };
     }
 
     const root = parsed.tree.rootNode;
@@ -377,4 +368,27 @@ export function extractParsedFacts(input: FactExtractionInput): FactExtractionOu
 
 export function materializeFileFacts(relativePath: string, facts: ParsedFactsBlob): MaterializedFileFacts {
   return { relativePath, facts };
+}
+
+for (const language of ["typescript", "tsx", "javascript", "python"] as const) {
+  registerLanguageFactExtractor({
+    language,
+    extract: extractFactsForLanguage,
+  });
+}
+
+export function extractParsedFacts(input: FactExtractionInput): FactExtractionOutcome {
+  const filePath = input.filePath ?? `source.${input.language === "typescript"
+    ? "ts"
+    : input.language === "tsx"
+      ? "tsx"
+      : input.language === "javascript"
+        ? "js"
+        : input.language === "python"
+          ? "py"
+          : "unknown"}`;
+  const extractor = getLanguageFactExtractor(input.language as LanguageId);
+  return extractor === undefined
+    ? { kind: "infrastructure_failure", error: new Error("Parser or extractor unavailable") }
+    : extractor.extract({ ...input, filePath, language: input.language as LanguageId });
 }

@@ -2,12 +2,14 @@ import path from "node:path";
 
 import { tsxAdapter, typescriptAdapter } from "./adapters/typescript.js";
 import { javascriptAdapter } from "./adapters/javascript.js";
+import { pythonAdapter } from "./adapters/python.js";
 import type { LanguageAdapter } from "./types.js";
 
 const adapters: LanguageAdapter[] = [
   typescriptAdapter,
   tsxAdapter,
   javascriptAdapter,
+  pythonAdapter,
 ];
 
 export function getLanguageAdapter(filePath: string): LanguageAdapter | null {

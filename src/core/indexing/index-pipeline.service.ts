@@ -133,7 +133,7 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
           const stable = await extractStableFacts(
             relativePath,
             readSource,
-            (read) => extractParsedFacts({ source: read.source, language: current.language, contentHash: read.contentHash, factsVersion: CURRENT_INDEX_VERSION_DOMAINS.factsVersion, factsSchemaVersion: CURRENT_INDEX_VERSION_DOMAINS.schemaVersion }),
+            (read) => extractParsedFacts({ filePath: relativePath, source: read.source, language: current.language, contentHash: read.contentHash, factsVersion: CURRENT_INDEX_VERSION_DOMAINS.factsVersion, factsSchemaVersion: CURRENT_INDEX_VERSION_DOMAINS.schemaVersion }),
           );
           source = stable.source;
           facts = stable.facts;
@@ -146,7 +146,7 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
         const stable = await extractStableFacts(
           relativePath,
           readSource,
-          (read) => extractParsedFacts({ source: read.source, language: current.language, contentHash: read.contentHash, factsVersion: CURRENT_INDEX_VERSION_DOMAINS.factsVersion, factsSchemaVersion: CURRENT_INDEX_VERSION_DOMAINS.schemaVersion }),
+          (read) => extractParsedFacts({ filePath: relativePath, source: read.source, language: current.language, contentHash: read.contentHash, factsVersion: CURRENT_INDEX_VERSION_DOMAINS.factsVersion, factsSchemaVersion: CURRENT_INDEX_VERSION_DOMAINS.schemaVersion }),
         );
         source = stable.source;
         facts = stable.facts;
