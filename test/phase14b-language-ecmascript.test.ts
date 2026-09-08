@@ -161,3 +161,36 @@ test("ECMAScript wrappers reject a mismatched singular language", () => {
   const outcome = javascriptFactExtractor.extract(input);
   assert.equal(outcome.kind, "infrastructure_failure");
 });
+
+test("malformed ECMAScript cannot resolve a strong member/call authoritatively", async () => {
+  const filePath = "phase14b/ecmascript/malformed.ts";
+  const malformed = "class Service { refresh() {} } const broken: Service = ; broken.refresh();";
+  const outcome = typescriptFactExtractor.extract(factExtractorInput({ filePath, source: malformed, language: "typescript" }));
+  assert.equal(outcome.kind, "facts");
+  if (outcome.kind !== "facts") return;
+  assert.equal(outcome.facts.parseStatus, "deterministic_partial");
+  const member = outcome.facts.members[0];
+  assert.ok(member);
+  const result = await runFixtureThroughResolver(
+    { name: "ecmascript-malformed", cases: [{ filePath, source: malformed, language: "typescript" }], sites: [{ sourceUnit: { repositoryId: "phase14b-fixtures", relativePath: filePath, language: "typescript" }, localId: member.localId }] },
+    [outcome.facts], ecmascriptSemanticAdapter,
+  );
+  assert.notEqual(result.decisions[0]?.status, "resolved");
+  assert.equal(result.decisions[0]?.status, "unsupported");
+});
+
+test("anonymous functions and arrows get deterministic AST-local callable ownership", () => {
+  const filePath = "phase14b/ecmascript/anonymous.ts";
+  const anonymous = "const first = (input: Service): Service => input; const second = (value: Service): Service => value;";
+  const outcome = typescriptFactExtractor.extract(factExtractorInput({ filePath, source: anonymous, language: "typescript" }));
+  assert.equal(outcome.kind, "facts");
+  if (outcome.kind !== "facts") return;
+  assert.equal(outcome.facts.parameters.length, 2);
+  assert.equal(outcome.facts.returns.length, 2);
+  const parameterOwners = outcome.facts.parameters.map((item) => item.ownerSymbolId);
+  const returnOwners = outcome.facts.returns.map((item) => item.ownerSymbolId);
+  assert.deepEqual(parameterOwners, returnOwners);
+  assert.equal(new Set(parameterOwners).size, 2);
+  assert.ok(parameterOwners.every((owner) => owner !== "symbol:0"));
+  assert.ok(parameterOwners.every((owner) => owner.startsWith("symbol:arrow_function:")));
+});

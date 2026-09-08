@@ -122,6 +122,11 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
         }
       }
       if (node.type === "method_signature" && nodeName) symbolFor(node, "method", nodeName);
+      if (isCallable && !callable) {
+        const localId = `symbol:${node.type}:${node.startIndex}` as FactLocalId;
+        callable = { localId, name: `${node.type}@${node.startIndex}`, kind: "function", range: range(node), scopeId: scopeStack.at(-1), declaredQualifiedName: `${node.type}@${node.startIndex}` };
+        symbols.push(callable);
+      }
       if (isCallable && callable) callableStack.push(callable);
       if (node.type === "import_statement") processImport(node);
       if (node.type === "export_statement") processExport(node);
@@ -169,7 +174,13 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
       }
       if (node.type === "return_statement") {
         const value = node.namedChildren[0];
-        returns.push({ localId: next("return"), ownerSymbolId: callableStack.at(-1)?.localId ?? ("symbol:0" as FactLocalId), expressionId: value ? expressionFor(value, value.type === "member_expression" ? "member" : "identifier").localId : undefined, range: range(node) });
+        const owner = callableStack.at(-1);
+        if (owner) returns.push({ localId: next("return"), ownerSymbolId: owner.localId, expressionId: value ? expressionFor(value, value.type === "member_expression" ? "member" : "identifier").localId : undefined, range: range(node) });
+      }
+      if (node.type === "arrow_function") {
+        const body = node.childForFieldName("body");
+        const owner = callableStack.at(-1);
+        if (body && body.type !== "statement_block" && owner) returns.push({ localId: next("return"), ownerSymbolId: owner.localId, expressionId: expressionFor(body, body.type === "member_expression" ? "member" : "identifier").localId, range: range(body) });
       }
       if (node.type === "identifier" && node.parent && !["variable_declarator", "required_parameter", "optional_parameter", "formal_parameter", "type_annotation", "type_identifier", "import_specifier", "export_specifier"].includes(node.parent.type)) references.push({ localId: next("reference"), name: node.text, scopeId: scopeStack.at(-1), range: range(node) });
       for (const child of node.namedChildren) visit(child);

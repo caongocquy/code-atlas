@@ -30,3 +30,18 @@ Fix-loop validation:
 - `node --import tsx/esm --test test/phase14b-language-ecmascript.test.ts test/phase14b-facts-contract.test.ts` — 12/12 pass.
 - `git diff --check` — pass.
 - No registry or package files changed.
+
+## Fix loop round 2
+
+- Added the smallest shared `uniqueTargetGate` correction: parse uncertainty and semantic unsupported diagnostics are checked before accepting candidates, so partial/error/unsupported evidence cannot produce a `resolved` decision. Parse uncertainty returns `unknown`; capability/compiler/framework/preprocessor unsupported diagnostics return `unsupported`.
+- Added a malformed-source regression proving a strong-looking ECMAScript member/call remains `unsupported`, never `resolved`.
+- Anonymous functions and arrows now receive deterministic AST-local callable symbols keyed by node kind and `startIndex`; the callable stack attaches parameters and explicit or implicit arrow returns to those symbols.
+- Added same-line multiple-arrow ownership regression coverage; no anonymous path uses `symbol:0`.
+- Preserved one `parseSource` call, AST-only semantics, and all prior import/export, chain, wrapper, and diagnostic behavior.
+- No registry or package files changed.
+
+Round-2 validation:
+
+- `CI=1 pnpm exec tsc --noEmit` — pass.
+- `node --import tsx/esm --test test/phase14b-language-ecmascript.test.ts test/phase14b-facts-contract.test.ts test/phase14b-resolver-decisions.test.ts test/phase14b-resolver-contract.test.ts test/phase14b-resolver-determinism.test.ts` — 26/26 pass.
+- `git diff --check` — pass.

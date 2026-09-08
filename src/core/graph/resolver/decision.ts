@@ -117,6 +117,16 @@ function budgetReason(input: ResolverInput): BudgetReason | undefined {
   return input.context.budget.failedOperations().map((kind) => mapping[kind]).find(Boolean);
 }
 
+function semanticUncertainty(input: ResolverInput): { status: "unknown"; reason: UnknownReason } | { status: "unsupported"; reason: UnsupportedReason } | undefined {
+  const codes = input.evidence.diagnostics.map((diagnostic) => diagnostic.code);
+  const unsupported = codes.find((code): code is UnsupportedReason => [
+    "language_capability_unsupported", "compiler_semantics_required", "framework_semantics_required", "preprocessor_semantics_required",
+  ].includes(code as UnsupportedReason));
+  if (unsupported) return { status: "unsupported", reason: unsupported };
+  if (codes.some((code) => code === "parse_uncertain" || code === "parse_error" || code === "semantic_parse_error")) return { status: "unknown", reason: "insufficient_evidence" };
+  return undefined;
+}
+
 export function uniqueTargetGate(
   input: ResolverInput,
   site: ResolutionSiteIdentity,
@@ -127,6 +137,11 @@ export function uniqueTargetGate(
   const accepted = merged.filter((candidate) => candidate.confidence !== "weak");
   const ordered = accepted;
   const decisionBase = base(input, site, attemptedStrategies, merged);
+  const uncertainty = semanticUncertainty(input);
+  if (uncertainty) {
+    input.context.diagnostics.add({ site, status: uncertainty.status, reason: uncertainty.reason });
+    return { ...decisionBase, ...uncertainty };
+  }
   if (ordered.length === 1) {
     const candidate = ordered[0];
     return { ...decisionBase, status: "resolved", target: candidate.target, strategy: candidate.strategy, confidence: candidate.confidence as "exact" | "strong" };
