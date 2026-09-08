@@ -14,6 +14,19 @@ Validation:
 - `./node_modules/.bin/tsc --noEmit` — pass.
 - `node --import tsx/esm --test test/phase14b-language-python.test.ts test/phase14b-facts-contract.test.ts test/phase14b-no-source-side-channel.test.ts` — 9/9 pass.
 - `git diff --check` — pass.
+
+## Fix loop round 2
+
+- Updated `runFixtureThroughResolver` to expose and optionally reuse one `LanguageFixtureResolverState` containing the exact same `ResolverMemo`, `TypeEnvironment`, budget, context, and normalized evidence across runs.
+- The harness tracks reads of existing memo entries through `memoHitCount`; the Python warm regression asserts state identity, pre-existing entries, and a positive warm memo hit count.
+- Cold and warm Python decisions and normalized facts remain semantically equal; normalization parallelism is no longer treated as warm-cache evidence.
+
+Fix-loop validation:
+
+- `./node_modules/.bin/tsc --noEmit` — pass.
+- `node --import tsx/esm --test test/phase14b-*.test.ts` — 64/64 pass.
+- `git diff --check` — pass.
+- Python extractor and adapter implementation were unchanged.
 - GitNexus impact was attempted before edits but could not open a worktree-local database; CodeAtlas inspect-change was run and found only the four Task 3.3 files, with incomplete legacy-index evidence.
 - The requested `detect_changes()` operation was unavailable in the exposed MCP/CLI environment; the available staged inspect/change-gate checks were used instead.
 

@@ -184,9 +184,14 @@ test("Python resolver reports budget exhaustion and repeats cold/warm determinis
 
   const repeated = pythonFactExtractor.extract(input);
   assert.deepEqual(repeated, outcome);
-  const fixture = { name: "python-repeat", cases: [{ filePath: input.filePath, source, language: "python" as const }], sites: [{ sourceUnit, localId: call.localId }] };
+  const member = outcome.facts.members.find((item) => item.memberName === "total" && item.receiverId);
+  assert.ok(member);
+  const fixture = { name: "python-repeat", cases: [{ filePath: input.filePath, source, language: "python" as const }], sites: [{ sourceUnit, localId: member.localId }] };
   const cold = await runFixtureThroughResolver(fixture, [outcome.facts], pythonSemanticAdapter, "cold", false);
-  const warm = await runFixtureThroughResolver(fixture, [outcome.facts], pythonSemanticAdapter, "warm", true);
+  assert.ok(cold.resolverState.memo.size() > 0);
+  const warm = await runFixtureThroughResolver(fixture, [outcome.facts], pythonSemanticAdapter, "warm", true, cold.resolverState);
+  assert.strictEqual(warm.resolverState, cold.resolverState);
+  assert.ok(warm.resolverState.memoHitCount > 0);
   assert.deepEqual(warm.decisions, cold.decisions);
   assert.deepEqual(warm.normalizedFacts, cold.normalizedFacts);
 });

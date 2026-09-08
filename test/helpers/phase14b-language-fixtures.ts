@@ -3,13 +3,14 @@ import { createHash } from "node:crypto";
 import type { ParsedFactsBlob } from "../../src/core/facts/facts.types.js";
 import type { FactExtractionOutcome } from "../../src/core/facts/facts-extractor.js";
 import type { LanguageFactExtractor, LanguageFactExtractorInput } from "../../src/core/facts/language-fact-extractor.js";
-import { createBudgetLedger } from "../../src/core/graph/resolver/budgets.js";
+import { createBudgetLedger, type BudgetLedger } from "../../src/core/graph/resolver/budgets.js";
 import { resolveSite, type ResolutionDecision } from "../../src/core/graph/resolver/resolver.js";
-import { createGenerationResolverContext } from "../../src/core/graph/resolver/generation-context.js";
+import { createGenerationResolverContext, type GenerationResolverContext } from "../../src/core/graph/resolver/generation-context.js";
 import { symbolIdentity, type ResolutionSiteIdentity, type SourceUnitIdentity, type SymbolIdentity } from "../../src/core/graph/resolver/identities.js";
-import { createResolverMemo } from "../../src/core/graph/resolver/memo.js";
+import { createResolverMemo, type ResolverMemo } from "../../src/core/graph/resolver/memo.js";
 import { createTypeEnvironment } from "../../src/core/graph/resolver/type-environment.js";
-import type { LanguageSemanticAdapter } from "../../src/core/graph/resolver/types.js";
+import type { LanguageSemanticAdapter, SemanticEvidenceBatch } from "../../src/core/graph/resolver/types.js";
+import type { TypeEnvironment } from "../../src/core/graph/resolver/type-environment.js";
 import type { LanguageId } from "../../src/core/graph/parsers/types.js";
 
 export type LanguageFixtureCase = {
@@ -36,6 +37,16 @@ export type LanguageFixtureResult = {
   usedSourceSemanticFallback: boolean;
   floorPassed: boolean;
   normalizedFacts: readonly ParsedFactsBlob[];
+  resolverState: LanguageFixtureResolverState;
+};
+
+export type LanguageFixtureResolverState = {
+  memo: ResolverMemo;
+  budget: BudgetLedger;
+  typeEnvironment: TypeEnvironment;
+  context: GenerationResolverContext;
+  evidence: readonly SemanticEvidenceBatch[];
+  memoHitCount: number;
 };
 
 const source = (language: LanguageId): string => {
@@ -121,6 +132,7 @@ export async function runFixtureThroughResolver(
   adapter: LanguageSemanticAdapter,
   memoMode: "cold" | "warm" = "cold",
   parallel = false,
+  resolverState?: LanguageFixtureResolverState,
 ): Promise<LanguageFixtureResult> {
   const repositoryIdentity = { id: "phase14b-fixtures", identityKey: "phase14b-fixtures", rootPath: "/phase14b-fixtures", displayName: "phase14b-fixtures" };
   const normalize = (factsBlob: ParsedFactsBlob, index: number) => adapter.normalizeFile(factsBlob, {
@@ -129,24 +141,48 @@ export async function runFixtureThroughResolver(
     sourceUnit: sourceUnit(fixture, index, factsBlob),
     resolutionVersion: "14b-2",
   });
-  const evidence = parallel ? await Promise.all(facts.map(normalize)) : facts.map(normalize);
-  const memo = createResolverMemo();
-  const budget = createBudgetLedger({ candidateExpansions: 1000, bindingHops: 1000, returnDepth: 1000, inheritanceDepth: 1000, memberCandidates: 1000, expressionNodes: 1000, propagationRounds: 1000 });
-  const context = createGenerationResolverContext({
-    generationId: `fixture:${fixture.name}:${memoMode}`,
-    repositoryIdentity,
-    parsedFactsView: facts,
-    languageRegistry: [adapter],
-    typeEnvironment: createTypeEnvironment({ generationId: `fixture:${fixture.name}`, symbols: symbolsFor(fixture, facts), evidence, budget, memo }),
-    budget,
-    memo,
-    resolutionVersion: "14b-2",
-  });
+  const evidence = resolverState?.evidence ?? (parallel ? await Promise.all(facts.map(normalize)) : facts.map(normalize));
+  const state = resolverState ?? createFixtureResolverState(fixture, facts, evidence, memoMode, repositoryIdentity, adapter);
   const decisions = fixture.sites.map((site) => {
     const index = fixture.cases.findIndex((item) => item.filePath === site.sourceUnit.relativePath && item.language === site.sourceUnit.language);
     const factsBlob = facts[index];
     if (!factsBlob) throw new Error(`missing facts for ${site.sourceUnit.relativePath}`);
-    return resolveSite({ facts: factsBlob, evidence: evidence[index], environment: context.typeEnvironment, context }, site);
+    return resolveSite({ facts: factsBlob, evidence: evidence[index], environment: state.typeEnvironment, context: state.context }, site);
   });
-  return { decisions, usedSourceSemanticFallback: false, floorPassed: decisions.every((decision) => decision.status === "resolved"), normalizedFacts: facts };
+  return { decisions, usedSourceSemanticFallback: false, floorPassed: decisions.every((decision) => decision.status === "resolved"), normalizedFacts: facts, resolverState: state };
+}
+
+function createFixtureResolverState(
+  fixture: LanguageFixtureDefinition,
+  facts: readonly ParsedFactsBlob[],
+  evidence: readonly SemanticEvidenceBatch[],
+  memoMode: "cold" | "warm",
+  repositoryIdentity: { id: string; identityKey: string; rootPath: string; displayName: string },
+  adapter: LanguageSemanticAdapter,
+): LanguageFixtureResolverState {
+  const state = { memoHitCount: 0 } as LanguageFixtureResolverState;
+  const backingMemo = createResolverMemo();
+  state.memo = {
+    get: (key) => {
+      const entry = backingMemo.get(key);
+      if (entry) state.memoHitCount += 1;
+      return entry;
+    },
+    set: (key, value) => backingMemo.set(key, value),
+    size: () => backingMemo.size(),
+  };
+  state.budget = createBudgetLedger({ candidateExpansions: 1000, bindingHops: 1000, returnDepth: 1000, inheritanceDepth: 1000, memberCandidates: 1000, expressionNodes: 1000, propagationRounds: 1000 });
+  state.evidence = evidence;
+  state.typeEnvironment = createTypeEnvironment({ generationId: `fixture:${fixture.name}`, symbols: symbolsFor(fixture, facts), evidence, budget: state.budget, memo: state.memo });
+  state.context = createGenerationResolverContext({
+    generationId: `fixture:${fixture.name}:${memoMode}`,
+    repositoryIdentity,
+    parsedFactsView: facts,
+    languageRegistry: [adapter],
+    typeEnvironment: state.typeEnvironment,
+    budget: state.budget,
+    memo: state.memo,
+    resolutionVersion: "14b-2",
+  });
+  return state;
 }
