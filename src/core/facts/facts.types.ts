@@ -132,6 +132,7 @@ export type MaterializedFileFacts = {
 
 export type IndexVersionDomains = {
   schemaVersion: string;
+  factsSchemaVersion: string;
   factsVersion: string;
   resolutionVersion: string;
   derivedVersion: string;

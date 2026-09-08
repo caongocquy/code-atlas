@@ -10,6 +10,7 @@ import {
 
 const versions: IndexVersionDomains = {
   schemaVersion: "schema-1",
+  factsSchemaVersion: "facts-schema-1",
   factsVersion: "facts-1",
   resolutionVersion: "resolution-1",
   derivedVersion: "derived-1",
