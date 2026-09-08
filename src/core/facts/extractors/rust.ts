@@ -50,7 +50,7 @@ function extractRustTreeFacts(parsed: ParsedSource | undefined, input: LanguageF
       let declared: ParsedSymbolFact | undefined;
       if (node.type === "mod_item") {
         const name = text(field(node, "name")) ?? text(node.namedChildren.find((child) => child.type === "identifier"));
-        if (name) { declared = addSymbol(node, "module", name); modules.push({ localId: next("module"), name, moduleKind: "module", exported: node.text.includes("pub"), range: range(node) }); }
+        if (name) { declared = addSymbol(node, "module", name); modules.push({ localId: next("module"), name, moduleKind: "module", exported: node.namedChildren.some((child) => child.type === "visibility_modifier"), range: range(node) }); }
       } else if (node.type === "use_declaration") {
         const clause = node.namedChildren[0];
         const aliasNode = clause?.type === "use_as_clause" ? clause.namedChildren.at(-1) : undefined;
@@ -66,10 +66,10 @@ function extractRustTreeFacts(parsed: ParsedSource | undefined, input: LanguageF
       } else if (node.type === "impl_item") {
         const typesInImpl = node.namedChildren.filter((child) => child.type === "type_identifier").map((child) => child.text);
         const subject = typesInImpl.at(-1); const trait = typesInImpl.length > 1 ? typesInImpl[0] : undefined;
-        if (subject) { const owner = symbolByName.get(unqualified(subject))?.find((item) => item.kind === "class"); if (owner) { typeStack.push(owner); if (trait) implementations.push({ localId: next("implementation"), subjectId: owner.localId, targetName: trait, relationKind: "trait_impl", range: range(node) }); } }
+        if (subject) { const owner = symbolByName.get(unqualified(subject))?.find((item) => item.kind === "class"); if (owner) { typeStack.push(owner); implementations.push({ localId: next("implementation"), subjectId: owner.localId, targetName: trait ?? unqualified(subject), relationKind: trait ? "trait_impl" : "extension", range: range(node) }); } }
       } else if (node.type === "function_item") {
         const name = text(field(node, "name")) ?? text(node.namedChildren.find((child) => child.type === "identifier"));
-        if (name) { const owner = typeStack.at(-1); declared = addSymbol(node, "method", name, owner ? `${owner.name}::${name}` : name); callableStack.push(declared); if (owner) members.push({ localId: next("member"), ownerSymbolId: owner.localId, memberName: name, memberKind: "method", access: node.parent?.parent?.type === "impl_item" && node.parent?.parent.text.includes(" for ") ? "instance" : "static", range: range(node) }); }
+        if (name) { const owner = typeStack.at(-1); const implNode = node.parent?.parent?.type === "impl_item" ? node.parent.parent : undefined; const traitImpl = implNode?.namedChildren.filter((child) => child.type === "type_identifier").length === 2; const hasSelfParameter = node.namedChildren.some((child) => child.type === "parameters" && child.namedChildren.some((parameter) => parameter.type === "self_parameter")); declared = addSymbol(node, "method", name, owner ? `${owner.name}::${name}` : name); callableStack.push(declared); if (owner) members.push({ localId: next("member"), ownerSymbolId: owner.localId, memberName: name, memberKind: "method", access: hasSelfParameter || traitImpl ? "instance" : "static", range: range(node) }); }
       } else if (node.type === "field_declaration") {
         const name = text(field(node, "name")); if (name && typeStack.at(-1)) { const member = addSymbol(node, "variable", name, `${typeStack.at(-1)!.name}::${name}`); members.push({ localId: next("member"), ownerSymbolId: typeStack.at(-1)!.localId, memberName: name, memberKind: "field", access: "instance", range: range(node) }); const typeNode = field(node, "type"); if (typeNode) types.push({ localId: next("type"), ownerId: member.localId, text: typeNode.text, range: range(typeNode) }); }
       } else if (node.type === "parameter") {

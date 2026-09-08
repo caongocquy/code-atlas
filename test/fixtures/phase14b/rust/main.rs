@@ -38,6 +38,9 @@ fn generic<T: Render>(value: T) {
 fn main() {
     let item = Alias::new(1);
     let value = item.get();
+    let deref_item = &*item;
+    let deref_value = (*deref_item).get();
     generic(item);
     let _state = State::Done(value);
+    let _ = deref_value;
 }

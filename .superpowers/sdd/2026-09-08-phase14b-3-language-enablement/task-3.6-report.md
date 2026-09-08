@@ -20,3 +20,13 @@ Implemented only the Rust AST extractor/adapter floor for modules, `use` aliases
 - `test/fixtures/phase14b/rust/main.rs`
 - `test/fixtures/phase14b/rust/expected.json`
 - `test/phase14b-language-rust.test.ts`
+
+## Reviewer loop 1
+
+- Inherent `impl Thing` methods now use AST structure: `&self`/`&mut self` methods are instance members; associated functions without a self parameter remain static. Trait and inherent ownership are emitted as `trait_impl` and `extension` implementation facts.
+- Added a concrete `&*` / `(*value).method()` fixture site and assert explicit `runtime_dispatch` uncertainty.
+- Added real `memberCandidates: 0` resolver budget coverage with `budget_exhausted`, plus positive warm memo hits and shared resolver-state reuse.
+- Asserted the complete extracted parser identity (`tree-sitter`, `0.25.1`, `tree-sitter-rust`, `0.24.0`) rather than only fixture metadata.
+- Replaced Rust extractor source-text checks for visibility/trait impl classification with Tree-sitter node kinds/fields. No compiler/runtime/regex/reparse/source semantic fallback, package, registry, or other-language changes were added.
+
+Loop 1 validation: focused Rust tests 5/5 passed, local `tsc --noEmit` passed, and `git diff --check` passed. GitNexus impact/detect limitations remain as documented because the available indexes do not contain this worktree's current Track 14B symbols.
