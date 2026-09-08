@@ -21,7 +21,9 @@ test("C family uses the pinned native parser identities and extracts structural 
   assert.ok(c.facts.symbols.some((item) => item.name === "add" && item.kind === "function")); assert.ok(c.facts.imports.some((item) => item.moduleSpecifier === "stdio.h")); assert.ok(c.facts.aliases.some((item) => item.aliasName === "Number"));
   assert.ok(c.facts.symbols.some((item) => item.name === "Point" && item.kind === "class")); assert.ok(c.facts.symbols.some((item) => item.name === "point" && item.kind === "variable")); assert.ok(c.facts.members.some((item) => item.memberName === "x"));
   assert.ok(cpp.facts.namespaces.some((item) => item.name === "demo")); assert.ok(cpp.facts.inheritances.some((item) => item.targetName === "Base")); assert.ok(cpp.facts.constructors.some((item) => item.constructedTypeName.includes("Child"))); assert.ok(cpp.facts.aliases.some((item) => item.aliasName === "Number")); assert.ok(cpp.facts.aliases.some((item) => item.aliasName === "Alias")); assert.ok(cpp.facts.aliases.some((item) => item.targetName === "demo::Thing"));
-  assert.equal(readFileSync(new URL("./fixtures/phase14b/c/expected.json", import.meta.url), "utf8").includes("exact-function-pointers"), true);
+  const cExpected = JSON.parse(readFileSync(new URL("./fixtures/phase14b/c/expected.json", import.meta.url), "utf8")) as { requiredFacts: readonly string[] };
+  const cppExpected = JSON.parse(readFileSync(new URL("./fixtures/phase14b/cpp/expected.json", import.meta.url), "utf8")) as { requiredFacts: readonly string[] };
+  assert.ok(cExpected.requiredFacts.includes("exact-function-pointers")); assert.deepEqual(cppExpected.requiredFacts, ["namespaces", "classes", "structs", "methods", "constructors", "inheritance", "direct-members", "aliases"]);
 });
 
 test("C resolves direct calls, keeps pointer ambiguity conservative, and preserves exact ranges", async () => {
@@ -45,6 +47,14 @@ test("preprocessor conditionals are explicit unsupported semantics", async () =>
   const outcome = cFactExtractor.extract(factExtractorInput({ filePath: "phase14b/c/preprocessor.c", source, language: "c" })); assert.equal(outcome.kind, "facts"); if (outcome.kind !== "facts") return;
   assert.ok(outcome.facts.parserDiagnostics.some((item) => item.startsWith("preprocessor_semantics:"))); const evidence = cFamilySemanticAdapter.normalizeFile(outcome.facts, { generationId: "preprocessor-test", repositoryIdentity: { id: "phase14b-fixtures", identityKey: "phase14b-fixtures", rootPath: "/phase14b-fixtures", displayName: "phase14b-fixtures" }, sourceUnit: { repositoryId: "phase14b-fixtures", relativePath: "phase14b/c/preprocessor.c", language: "c" }, resolutionVersion: "14b-2" }); assert.ok(evidence.diagnostics.some((item) => item.code === "preprocessor_semantics_required"));
   const call = outcome.facts.callSites.find((item) => item.calleeText === "selected"); assert.ok(call); const result = await runFixtureThroughResolver({ name: "c-preprocessor", cases: [{ filePath: "phase14b/c/preprocessor.c", source, language: "c" }], sites: [{ sourceUnit: { repositoryId: "phase14b-fixtures", relativePath: "phase14b/c/preprocessor.c", language: "c" }, localId: call!.localId }] }, [outcome.facts], cFamilySemanticAdapter); assert.equal(result.decisions[0]?.status, "unsupported");
+});
+
+test("C++ direct member calls resolve to the AST-owned method", async () => {
+  const source = "struct Child { int go() { return 1; } }; int main() { Child child; return child.go(); }";
+  const outcome = cppFactExtractor.extract(factExtractorInput({ filePath: "phase14b/cpp/direct-member.cpp", source, language: "cpp" })); assert.equal(outcome.kind, "facts"); if (outcome.kind !== "facts") return;
+  const declaration = outcome.facts.members.find((item) => item.memberName === "go" && item.ownerSymbolId); const call = outcome.facts.callSites.find((item) => item.calleeText === "child.go"); assert.ok(declaration); assert.ok(call);
+  const result = await runFixtureThroughResolver({ name: "cpp-direct-member", cases: [{ filePath: "phase14b/cpp/direct-member.cpp", source, language: "cpp" }], sites: [{ sourceUnit: { repositoryId: "phase14b-fixtures", relativePath: "phase14b/cpp/direct-member.cpp", language: "cpp" }, localId: call!.localId }] }, [outcome.facts], cFamilySemanticAdapter);
+  assert.equal(result.decisions[0]?.status, "resolved"); if (result.decisions[0]?.status === "resolved") assert.equal(result.decisions[0].target.qualifiedName, "Child::go");
 });
 
 test("C++ explicitly marks compiler-dependent template semantics unsupported", () => {
