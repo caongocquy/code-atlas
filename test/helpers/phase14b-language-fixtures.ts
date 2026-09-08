@@ -23,6 +23,7 @@ export type LanguageFixtureDefinition = {
   name: string;
   cases: readonly LanguageFixtureCase[];
   sites: readonly ResolutionSiteIdentity[];
+  expectedDecisionStatuses?: readonly ResolutionDecision["status"][];
 };
 
 export type LanguageFixtureDependencies = {
@@ -30,6 +31,7 @@ export type LanguageFixtureDependencies = {
   adapter: LanguageSemanticAdapter;
   memoMode?: "cold" | "warm";
   parallel?: boolean;
+  resolverState?: LanguageFixtureResolverState;
 };
 
 export type LanguageFixtureResult = {
@@ -85,10 +87,16 @@ class Holder {
     fun load(): Child = Child(null)
   }
 }
+class Use {
+  fun read(child: Child): String? {
+    return child.value
+  }
+}
 class Overload {
   fun run(value: String) { }
   fun run(value: Int) { }
 }
+fun use() { Overload().run(null) }
 fun String.extension(): String = this
 `;
     case "go": return "package main\n\nvar value = 1\n";
@@ -115,9 +123,10 @@ export const targetLanguages: readonly LanguageId[] = [
   "typescript", "tsx", "javascript", "python", "java", "kotlin", "go", "rust", "swift", "dart", "c", "cpp",
 ];
 
-export const parserFixtures: Readonly<Record<string, LanguageFixtureDefinition>> = Object.fromEntries(
-  targetLanguages.map((language) => [language, { name: language, cases: [fixtureCase(language)], sites: [] }]),
-);
+export const parserFixtures: Readonly<Record<string, LanguageFixtureDefinition>> = Object.fromEntries([
+  ...targetLanguages.map((language) => [language, { name: language, cases: [fixtureCase(language)], sites: [] }] as const),
+  ["jvm", { name: "jvm", cases: [fixtureCase("java"), fixtureCase("kotlin")], sites: [] }],
+]);
 
 export function factExtractorInput(item: LanguageFixtureCase): LanguageFactExtractorInput {
   return {
@@ -145,6 +154,28 @@ function symbolsFor(fixture: LanguageFixtureDefinition, facts: readonly ParsedFa
   })));
 }
 
+function prepareFixture(fixture: LanguageFixtureDefinition, facts: readonly ParsedFactsBlob[]): LanguageFixtureDefinition {
+  if (fixture.name !== "java" && fixture.name !== "kotlin" && fixture.name !== "jvm") return fixture;
+  const sites: ResolutionSiteIdentity[] = [];
+  const expectedDecisionStatuses: ResolutionDecision["status"][] = [];
+  for (const [index, factsBlob] of facts.entries()) {
+    const source = sourceUnit(fixture, index, factsBlob);
+    if (factsBlob.language === "java") {
+      const member = factsBlob.members.find((item) => item.memberName === "value");
+      if (member) { sites.push({ sourceUnit: source, localId: member.localId }); expectedDecisionStatuses.push("resolved"); }
+    }
+    if (factsBlob.language === "kotlin") {
+      const inheritance = factsBlob.inheritances.find((item) => item.relationKind === "extends");
+      const extension = factsBlob.implementations.find((item) => item.relationKind === "extension");
+      const overloadCall = factsBlob.callSites.find((item) => item.calleeText.includes(".run"));
+      if (inheritance) { sites.push({ sourceUnit: source, localId: inheritance.localId }); expectedDecisionStatuses.push("unknown"); }
+      if (extension) { sites.push({ sourceUnit: source, localId: extension.localId }); expectedDecisionStatuses.push("unknown"); }
+      if (overloadCall) { sites.push({ sourceUnit: source, localId: overloadCall.localId }); expectedDecisionStatuses.push("unknown"); }
+    }
+  }
+  return { ...fixture, sites, expectedDecisionStatuses };
+}
+
 export async function runLanguageFixture(name: string, deps: LanguageFixtureDependencies): Promise<LanguageFixtureResult> {
   const fixture = parserFixtures[name];
   if (!fixture) throw new Error(`unknown Phase14B fixture: ${name}`);
@@ -157,7 +188,7 @@ export async function runLanguageFixture(name: string, deps: LanguageFixtureDepe
     return outcome.facts;
   };
   const normalizedFacts = fixture.cases.map(extract);
-  return runFixtureThroughResolver(fixture, normalizedFacts, deps.adapter, deps.memoMode, deps.parallel);
+  return runFixtureThroughResolver(prepareFixture(fixture, normalizedFacts), normalizedFacts, deps.adapter, deps.memoMode, deps.parallel, deps.resolverState);
 }
 
 export async function runFixtureThroughResolver(
@@ -183,7 +214,11 @@ export async function runFixtureThroughResolver(
     if (!factsBlob) throw new Error(`missing facts for ${site.sourceUnit.relativePath}`);
     return resolveSite({ facts: factsBlob, evidence: evidence[index], environment: state.typeEnvironment, context: state.context }, site);
   });
-  return { decisions, usedSourceSemanticFallback: false, floorPassed: decisions.every((decision) => decision.status === "resolved"), normalizedFacts: facts, resolverState: state };
+  const expected = fixture.expectedDecisionStatuses;
+  const floorPassed = expected
+    ? expected.length > 0 && decisions.length === expected.length && decisions.every((decision, index) => decision.status === expected[index])
+    : decisions.every((decision) => decision.status === "resolved");
+  return { decisions, usedSourceSemanticFallback: false, floorPassed, normalizedFacts: facts, resolverState: state };
 }
 
 function createFixtureResolverState(

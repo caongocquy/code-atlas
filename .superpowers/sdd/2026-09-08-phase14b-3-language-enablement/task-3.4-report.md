@@ -13,6 +13,20 @@ Validation:
 - `node --import tsx/esm --test test/phase14b-*.test.ts`: 68/68 passing.
 - `./node_modules/.bin/tsc --noEmit`: passing.
 - `git diff --check`: passing.
+
+## Loop round 2 — non-vacuous shared JVM fixture
+
+- Added one `jvm` fixture containing the real Java and Kotlin source cases.
+- The fixture derives concrete `ResolutionSiteIdentity` entries from extracted facts: a Java resolved member site plus Kotlin inheritance/extension/overload sites with expected `unknown` outcomes.
+- `floorPassed` now requires a non-empty decision list whose statuses exactly match the fixture's expected outcomes; it cannot pass from `every(...)` over an empty list.
+- Cold and warm runs reuse the same `LanguageFixtureResolverState` and memo. The test asserts identical decisions/facts/evidence, state identity, and `memoHitCount > 0`.
+
+Loop round 2 validation:
+
+- `node --import tsx/esm --test test/phase14b-language-jvm.test.ts`: 8/8 passing.
+- `node --import tsx/esm --test test/phase14b-*.test.ts`: 72/72 passing.
+- `./node_modules/.bin/tsc --noEmit`: passing.
+- `git diff --check`: passing.
 - `pnpm exec tsc --noEmit`: pnpm attempted a non-TTY modules purge and aborted with `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`; the checked-in compiler binary was used successfully instead.
 - GitNexus impact was attempted for the existing resolver/parser/facts contracts, but the available index is stale and points at another branch; all queried targets returned `UNKNOWN`/not found.
 

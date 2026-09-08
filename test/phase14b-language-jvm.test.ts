@@ -142,34 +142,39 @@ test("JVM capabilities distinguish Java from Kotlin compiler-semantic coverage",
 });
 
 test("real Java and Kotlin fixtures exercise the full floor deterministically", async () => {
-  const javaCold = await runLanguageFixture("java", { extractors: [javaFactExtractor], adapter: jvmSemanticAdapter });
-  const javaWarm = await runLanguageFixture("java", { extractors: [javaFactExtractor], adapter: jvmSemanticAdapter, memoMode: "warm", parallel: true });
-  const kotlinCold = await runLanguageFixture("kotlin", { extractors: [kotlinFactExtractor], adapter: jvmSemanticAdapter });
-  const kotlinWarm = await runLanguageFixture("kotlin", { extractors: [kotlinFactExtractor], adapter: jvmSemanticAdapter, memoMode: "warm", parallel: true });
-  for (const [cold, warm, language, grammar] of [[javaCold, javaWarm, "java", "tree-sitter-java@0.23.5"], [kotlinCold, kotlinWarm, "kotlin", "tree-sitter-kotlin@0.3.8"]] as const) {
-    const facts = cold.normalizedFacts[0];
+  const jvmCold = await runLanguageFixture("jvm", { extractors: [javaFactExtractor, kotlinFactExtractor], adapter: jvmSemanticAdapter });
+  const jvmWarm = await runLanguageFixture("jvm", { extractors: [javaFactExtractor, kotlinFactExtractor], adapter: jvmSemanticAdapter, memoMode: "warm", parallel: true, resolverState: jvmCold.resolverState });
+  const javaFacts = jvmCold.normalizedFacts.find((facts) => facts.language === "java");
+  const kotlinFacts = jvmCold.normalizedFacts.find((facts) => facts.language === "kotlin");
+  for (const [facts, language, grammar] of [[javaFacts, "java", "tree-sitter-java@0.23.5"], [kotlinFacts, "kotlin", "tree-sitter-kotlin@0.3.8"]] as const) {
     assert.equal(facts?.language, language);
     assert.equal(facts?.parserIdentity.packageName, grammar.split("@")[0]);
     assert.equal(`${facts?.parserIdentity.packageName}@${facts?.parserIdentity.grammarVersion}`, grammar);
     assert.equal(facts?.parseStatus, "complete");
-    assert.deepEqual(warm.normalizedFacts, cold.normalizedFacts);
-    assert.deepEqual(warm.resolverState.evidence, cold.resolverState.evidence);
-    assert.equal(warm.usedSourceSemanticFallback, false);
-    assert.equal(cold.floorPassed, true);
   }
-  assert.ok(javaCold.normalizedFacts[0]?.modules.some((item) => item.name === "fixture.jvm"));
-  assert.ok(javaCold.normalizedFacts[0]?.imports.length);
-  assert.ok(javaCold.normalizedFacts[0]?.inheritances.length);
-  assert.ok(javaCold.normalizedFacts[0]?.implementations.length);
-  assert.ok(javaCold.normalizedFacts[0]?.constructors.length);
-  assert.ok(javaCold.normalizedFacts[0]?.members.length);
-  assert.ok(javaCold.normalizedFacts[0]?.parameters.length);
-  assert.ok(javaCold.normalizedFacts[0]?.returns.length);
-  assert.ok(kotlinCold.normalizedFacts[0]?.aliases.length);
-  assert.ok(kotlinCold.normalizedFacts[0]?.constructors.length);
-  assert.ok(kotlinCold.normalizedFacts[0]?.implementations.some((item) => item.relationKind === "extension"));
-  assert.ok(kotlinCold.resolverState.evidence[0]?.diagnostics.some((item) => item.code === "extension_dispatch_unsupported"));
-  assert.ok(kotlinCold.resolverState.evidence[0]?.diagnostics.some((item) => item.code === "overload_ambiguity"));
-  assert.ok(kotlinCold.resolverState.evidence[0]?.diagnostics.some((item) => item.code === "compiler_dispatch_unknown"));
-  assert.ok(kotlinCold.resolverState.evidence[0]?.typeAnnotations.some((item) => item.type.kind === "named" && item.type.name.endsWith("?")));
+  assert.ok(javaFacts?.modules.some((item) => item.name === "fixture.jvm"));
+  assert.ok(javaFacts?.imports.length);
+  assert.ok(javaFacts?.inheritances.length);
+  assert.ok(javaFacts?.implementations.length);
+  assert.ok(javaFacts?.constructors.length);
+  assert.ok(javaFacts?.members.length);
+  assert.ok(javaFacts?.parameters.length);
+  assert.ok(javaFacts?.returns.length);
+  assert.ok(kotlinFacts?.aliases.length);
+  assert.ok(kotlinFacts?.constructors.length);
+  assert.ok(kotlinFacts?.implementations.some((item) => item.relationKind === "extension"));
+  const kotlinEvidence = jvmCold.resolverState.evidence.find((evidence) => evidence.typeAnnotations.some((item) => item.sourceUnit.language === "kotlin"));
+  assert.ok(kotlinEvidence?.diagnostics.some((item) => item.code === "extension_dispatch_unsupported"));
+  assert.ok(kotlinEvidence?.diagnostics.some((item) => item.code === "overload_ambiguity"));
+  assert.ok(kotlinEvidence?.diagnostics.some((item) => item.code === "compiler_dispatch_unknown"));
+  assert.ok(kotlinEvidence?.typeAnnotations.some((item) => item.type.kind === "named" && item.type.name.endsWith("?")));
+  assert.notEqual(jvmCold.decisions.length, 0);
+  assert.deepEqual(jvmCold.decisions.map((decision) => decision.status), ["resolved", "unknown", "unknown", "unknown"]);
+  assert.deepEqual(jvmWarm.decisions, jvmCold.decisions);
+  assert.deepEqual(jvmWarm.normalizedFacts, jvmCold.normalizedFacts);
+  assert.deepEqual(jvmWarm.resolverState.evidence, jvmCold.resolverState.evidence);
+  assert.strictEqual(jvmWarm.resolverState, jvmCold.resolverState);
+  assert.ok(jvmWarm.resolverState.memoHitCount > 0);
+  assert.equal(jvmWarm.usedSourceSemanticFallback, false);
+  assert.equal(jvmCold.floorPassed, true);
 });
