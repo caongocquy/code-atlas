@@ -90,3 +90,74 @@ test("ECMAScript floor resolves typed construction and member calls without name
   assert.equal(result.decisions[0]?.status === "resolved" ? result.decisions[0].confidence : undefined, "strong");
   assert.equal(result.usedSourceSemanticFallback, false);
 });
+
+test("ECMAScript adapter carries partial parser status into diagnostics", () => {
+  const outcome = typescriptFactExtractor.extract(factExtractorInput({
+    filePath: "phase14b/ecmascript/broken.ts",
+    source: "const broken: Service = ;",
+    language: "typescript",
+  }));
+  assert.equal(outcome.kind, "facts");
+  if (outcome.kind !== "facts") return;
+  assert.equal(outcome.facts.parseStatus, "deterministic_partial");
+  const evidence = ecmascriptSemanticAdapter.normalizeFile(outcome.facts, {
+    generationId: "test",
+    repositoryIdentity: { id: "repo", identityKey: "repo", rootPath: "/repo", displayName: "repo" },
+    sourceUnit: { repositoryId: "repo", relativePath: "broken.ts", language: "typescript" },
+    resolutionVersion: "14b-2",
+  });
+  assert.ok(evidence.diagnostics.some((item) => item.code === "parse_uncertain"));
+});
+
+test("ECMAScript imports and exports preserve every named specifier and identity", () => {
+  const outcome = typescriptFactExtractor.extract(factExtractorInput({
+    filePath: "phase14b/ecmascript/names.ts",
+    source: 'import { alpha as beta, gamma } from "mod"; export { beta as renamed, gamma };',
+    language: "typescript",
+  }));
+  assert.equal(outcome.kind, "facts");
+  if (outcome.kind !== "facts") return;
+  assert.deepEqual(outcome.facts.imports.map((item) => [item.importedName, item.localName]), [["alpha", "beta"], ["gamma", "gamma"]]);
+  assert.deepEqual(outcome.facts.exports.map((item) => [item.exportedName, item.localName]), [["renamed", "beta"], ["gamma", "gamma"]]);
+});
+
+test("ECMAScript nested chains keep AST-local receivers and remain uncertain when receiver type is unknown", () => {
+  const outcome = javascriptFactExtractor.extract(factExtractorInput({
+    filePath: "phase14b/ecmascript/chains.js",
+    source: "root.child().leaf();",
+    language: "javascript",
+  }));
+  assert.equal(outcome.kind, "facts");
+  if (outcome.kind !== "facts") return;
+  assert.equal(outcome.facts.callSites.length, 2);
+  assert.equal(outcome.facts.members.length, 2);
+  assert.notEqual(outcome.facts.members[0]?.receiverId, outcome.facts.members[1]?.receiverId);
+  const evidence = ecmascriptSemanticAdapter.normalizeFile(outcome.facts, {
+    generationId: "test",
+    repositoryIdentity: { id: "repo", identityKey: "repo", rootPath: "/repo", displayName: "repo" },
+    sourceUnit: { repositoryId: "repo", relativePath: "chains.js", language: "javascript" },
+    resolutionVersion: "14b-2",
+  });
+  assert.equal(evidence.members.length, 0);
+  assert.ok(evidence.diagnostics.some((item) => item.code === "receiver_type_unknown"));
+});
+
+test("ECMAScript parameters and returns use their containing callable identities", () => {
+  const outcome = typescriptFactExtractor.extract(factExtractorInput({
+    filePath: "phase14b/ecmascript/nested.ts",
+    source: "function outer() { function inner(input: Service): Service { return input; } }",
+    language: "typescript",
+  }));
+  assert.equal(outcome.kind, "facts");
+  if (outcome.kind !== "facts") return;
+  const inner = outcome.facts.symbols.find((item) => item.name === "inner");
+  assert.ok(inner);
+  assert.equal(outcome.facts.parameters[0]?.ownerSymbolId, inner?.localId);
+  assert.equal(outcome.facts.returns[0]?.ownerSymbolId, inner?.localId);
+});
+
+test("ECMAScript wrappers reject a mismatched singular language", () => {
+  const input = factExtractorInput({ filePath: "phase14b/ecmascript/main.ts", source: "const value = 1;", language: "typescript" });
+  const outcome = javascriptFactExtractor.extract(input);
+  assert.equal(outcome.kind, "infrastructure_failure");
+});
