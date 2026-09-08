@@ -23,7 +23,7 @@ import { codeChunksFromFacts, type IndexedSourceUnit } from "../indexing/indexin
 import type { ParsedFactsBlob } from "../facts/facts.types.js";
 import { resolveSite, type ResolutionDecision } from "./resolver/resolver.js";
 import type { GenerationResolverContext } from "./resolver/generation-context.js";
-import { symbolIdentityKey, type ResolutionSiteIdentity, type SymbolIdentity } from "./resolver/identities.js";
+import { symbolIdentityKey, type ResolutionSiteIdentity, type SourceUnitIdentity, type SymbolIdentity } from "./resolver/identities.js";
 import type { SemanticEvidenceBatch, ResolverTraceEvent } from "./resolver/types.js";
 
 function toGraphNodeType(symbolType: string): GraphNodeType | undefined {
@@ -131,6 +131,7 @@ export type GraphBuildResult = {
 };
 
 export type GraphResolutionFile = {
+  relativePath: string;
   decisions: readonly ResolutionDecision[];
   trace: readonly ResolverTraceEvent[];
 };
@@ -168,14 +169,34 @@ function factsSites(facts: ParsedFactsBlob, sourceUnit: ReturnType<typeof source
   return [...new Set(ids)].map((localId) => ({ sourceUnit, localId }));
 }
 
+type FactsNormalizationInput = ParsedFactsBlob | { facts: ParsedFactsBlob; sourceUnit: SourceUnitIdentity };
+
+function isSourceUnitIdentity(value: unknown): value is SourceUnitIdentity {
+  return Boolean(value && typeof value === "object" && "repositoryId" in value && "relativePath" in value && "language" in value);
+}
+
+function repairSourceUnitIdentities(value: unknown, sourceUnit: SourceUnitIdentity): unknown {
+  if (Array.isArray(value)) return value.map((item) => repairSourceUnitIdentities(item, sourceUnit));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+    key,
+    key === "sourceUnit" && isSourceUnitIdentity(item)
+      ? sourceUnit
+      : repairSourceUnitIdentities(item, sourceUnit),
+  ]));
+}
+
 export function normalizeFacts(
-  facts: readonly ParsedFactsBlob[],
+  facts: readonly FactsNormalizationInput[],
   context: GenerationResolverContext,
 ): readonly SemanticEvidenceBatch[] {
-  return facts.map((blob) => {
-    const sourceUnit = sourceUnitForFacts(context.repositoryIdentity.id, "", blob);
+  return facts.map((input) => {
+    const blob = "facts" in input ? input.facts : input;
+    const sourceUnit = "facts" in input
+      ? input.sourceUnit
+      : sourceUnitForFacts(context.repositoryIdentity.id, "", blob);
     const adapter = context.languageRegistry.find((candidate) => candidate.languages.includes(blob.language));
-    if (adapter) return adapter.normalizeFile(blob, adapterContext(context, sourceUnit));
+    if (adapter) return repairSourceUnitIdentities(adapter.normalizeFile(blob, adapterContext(context, sourceUnit)), sourceUnit) as SemanticEvidenceBatch;
 
     const site = factsSites(blob, sourceUnit);
     for (const item of site) context.diagnostics.add({ site: item, status: "unsupported", reason: "language_capability_unsupported" });
@@ -199,12 +220,7 @@ function factsEvidenceFor(
 ): SemanticEvidenceBatch {
   const sourceUnit = sourceUnitForFacts(repositoryId, relativePath, facts);
   const batch = evidence[index] ?? emptySemanticEvidence();
-  return Object.fromEntries(Object.entries(batch).map(([key, values]) => [key, Array.isArray(values)
-    ? values.map((value) => value && typeof value === "object" && "sourceUnit" in value
-      && (value.sourceUnit as { relativePath?: string }).relativePath === ""
-      ? { ...value, sourceUnit }
-      : value)
-    : values])) as SemanticEvidenceBatch;
+  return repairSourceUnitIdentities(batch, sourceUnit) as SemanticEvidenceBatch;
 }
 
 export function resolveIndexedUnits(input: {
@@ -241,12 +257,35 @@ export function resolveIndexedUnits(input: {
         decisions.push(resolveSite({ facts: unit.facts, evidence, environment: input.context.typeEnvironment, context: input.context }, site));
       }
     }
-    result.set(unit.relativePath, {
+    result.set(unit.relativePath, canonicalResolution({
+      relativePath: unit.relativePath,
       decisions,
       trace: [...existingTrace, ...input.context.diagnostics.snapshot().slice(before)],
-    });
+    }));
   }
   return result;
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).sort().join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function canonicalUnits(units: readonly IndexedSourceUnit[]): IndexedSourceUnit[] {
+  const ordered = [...units].sort((left, right) => left.relativePath.localeCompare(right.relativePath)
+    || canonicalJson(left.facts).localeCompare(canonicalJson(right.facts)));
+  return ordered.filter((unit, index) => index === 0 || unit.relativePath !== ordered[index - 1]?.relativePath);
+}
+
+function canonicalResolution(value: GraphResolutionFile): GraphResolutionFile {
+  const decisions = [...new Map(value.decisions.map((item) => [canonicalJson(item), item])).values()]
+    .sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right)));
+  const trace = [...new Map(value.trace.map((item) => [canonicalJson(item), item])).values()]
+    .sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right)));
+  return { relativePath: value.relativePath, decisions, trace };
 }
 
 function factSymbolIdentity(repositoryId: string, relativePath: string, language: ParsedFactsBlob["language"], fact: ParsedFactsBlob["symbols"][number]): SymbolIdentity {
@@ -269,43 +308,51 @@ export function assembleFactsGraph(
 ): CodeGraph {
   const repoId = repositoryId ?? getRepoId(canonicalRepositoryPath(path.resolve(repoPath)));
   const graph: CodeGraph = { nodes: [], edges: [] };
-  const files = new Set(units.map((unit) => unit.relativePath));
+  const canonical = canonicalUnits(units);
+  const files = new Set(canonical.map((unit) => unit.relativePath));
   const fileIds = new Map<string, string>();
   const symbols = new Map<string, string>();
 
-  for (const unit of units) {
+  for (const unit of canonical) {
     const fileId = createGraphNodeId(repoId, unit.relativePath, "file", unit.relativePath);
     fileIds.set(unit.relativePath, fileId);
     graph.nodes.push({ id: fileId, type: "file", name: unit.relativePath, file: unit.relativePath });
   }
-  for (let index = 0; index < units.length; index += 1) {
-    const unit = units[index];
+  for (let index = 0; index < canonical.length; index += 1) {
+    const unit = canonical[index];
     if (!unit) continue;
     const fileId = fileIds.get(unit.relativePath);
     if (!fileId) continue;
-    for (const fact of unit.facts.symbols) {
+    const orderedSymbols = [...unit.facts.symbols].sort((left, right) => symbolIdentityKey(factSymbolIdentity(repoId, unit.relativePath, unit.facts.language, left)).localeCompare(symbolIdentityKey(factSymbolIdentity(repoId, unit.relativePath, unit.facts.language, right))));
+    for (const fact of orderedSymbols) {
       const type = toGraphNodeType(fact.kind);
       if (!type) continue;
       const identity = factSymbolIdentity(repoId, unit.relativePath, unit.facts.language, fact);
       const id = createGraphNodeId(repoId, unit.relativePath, type, identity.qualifiedName);
-      symbols.set(symbolIdentityKey(identity), id);
-      graph.nodes.push({ id, type, name: fact.name, qualifiedName: identity.qualifiedName, file: unit.relativePath, startLine: fact.range.startLine, endLine: fact.range.endLine });
-      graph.edges.push({ from: fileId, to: id, type: "contains" });
+      if (!symbols.has(symbolIdentityKey(identity)) && !graph.nodes.some((node) => node.id === id)) {
+        symbols.set(symbolIdentityKey(identity), id);
+        graph.nodes.push({ id, type, name: fact.name, qualifiedName: identity.qualifiedName, file: unit.relativePath, startLine: fact.range.startLine, endLine: fact.range.endLine });
+        graph.edges.push({ from: fileId, to: id, type: "contains" });
+      }
     }
-    reporter?.setProgress(index + 1, units.length);
+    reporter?.setProgress(index + 1, canonical.length);
   }
-  for (const unit of units) {
+  for (const unit of canonical) {
     const from = fileIds.get(unit.relativePath);
     if (!from) continue;
-    for (const item of unit.facts.imports) {
+    const imports = [...unit.facts.imports].sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right)));
+    for (const item of imports) {
       if (!isRelativeImport(item.moduleSpecifier)) continue;
       const targetFile = resolveImportCandidates(unit.relativePath, item.moduleSpecifier).find((candidate) => files.has(candidate));
       const to = targetFile ? fileIds.get(targetFile) : undefined;
       if (to) graph.edges.push({ from, to, type: "imports" });
     }
   }
-  for (const unit of units) {
-    const resolution = resolutionByFile.get(unit.relativePath);
+  for (const unit of canonical) {
+    const resolution = [...resolutionByFile.values()]
+      .filter((item) => item.relativePath === unit.relativePath)
+      .map(canonicalResolution)
+      .sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right)))[0];
     if (!resolution) continue;
     for (const decision of resolution.decisions) {
       if (decision.status !== "resolved") continue;
@@ -322,6 +369,9 @@ export function assembleFactsGraph(
       if (!graph.edges.some((edge) => edge.from === sourceId && edge.to === targetId && edge.type === type)) graph.edges.push({ from: sourceId, to: targetId, type });
     }
   }
+  graph.nodes = [...new Map(graph.nodes.map((node) => [node.id, node])).values()].sort((left, right) => left.id.localeCompare(right.id));
+  graph.edges = [...new Map(graph.edges.map((edge) => [`${edge.from}:${edge.to}:${edge.type}`, edge])).values()]
+    .sort((left, right) => left.from.localeCompare(right.from) || left.to.localeCompare(right.to) || left.type.localeCompare(right.type));
   return graph;
 }
 
@@ -459,14 +509,18 @@ export async function buildCodeGraphWithResolutionFromFacts(
   context?: GenerationResolverContext,
 ): Promise<GraphBuildResult | FactsGraphBuildResult> {
   if (!context) return buildCodeGraphWithResolutionFromFactsLegacy(repoPath, units, reporter, repositoryId);
-  const evidence = normalizeFacts(units.map((unit) => unit.facts), context);
+  const canonical = canonicalUnits(units);
+  const evidence = normalizeFacts(canonical.map((unit) => ({
+    facts: unit.facts,
+    sourceUnit: sourceUnitForFacts(context.repositoryIdentity.id, unit.relativePath, unit.facts),
+  })), context);
   const resolutionByFile = resolveIndexedUnits({
-    allUnits: units,
-    resolvePaths: new Set(resolutionPaths ?? units.map((unit) => unit.relativePath)),
+    allUnits: canonical,
+    resolvePaths: new Set(resolutionPaths ?? canonical.map((unit) => unit.relativePath)),
     evidence,
     context,
   });
-  const graph = assembleFactsGraph(repoPath, units, resolutionByFile, reporter, repositoryId);
+  const graph = assembleFactsGraph(repoPath, canonical, resolutionByFile, reporter, repositoryId);
   return { graph, resolutionByFile };
 }
 
