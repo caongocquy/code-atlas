@@ -16,5 +16,12 @@
   "uncertainty": {
     "dynamicMember": "unknown",
     "runtimeConstruct": "unsupported"
+  },
+  "resolverCases": {
+    "directCall": "resolved",
+    "duplicateDirectCall": "ambiguous",
+    "zeroCandidateBudget": "budget_exhausted",
+    "repeatedExtraction": "deterministic",
+    "coldWarmFixture": "equivalent"
   }
 }

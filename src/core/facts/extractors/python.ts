@@ -17,7 +17,7 @@ const range = (node: Parser.SyntaxNode): SourceRangeFact => ({
 const child = (node: Parser.SyntaxNode, field: string): Parser.SyntaxNode | undefined => node.childForFieldName(field) ?? undefined;
 const typeText = (node: Parser.SyntaxNode | undefined): string | undefined => child(node!, "type")?.text;
 const nameText = (node: Parser.SyntaxNode | undefined): string | undefined => child(node!, "name")?.text;
-const runtimeNames = new Set(["eval", "exec", "compile", "__import__", "setattr", "delattr", "globals", "locals"]);
+const runtimeNames = new Set(["eval", "exec", "compile", "__import__", "setattr", "getattr", "delattr", "globals", "locals"]);
 
 export function extractPythonFacts(parsed: ParsedSource | undefined, input: LanguageFactExtractorInput): FactExtractionOutcome {
   try {
@@ -51,6 +51,12 @@ export function extractPythonFacts(parsed: ParsedSource | undefined, input: Lang
       const binding = { localId: next("binding"), name, bindingKind, ownerId, range: range(node) };
       bindingSeeds.push(binding); return binding;
     };
+    const memberSymbolFor = (node: Parser.SyntaxNode, name: string): ParsedSymbolFact | undefined => {
+      const owner = classStack.at(-1);
+      if (!owner) return undefined;
+      const existing = symbols.find((item) => item.kind === "variable" && item.name === name && item.scopeId === owner.scopeId);
+      return existing ?? symbolFor(node, "variable", name, owner.scopeId);
+    };
     const visit = (node: Parser.SyntaxNode): void => {
       const isModule = node.type === "module";
       const isClass = node.type === "class_definition";
@@ -70,9 +76,10 @@ export function extractPythonFacts(parsed: ParsedSource | undefined, input: Lang
       } else if (isFunction) {
         const name = nameText(node);
         if (name) {
-          declared = symbolFor(node, classStack.at(-1) ? "method" : "function", name, classStack.at(-1)?.scopeId ?? scopeStack.at(-1));
+          declared = symbolFor(node, classStack.at(-1) ? "method" : "function", name, classStack.at(-1)?.scopeId ?? scopeStack.at(-2));
           const returnType = child(node, "return_type") ?? child(node, "type");
           if (returnType) returnTypes.set(declared.localId, returnType.text);
+          if (!classStack.at(-1)) bindingFor(node, "function", scopeStack.at(-2), name);
           callableStack.push(declared);
         }
       }
@@ -118,16 +125,27 @@ export function extractPythonFacts(parsed: ParsedSource | undefined, input: Lang
       if (node.type === "assignment") {
         const target = child(node, "left"), value = child(node, "right");
         if (target?.type === "identifier") {
-          const binding = bindingFor(target, "local");
-          if (child(node, "type")) declaredTypeAnnotations.push({ localId: next("type"), ownerId: binding.localId, text: child(node, "type")!.text, range: range(child(node, "type")!) });
+          const classOwner = classStack.at(-1);
+          const member = classOwner && classOwner.scopeId === scopeStack.at(-1) ? memberSymbolFor(target, target.text) : undefined;
+          const binding = member ? undefined : bindingFor(target, "local");
+          if (child(node, "type")) declaredTypeAnnotations.push({ localId: next("type"), ownerId: member?.localId ?? binding!.localId, text: child(node, "type")!.text, range: range(child(node, "type")!) });
           if (value) {
             const expression = expressionFor(value, value.type === "call" ? "call" : value.type === "identifier" ? "identifier" : "other");
-            assignments.push({ localId: next("assignment"), targetId: binding.localId, sourceExpressionId: expression.localId, sourceName: value.type === "identifier" ? value.text : undefined, assignmentKind: value.type === "identifier" ? "alias" : "declaration", range: range(node) });
-            if (value.type === "call") { const callee = value.namedChildren[0]; if (callee?.type === "identifier") constructors.push({ localId: next("constructor"), constructedTypeName: callee.text, callExpressionId: expression.localId, resultBindingId: binding.localId, range: range(value) }); }
+            assignments.push({ localId: next("assignment"), targetId: member?.localId ?? binding!.localId, sourceExpressionId: expression.localId, sourceName: value.type === "identifier" ? value.text : undefined, assignmentKind: value.type === "identifier" ? "alias" : "declaration", range: range(node) });
+            if (value.type === "call" && binding) { const callee = value.namedChildren[0]; if (callee?.type === "identifier") constructors.push({ localId: next("constructor"), constructedTypeName: callee.text, callExpressionId: expression.localId, resultBindingId: binding.localId, range: range(value) }); }
           }
         } else if (target?.type === "attribute") {
           const receiver = target.namedChildren[0], memberName = target.namedChildren[1];
-          if (receiver && memberName) { addMember(target, receiver, memberName.text); if (classStack.at(-1)) { if (!symbols.some((item) => item.name === memberName.text && item.scopeId === classStack.at(-1)?.scopeId)) symbolFor(memberName, "variable", memberName.text, classStack.at(-1)?.scopeId); } }
+          if (receiver && memberName) {
+            addMember(target, receiver, memberName.text);
+            const member = receiver.type === "identifier" && receiver.text === "self" ? memberSymbolFor(memberName, memberName.text) : undefined;
+            const annotation = child(node, "type");
+            if (annotation && member) declaredTypeAnnotations.push({ localId: next("type"), ownerId: member.localId, text: annotation.text, range: range(annotation) });
+            if (value && member) {
+              const expression = expressionFor(value, value.type === "call" ? "call" : value.type === "identifier" ? "identifier" : "other");
+              assignments.push({ localId: next("assignment"), targetId: member.localId, sourceExpressionId: expression.localId, sourceName: value.type === "identifier" ? value.text : undefined, assignmentKind: value.type === "identifier" ? "alias" : "reassignment", range: range(node) });
+            }
+          }
         }
       }
       if (node.type === "call") {
