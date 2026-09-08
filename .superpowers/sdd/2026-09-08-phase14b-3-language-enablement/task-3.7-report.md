@@ -18,6 +18,7 @@ reparse source, use regex semantics, or use a compiler/runtime/source fallback.
 - `node --import tsx/esm --test test/phase14b-language-swift.test.ts test/phase14b-facts-contract.test.ts test/phase14b-resolver-contract.test.ts` — 11/11 passed.
 - `CI=true pnpm exec tsc --noEmit` — passed.
 - `git diff --check` — passed.
+
 - GitNexus `impact` was attempted for the Swift symbols, but the available index
   is stale and belongs to another worktree/branch; both lookups returned
   `Target not found`, so no definitive blast-radius claim is made.
@@ -48,6 +49,18 @@ Swift extension ownership is now resolved after an AST-only declaration pre-scan
 so a uniquely named owner is found regardless of traversal order while duplicate
 owners remain dropped. The fixture covers extension-before-owner resolution and
 duplicate-owner ambiguity.
+
+- `node --import tsx/esm --test test/phase14b-language-swift.test.ts` — 6/6 passed.
+- Cross-language focused test command above — 46/46 passed.
+- `CI=true pnpm exec tsc --noEmit` — passed.
+- `git diff --check` — passed.
+
+## Scope-order follow-up
+
+Deferred Swift extensions now reuse the scope created during the initial AST
+traversal, preserving its original parent path and emitting exactly one scope
+per extension node. The regression fixture asserts one extension scope with a
+source-file parent while preserving unique ownership and duplicate-owner drop.
 
 - `node --import tsx/esm --test test/phase14b-language-swift.test.ts` — 6/6 passed.
 - Cross-language focused test command above — 46/46 passed.

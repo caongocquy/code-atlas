@@ -87,6 +87,10 @@ test("Swift drops extension ownership when the static owner name is not unique",
   if (beforeOwner.kind !== "facts") return;
   assert.equal(beforeOwner.facts.implementations.filter((item) => item.relationKind === "extension" && item.targetName === "Early").length, 1);
   assert.equal(beforeOwner.facts.members.filter((item) => item.memberName === "beforeOwner" && item.access === "extension").length, 1);
+  const sourceScope = beforeOwner.facts.containmentScopes.find((item) => item.kind === "source_file");
+  const extensionScopes = beforeOwner.facts.containmentScopes.filter((item) => item.name === "Early" && item.range.startLine === 1);
+  assert.equal(extensionScopes.length, 1);
+  assert.equal(extensionScopes[0]?.parentId, sourceScope?.localId);
 
   const ambiguous = swiftFactExtractor.extract(factExtractorInput({
     filePath: "phase14b/swift/ambiguous.swift",

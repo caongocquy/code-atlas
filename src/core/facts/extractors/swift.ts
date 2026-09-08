@@ -59,7 +59,7 @@ function extractSwiftTreeFacts(parsed: ParsedSource | undefined, input: Language
     const symbolByName = new Map<string, ParsedSymbolFact[]>();
     const extensionOwners = new Set<FactLocalId>();
     const typeDeclarationCounts = new Map<string, number>();
-    const deferredExtensions: Parser.SyntaxNode[] = [];
+    const deferredExtensions: Array<{ node: Parser.SyntaxNode; scopePath: FactLocalId[] }> = [];
     let processingDeferredExtension = false;
     let sequence = 0;
     const next = (kind: string) => id(kind, ++sequence);
@@ -97,7 +97,7 @@ function extractSwiftTreeFacts(parsed: ParsedSource | undefined, input: Language
       const isExtension = node.type === "class_declaration" && typeNode?.type === "user_type";
       const isCallable = ["function_declaration", "protocol_function_declaration", "init_declaration"].includes(node.type);
       const isScope = node.type === "source_file" || isType || isCallable || node.type === "function_body";
-      if (isScope) {
+      if (isScope && !(isExtension && processingDeferredExtension)) {
         const scopeKind = node.type === "class_declaration" && node.children.some((child) => child.type === "struct") ? "struct_declaration" : node.type;
         const scope = { localId: next("scope"), kind: scopeKind, name: text(typeNode), parentId: scopeStack.at(-1), range: range(node) };
         scopes.push(scope);
@@ -108,7 +108,7 @@ function extractSwiftTreeFacts(parsed: ParsedSource | undefined, input: Language
       let extensionOwned = false;
       if (isExtension && !processingDeferredExtension) {
         const extensionName = typeNode?.text.split(".").at(-1);
-        if (extensionName && typeDeclarationCounts.get(extensionName) === 1) deferredExtensions.push(node);
+        if (extensionName && typeDeclarationCounts.get(extensionName) === 1) deferredExtensions.push({ node, scopePath: [...scopeStack] });
         if (isScope) scopeStack.pop();
         return;
       }
@@ -207,7 +207,13 @@ function extractSwiftTreeFacts(parsed: ParsedSource | undefined, input: Language
     };
     visit(parsed.tree.rootNode);
     processingDeferredExtension = true;
-    for (const extension of deferredExtensions) visit(extension);
+    for (const extension of deferredExtensions) {
+      const previousScopePath = [...scopeStack];
+      scopeStack.push(...extension.scopePath);
+      visit(extension.node);
+      scopeStack.length = 0;
+      scopeStack.push(...previousScopePath);
+    }
     processingDeferredExtension = false;
     modules.push({ localId: next("module"), name: input.filePath, moduleKind: "file", exported: false, range: range(parsed.tree.rootNode) });
     const diagnostics = nodeDiagnostics(parsed.tree.rootNode);
