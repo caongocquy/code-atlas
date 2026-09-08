@@ -1,0 +1,20 @@
+{
+  "language": "python",
+  "grammar": "tree-sitter-python@0.25.0",
+  "requiredFacts": [
+    "imports",
+    "aliases",
+    "classes",
+    "self-members",
+    "assignments",
+    "annotations",
+    "parameters",
+    "returns",
+    "constructors",
+    "direct-calls"
+  ],
+  "uncertainty": {
+    "dynamicMember": "unknown",
+    "runtimeConstruct": "unsupported"
+  }
+}
