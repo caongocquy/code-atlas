@@ -14,6 +14,20 @@ Validation:
 - `./node_modules/.bin/tsc --noEmit`: passing.
 - `git diff --check`: passing.
 
+## Loop round 3 — Kotlin overload resolution is explicitly ambiguous
+
+- The Kotlin extractor now maps `navigation_suffix` to its AST `simple_identifier` (`run`) instead of preserving the grammar punctuation (`.run`), and reuses the enclosing call site identity for the member-call resolution site.
+- JVM normalization infers a constructor-expression receiver such as `Overload()` from AST-derived facts and emits one member evidence record for each method overload in the enclosing Kotlin type. The resolver therefore receives two concrete candidates and returns `ambiguous`; the test asserts at least two candidates rather than only changing the expected status.
+- Java/Kotlin grammar mappings, prior interface/capability/nullable fixes, shared JVM fixture state, and task scope remain unchanged.
+
+Loop round 3 validation:
+
+- `node --import tsx/esm --test test/phase14b-language-jvm.test.ts`: 8/8 passing.
+- `node --import tsx/esm --test test/phase14b-*.test.ts`: 72/72 passing.
+- `./node_modules/.bin/tsc --noEmit`: passing.
+- `git diff --check`: passing.
+- `gitnexus detect-changes --repo code-atlas --scope working --limit 100`: `No changes detected` from the stale available index.
+
 ## Loop round 2 — non-vacuous shared JVM fixture
 
 - Added one `jvm` fixture containing the real Java and Kotlin source cases.

@@ -170,7 +170,7 @@ function prepareFixture(fixture: LanguageFixtureDefinition, facts: readonly Pars
       const overloadCall = factsBlob.callSites.find((item) => item.calleeText.includes(".run"));
       if (inheritance) { sites.push({ sourceUnit: source, localId: inheritance.localId }); expectedDecisionStatuses.push("unknown"); }
       if (extension) { sites.push({ sourceUnit: source, localId: extension.localId }); expectedDecisionStatuses.push("unknown"); }
-      if (overloadCall) { sites.push({ sourceUnit: source, localId: overloadCall.localId }); expectedDecisionStatuses.push("unknown"); }
+      if (overloadCall) { sites.push({ sourceUnit: source, localId: overloadCall.localId }); expectedDecisionStatuses.push("ambiguous"); }
     }
   }
   return { ...fixture, sites, expectedDecisionStatuses };
