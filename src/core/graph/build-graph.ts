@@ -16,10 +16,15 @@ import { extractCalls, hasParserErrors, type CallReference } from "./calls.js";
 import { resolveCallResults } from "./call-resolution.js";
 import { resolveMemberCallResults } from "./member-resolution.js";
 import { extractExtendsFactEvidence, resolveExtendsResults } from "./extends.js";
-import { emptyResolutionCoverage, mergeResolutionCoverage, type GraphResolutionFile } from "./resolution.types.js";
+import { emptyResolutionCoverage, mergeResolutionCoverage, type GraphResolutionFile as LegacyGraphResolutionFile } from "./resolution.types.js";
 import type { ProgressReporter } from "../progress/progress.types.js";
 import type { ImportBinding } from "./import-bindings.js";
 import { codeChunksFromFacts, type IndexedSourceUnit } from "../indexing/indexing.types.js";
+import type { ParsedFactsBlob } from "../facts/facts.types.js";
+import { resolveSite, type ResolutionDecision } from "./resolver/resolver.js";
+import type { GenerationResolverContext } from "./resolver/generation-context.js";
+import { symbolIdentityKey, type ResolutionSiteIdentity, type SymbolIdentity } from "./resolver/identities.js";
+import type { SemanticEvidenceBatch, ResolverTraceEvent } from "./resolver/types.js";
 
 function toGraphNodeType(symbolType: string): GraphNodeType | undefined {
   switch (symbolType) {
@@ -122,8 +127,203 @@ export function getQualifiedSymbolName(
 
 export type GraphBuildResult = {
   graph: CodeGraph;
+  resolutionByFile: Map<string, LegacyGraphResolutionFile>;
+};
+
+export type GraphResolutionFile = {
+  decisions: readonly ResolutionDecision[];
+  trace: readonly ResolverTraceEvent[];
+};
+
+export type FactsGraphBuildResult = Omit<GraphBuildResult, "resolutionByFile"> & {
   resolutionByFile: Map<string, GraphResolutionFile>;
 };
+
+const emptySemanticEvidence = (): SemanticEvidenceBatch => ({
+  bindings: [], imports: [], exports: [], typeAnnotations: [], constructors: [], assignments: [],
+  parameters: [], returns: [], members: [], inheritance: [], implementations: [], aliases: [],
+  modules: [], calls: [], diagnostics: [],
+});
+
+function sourceUnitForFacts(repositoryId: string, relativePath: string, facts: ParsedFactsBlob) {
+  return { repositoryId, relativePath, language: facts.language } as const;
+}
+
+function adapterContext(context: GenerationResolverContext, sourceUnit: ReturnType<typeof sourceUnitForFacts>) {
+  return {
+    generationId: context.generationId,
+    repositoryIdentity: context.repositoryIdentity,
+    sourceUnit,
+    resolutionVersion: context.resolutionVersion,
+  };
+}
+
+function factsSites(facts: ParsedFactsBlob, sourceUnit: ReturnType<typeof sourceUnitForFacts>): ResolutionSiteIdentity[] {
+  const ids = [
+    ...facts.references.map((item) => item.localId),
+    ...facts.callSites.map((item) => item.localId),
+    ...facts.inheritances.map((item) => item.localId),
+    ...facts.implementations.map((item) => item.localId),
+  ];
+  return [...new Set(ids)].map((localId) => ({ sourceUnit, localId }));
+}
+
+export function normalizeFacts(
+  facts: readonly ParsedFactsBlob[],
+  context: GenerationResolverContext,
+): readonly SemanticEvidenceBatch[] {
+  return facts.map((blob) => {
+    const sourceUnit = sourceUnitForFacts(context.repositoryIdentity.id, "", blob);
+    const adapter = context.languageRegistry.find((candidate) => candidate.languages.includes(blob.language));
+    if (adapter) return adapter.normalizeFile(blob, adapterContext(context, sourceUnit));
+
+    const site = factsSites(blob, sourceUnit);
+    for (const item of site) context.diagnostics.add({ site: item, status: "unsupported", reason: "language_capability_unsupported" });
+    return {
+      ...emptySemanticEvidence(),
+      diagnostics: [{
+        code: "language_capability_unsupported",
+        message: `No semantic adapter registered for ${blob.language}`,
+        sourceUnit,
+      }],
+    };
+  });
+}
+
+function factsEvidenceFor(
+  facts: ParsedFactsBlob,
+  evidence: readonly SemanticEvidenceBatch[],
+  repositoryId: string,
+  relativePath: string,
+  index: number,
+): SemanticEvidenceBatch {
+  const sourceUnit = sourceUnitForFacts(repositoryId, relativePath, facts);
+  const batch = evidence[index] ?? emptySemanticEvidence();
+  return Object.fromEntries(Object.entries(batch).map(([key, values]) => [key, Array.isArray(values)
+    ? values.map((value) => value && typeof value === "object" && "sourceUnit" in value
+      && (value.sourceUnit as { relativePath?: string }).relativePath === ""
+      ? { ...value, sourceUnit }
+      : value)
+    : values])) as SemanticEvidenceBatch;
+}
+
+export function resolveIndexedUnits(input: {
+  allUnits: readonly IndexedSourceUnit[];
+  resolvePaths: ReadonlySet<string>;
+  evidence: readonly SemanticEvidenceBatch[];
+  context: GenerationResolverContext;
+}): Map<string, GraphResolutionFile> {
+  const result = new Map<string, GraphResolutionFile>();
+  for (let index = 0; index < input.allUnits.length; index += 1) {
+    const unit = input.allUnits[index];
+    if (!unit) continue;
+    if (!input.resolvePaths.has(unit.relativePath)) continue;
+    const sourceUnit = sourceUnitForFacts(input.context.repositoryIdentity.id, unit.relativePath, unit.facts);
+    const evidence = factsEvidenceFor(unit.facts, input.evidence, input.context.repositoryIdentity.id, unit.relativePath, index);
+    const decisions: ResolutionDecision[] = [];
+    const sites = factsSites(unit.facts, sourceUnit);
+    const siteIds = new Set(sites.map((site) => site.localId));
+    const existingTrace = input.context.diagnostics.snapshot().filter((event) => siteIds.has(event.site.localId));
+    const before = input.context.diagnostics.snapshot().length;
+    const adapterRegistered = input.context.languageRegistry.some((adapter) => adapter.languages.includes(unit.facts.language));
+    if (!adapterRegistered) {
+      for (const site of sites) {
+        if (!input.context.diagnostics.snapshot().some((event) => event.site.localId === site.localId && event.status === "unsupported")) {
+          input.context.diagnostics.add({ site, status: "unsupported", reason: "language_capability_unsupported" });
+        }
+        const edgeKind = unit.facts.implementations.some((item) => item.localId === site.localId) ? "implements"
+          : unit.facts.inheritances.some((item) => item.localId === site.localId) ? "extends"
+            : unit.facts.callSites.some((item) => item.localId === site.localId) ? "calls" : "references";
+        decisions.push({ site, language: unit.facts.language, sourceUnit, edgeKind, evidenceIds: [], attemptedStrategies: [], resolutionVersion: input.context.resolutionVersion, status: "unsupported", reason: "language_capability_unsupported" });
+      }
+    } else {
+      for (const site of sites) {
+        decisions.push(resolveSite({ facts: unit.facts, evidence, environment: input.context.typeEnvironment, context: input.context }, site));
+      }
+    }
+    result.set(unit.relativePath, {
+      decisions,
+      trace: [...existingTrace, ...input.context.diagnostics.snapshot().slice(before)],
+    });
+  }
+  return result;
+}
+
+function factSymbolIdentity(repositoryId: string, relativePath: string, language: ParsedFactsBlob["language"], fact: ParsedFactsBlob["symbols"][number]): SymbolIdentity {
+  return {
+    repositoryId,
+    relativePath,
+    language,
+    kind: fact.kind,
+    qualifiedName: fact.declaredQualifiedName ?? fact.name,
+    discriminator: fact.localId,
+  };
+}
+
+export function assembleFactsGraph(
+  repoPath: string,
+  units: readonly IndexedSourceUnit[],
+  resolutionByFile: ReadonlyMap<string, GraphResolutionFile>,
+  reporter?: ProgressReporter,
+  repositoryId?: string,
+): CodeGraph {
+  const repoId = repositoryId ?? getRepoId(canonicalRepositoryPath(path.resolve(repoPath)));
+  const graph: CodeGraph = { nodes: [], edges: [] };
+  const files = new Set(units.map((unit) => unit.relativePath));
+  const fileIds = new Map<string, string>();
+  const symbols = new Map<string, string>();
+
+  for (const unit of units) {
+    const fileId = createGraphNodeId(repoId, unit.relativePath, "file", unit.relativePath);
+    fileIds.set(unit.relativePath, fileId);
+    graph.nodes.push({ id: fileId, type: "file", name: unit.relativePath, file: unit.relativePath });
+  }
+  for (let index = 0; index < units.length; index += 1) {
+    const unit = units[index];
+    if (!unit) continue;
+    const fileId = fileIds.get(unit.relativePath);
+    if (!fileId) continue;
+    for (const fact of unit.facts.symbols) {
+      const type = toGraphNodeType(fact.kind);
+      if (!type) continue;
+      const identity = factSymbolIdentity(repoId, unit.relativePath, unit.facts.language, fact);
+      const id = createGraphNodeId(repoId, unit.relativePath, type, identity.qualifiedName);
+      symbols.set(symbolIdentityKey(identity), id);
+      graph.nodes.push({ id, type, name: fact.name, qualifiedName: identity.qualifiedName, file: unit.relativePath, startLine: fact.range.startLine, endLine: fact.range.endLine });
+      graph.edges.push({ from: fileId, to: id, type: "contains" });
+    }
+    reporter?.setProgress(index + 1, units.length);
+  }
+  for (const unit of units) {
+    const from = fileIds.get(unit.relativePath);
+    if (!from) continue;
+    for (const item of unit.facts.imports) {
+      if (!isRelativeImport(item.moduleSpecifier)) continue;
+      const targetFile = resolveImportCandidates(unit.relativePath, item.moduleSpecifier).find((candidate) => files.has(candidate));
+      const to = targetFile ? fileIds.get(targetFile) : undefined;
+      if (to) graph.edges.push({ from, to, type: "imports" });
+    }
+  }
+  for (const unit of units) {
+    const resolution = resolutionByFile.get(unit.relativePath);
+    if (!resolution) continue;
+    for (const decision of resolution.decisions) {
+      if (decision.status !== "resolved") continue;
+      if (decision.edgeKind !== "calls" && decision.edgeKind !== "extends") continue;
+      const fact = unit.facts.symbols.find((item) => item.localId === (unit.facts.callSites.find((site) => site.localId === decision.site.localId)?.callerId
+        ?? unit.facts.inheritances.find((site) => site.localId === decision.site.localId)?.subjectId
+        ?? unit.facts.implementations.find((site) => site.localId === decision.site.localId)?.subjectId
+        ?? unit.facts.references.find((site) => site.localId === decision.site.localId)?.ownerId));
+      if (!fact) continue;
+      const sourceId = symbols.get(symbolIdentityKey(factSymbolIdentity(repoId, unit.relativePath, unit.facts.language, fact)));
+      const targetId = symbols.get(symbolIdentityKey(decision.target));
+      if (!sourceId || !targetId) continue;
+      const type = decision.edgeKind === "calls" ? "calls" : "extends";
+      if (!graph.edges.some((edge) => edge.from === sourceId && edge.to === targetId && edge.type === type)) graph.edges.push({ from: sourceId, to: targetId, type });
+    }
+  }
+  return graph;
+}
 
 export function factsImportBindings(unit: IndexedSourceUnit, fileSet: Set<string>): ImportBinding[] {
   return unit.facts.bindingSeeds
@@ -158,9 +358,9 @@ export function factsCalls(unit: IndexedSourceUnit, chunks: ReturnType<typeof co
   });
 }
 
-export async function buildCodeGraphWithResolutionFromFacts(
+async function buildCodeGraphWithResolutionFromFactsLegacy(
   repoPath: string,
-  units: IndexedSourceUnit[],
+  units: readonly IndexedSourceUnit[],
   reporter?: ProgressReporter,
   repositoryId?: string,
 ): Promise<GraphBuildResult> {
@@ -169,7 +369,7 @@ export async function buildCodeGraphWithResolutionFromFacts(
   const relativeFiles = units.map((unit) => unit.relativePath);
   const fileSet = new Set(relativeFiles);
   const graph: CodeGraph = { nodes: [], edges: [] };
-  const resolutionByFile = new Map<string, GraphResolutionFile>();
+  const resolutionByFile = new Map<string, LegacyGraphResolutionFile>();
   const fileNodeIds = new Map<string, string>();
 
   for (const relativePath of relativeFiles) {
@@ -236,6 +436,40 @@ export async function buildCodeGraphWithResolutionFromFacts(
   return { graph, resolutionByFile };
 }
 
+export function buildCodeGraphWithResolutionFromFacts(
+  repoPath: string,
+  units: readonly IndexedSourceUnit[],
+  reporter: ProgressReporter | undefined,
+  repositoryId: string | undefined,
+  resolutionPaths: readonly string[] | undefined,
+  context: GenerationResolverContext,
+): Promise<FactsGraphBuildResult>;
+export function buildCodeGraphWithResolutionFromFacts(
+  repoPath: string,
+  units: IndexedSourceUnit[],
+  reporter?: ProgressReporter,
+  repositoryId?: string,
+): Promise<GraphBuildResult>;
+export async function buildCodeGraphWithResolutionFromFacts(
+  repoPath: string,
+  units: readonly IndexedSourceUnit[],
+  reporter?: ProgressReporter,
+  repositoryId?: string,
+  resolutionPaths?: readonly string[],
+  context?: GenerationResolverContext,
+): Promise<GraphBuildResult | FactsGraphBuildResult> {
+  if (!context) return buildCodeGraphWithResolutionFromFactsLegacy(repoPath, units, reporter, repositoryId);
+  const evidence = normalizeFacts(units.map((unit) => unit.facts), context);
+  const resolutionByFile = resolveIndexedUnits({
+    allUnits: units,
+    resolvePaths: new Set(resolutionPaths ?? units.map((unit) => unit.relativePath)),
+    evidence,
+    context,
+  });
+  const graph = assembleFactsGraph(repoPath, units, resolutionByFile, reporter, repositoryId);
+  return { graph, resolutionByFile };
+}
+
 export async function buildCodeGraphWithResolution(
   repoPath: string,
   reporter?: ProgressReporter,
@@ -258,7 +492,7 @@ export async function buildCodeGraphWithResolution(
     nodes: [],
     edges: [],
   };
-  const resolutionByFile = new Map<string, GraphResolutionFile>();
+  const resolutionByFile = new Map<string, LegacyGraphResolutionFile>();
 
   const fileNodeIds = new Map<string, string>();
 
