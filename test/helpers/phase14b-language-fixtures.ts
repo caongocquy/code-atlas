@@ -55,8 +55,42 @@ const source = (language: LanguageId): string => {
     case "tsx": return "const view = <div />;";
     case "javascript": return "const value = 1;";
     case "python": return "value = 1\n";
-    case "java": return "class Main { int value = 1; }\n";
-    case "kotlin": return "class Main {\n  val value: Int = 1\n}\n";
+    case "java": return `package fixture.jvm;
+import java.util.List;
+interface Api { String get(); }
+class Base { }
+class Child extends Base implements Api {
+  private String value;
+  Child(String value) { this.value = value; }
+  String get() { return value; }
+}
+class Overload { void run(String value) { } void run(Integer value) { } }
+class Use { Child create(String value) { return new Child(value); } }
+`;
+    case "kotlin": return `package fixture.jvm
+import kotlin.collections.List
+typealias MaybeName = String?
+public sealed interface Api {
+  fun get(): String?
+}
+open class Base
+class Child(val value: String?) : Base(), Api {
+  override fun get(): String? = value
+}
+object Registry {
+  fun load(): Child = Child(null)
+}
+class Holder {
+  companion object {
+    fun load(): Child = Child(null)
+  }
+}
+class Overload {
+  fun run(value: String) { }
+  fun run(value: Int) { }
+}
+fun String.extension(): String = this
+`;
     case "go": return "package main\n\nvar value = 1\n";
     case "rust": return "fn main() { let value = 1; }\n";
     case "swift": return "let value = 1\n";

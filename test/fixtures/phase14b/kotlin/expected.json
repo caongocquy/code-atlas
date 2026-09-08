@@ -1,6 +1,8 @@
 {
   "language": "kotlin",
   "grammar": "tree-sitter-kotlin@0.3.8",
+  "sourceCases": [{ "filePath": "phase14b/kotlin/main.kt", "fixture": "parserFixtures.kotlin" }],
   "requiredFacts": ["packages", "imports", "classes", "interfaces", "extends", "implements", "primaryConstructors", "fields", "members", "parameters", "returns", "nullableTypes", "objects", "companions", "typealiases"],
-  "uncertainty": { "extensions": "unsupported", "overloads": "ambiguous", "compilerDispatch": "unknown" }
+  "uncertainty": { "extensions": "unsupported", "overloads": "ambiguous", "compilerDispatch": "unknown" },
+  "execution": { "loader": "runLanguageFixture", "repeat": "deterministic", "sourceFallback": false }
 }

@@ -3,8 +3,8 @@ import test from "node:test";
 
 import { extractJavaFacts, javaFactExtractor } from "../src/core/facts/extractors/java.js";
 import { extractKotlinFacts, kotlinFactExtractor } from "../src/core/facts/extractors/kotlin.js";
-import { jvmSemanticAdapter } from "../src/core/graph/resolver/adapters/jvm.js";
-import { factExtractorInput, runFixtureThroughResolver } from "./helpers/phase14b-language-fixtures.js";
+import { JAVA_CAPABILITIES, KOTLIN_CAPABILITIES, jvmSemanticAdapter } from "../src/core/graph/resolver/adapters/jvm.js";
+import { factExtractorInput, runFixtureThroughResolver, runLanguageFixture } from "./helpers/phase14b-language-fixtures.js";
 
 const javaSource = `
 package demo.api;
@@ -108,4 +108,68 @@ fun String.extension(): String = this
 test("JVM extractors reject mismatched language inputs", () => {
   const mismatched = factExtractorInput({ filePath: "Main.kt", source: "class Main", language: "kotlin" });
   assert.equal(javaFactExtractor.extract(mismatched).kind, "infrastructure_failure");
+});
+
+test("Kotlin modifiers do not hide public or sealed interfaces", () => {
+  for (const [name, source] of [["public", "public interface PublicApi {\n fun get(): String?\n}"], ["sealed", "sealed interface SealedApi {\n fun get(): String?\n}"], ["combined", "public sealed interface CombinedApi {\n fun get(): String?\n}"]] as const) {
+    const outcome = kotlinFactExtractor.extract(input("kotlin", source));
+    assert.equal(outcome.kind, "facts", name);
+    if (outcome.kind !== "facts") continue;
+    assert.equal(outcome.facts.parseStatus, "complete", name);
+    assert.ok(outcome.facts.symbols.some((item) => item.kind === "interface" && item.name.endsWith("Api")), name);
+  }
+});
+
+test("JVM normalization preserves nullable syntax in evidence", () => {
+  const outcome = kotlinFactExtractor.extract(input("kotlin", kotlinSource));
+  assert.equal(outcome.kind, "facts");
+  if (outcome.kind !== "facts") return;
+  const evidence = jvmSemanticAdapter.normalizeFile(outcome.facts, {
+    generationId: "nullable",
+    repositoryIdentity: { id: "repo", identityKey: "repo", rootPath: "/repo", displayName: "repo" },
+    sourceUnit: { repositoryId: "repo", relativePath: "Main.kt", language: "kotlin" },
+    resolutionVersion: "14b-2",
+  });
+  assert.ok(evidence.typeAnnotations.some((item) => item.type.kind === "named" && item.type.name === "String?"));
+});
+
+test("JVM capabilities distinguish Java from Kotlin compiler-semantic coverage", () => {
+  assert.equal(jvmSemanticAdapter.capabilities("java"), JAVA_CAPABILITIES);
+  assert.equal(jvmSemanticAdapter.capabilities("kotlin"), KOTLIN_CAPABILITIES);
+  assert.notDeepEqual(JAVA_CAPABILITIES, KOTLIN_CAPABILITIES);
+  assert.notEqual(KOTLIN_CAPABILITIES.directCall, "full");
+  assert.notEqual(KOTLIN_CAPABILITIES.receiverMember, "full");
+});
+
+test("real Java and Kotlin fixtures exercise the full floor deterministically", async () => {
+  const javaCold = await runLanguageFixture("java", { extractors: [javaFactExtractor], adapter: jvmSemanticAdapter });
+  const javaWarm = await runLanguageFixture("java", { extractors: [javaFactExtractor], adapter: jvmSemanticAdapter, memoMode: "warm", parallel: true });
+  const kotlinCold = await runLanguageFixture("kotlin", { extractors: [kotlinFactExtractor], adapter: jvmSemanticAdapter });
+  const kotlinWarm = await runLanguageFixture("kotlin", { extractors: [kotlinFactExtractor], adapter: jvmSemanticAdapter, memoMode: "warm", parallel: true });
+  for (const [cold, warm, language, grammar] of [[javaCold, javaWarm, "java", "tree-sitter-java@0.23.5"], [kotlinCold, kotlinWarm, "kotlin", "tree-sitter-kotlin@0.3.8"]] as const) {
+    const facts = cold.normalizedFacts[0];
+    assert.equal(facts?.language, language);
+    assert.equal(facts?.parserIdentity.packageName, grammar.split("@")[0]);
+    assert.equal(`${facts?.parserIdentity.packageName}@${facts?.parserIdentity.grammarVersion}`, grammar);
+    assert.equal(facts?.parseStatus, "complete");
+    assert.deepEqual(warm.normalizedFacts, cold.normalizedFacts);
+    assert.deepEqual(warm.resolverState.evidence, cold.resolverState.evidence);
+    assert.equal(warm.usedSourceSemanticFallback, false);
+    assert.equal(cold.floorPassed, true);
+  }
+  assert.ok(javaCold.normalizedFacts[0]?.modules.some((item) => item.name === "fixture.jvm"));
+  assert.ok(javaCold.normalizedFacts[0]?.imports.length);
+  assert.ok(javaCold.normalizedFacts[0]?.inheritances.length);
+  assert.ok(javaCold.normalizedFacts[0]?.implementations.length);
+  assert.ok(javaCold.normalizedFacts[0]?.constructors.length);
+  assert.ok(javaCold.normalizedFacts[0]?.members.length);
+  assert.ok(javaCold.normalizedFacts[0]?.parameters.length);
+  assert.ok(javaCold.normalizedFacts[0]?.returns.length);
+  assert.ok(kotlinCold.normalizedFacts[0]?.aliases.length);
+  assert.ok(kotlinCold.normalizedFacts[0]?.constructors.length);
+  assert.ok(kotlinCold.normalizedFacts[0]?.implementations.some((item) => item.relationKind === "extension"));
+  assert.ok(kotlinCold.resolverState.evidence[0]?.diagnostics.some((item) => item.code === "extension_dispatch_unsupported"));
+  assert.ok(kotlinCold.resolverState.evidence[0]?.diagnostics.some((item) => item.code === "overload_ambiguity"));
+  assert.ok(kotlinCold.resolverState.evidence[0]?.diagnostics.some((item) => item.code === "compiler_dispatch_unknown"));
+  assert.ok(kotlinCold.resolverState.evidence[0]?.typeAnnotations.some((item) => item.type.kind === "named" && item.type.name.endsWith("?")));
 });

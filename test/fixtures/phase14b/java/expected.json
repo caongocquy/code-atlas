@@ -1,6 +1,8 @@
 {
   "language": "java",
   "grammar": "tree-sitter-java@0.23.5",
+  "sourceCases": [{ "filePath": "phase14b/java/main.java", "fixture": "parserFixtures.java" }],
   "requiredFacts": ["packages", "imports", "classes", "interfaces", "extends", "implements", "constructors", "fields", "members", "parameters", "returns"],
-  "uncertainty": { "overloads": "ambiguous", "compilerDispatch": "unknown" }
+  "uncertainty": { "overloads": "ambiguous", "compilerDispatch": "unknown" },
+  "execution": { "loader": "runLanguageFixture", "repeat": "deterministic", "sourceFallback": false }
 }

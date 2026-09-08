@@ -2,7 +2,8 @@ import type { FactLocalId, ParsedFactsBlob, SourceRangeFact } from "../../../fac
 import { symbolIdentity, type ExpressionIdentity, type ModuleIdentity, type ScopeIdentity } from "../identities.js";
 import type { AdapterContext, LanguageSemanticAdapter, SemanticCapabilities, SemanticEvidenceBatch, TypeRef } from "../types.js";
 
-const capabilities: SemanticCapabilities = { moduleImport: "full", localBinding: "full", directCall: "full", declaredType: "full", constructorType: "full", receiverMember: "full", assignment: "full", parameterFlow: "full", returnFlow: "full", inheritance: "full" };
+export const JAVA_CAPABILITIES: SemanticCapabilities = { moduleImport: "full", localBinding: "full", directCall: "full", declaredType: "full", constructorType: "full", receiverMember: "full", assignment: "full", parameterFlow: "full", returnFlow: "full", inheritance: "full" };
+export const KOTLIN_CAPABILITIES: SemanticCapabilities = { moduleImport: "full", localBinding: "full", directCall: "partial", declaredType: "full", constructorType: "partial", receiverMember: "partial", assignment: "partial", parameterFlow: "full", returnFlow: "partial", inheritance: "partial" };
 const empty = (): SemanticEvidenceBatch => ({ bindings: [], imports: [], exports: [], typeAnnotations: [], constructors: [], assignments: [], parameters: [], returns: [], members: [], inheritance: [], implementations: [], aliases: [], modules: [], calls: [], diagnostics: [] });
 
 export function normalizeJvmFacts(facts: ParsedFactsBlob, context: AdapterContext): SemanticEvidenceBatch {
@@ -15,7 +16,9 @@ export function normalizeJvmFacts(facts: ParsedFactsBlob, context: AdapterContex
   const scopeOf = (id: string | undefined): ScopeIdentity => ({ sourceUnit: unit, localId: id ?? "scope:1", parentLocalId: parent(id) });
   const typeOf = (value: string | undefined): TypeRef | undefined => {
     if (!value) return undefined;
-    const name = value.trim().replaceAll("?", "");
+    const raw = value.trim();
+    const name = raw.replaceAll("?", "");
+    if (raw !== name) return { kind: "named", name: raw };
     const qualified = facts.symbols.find((item) => item.name.endsWith(`.${name}`));
     const known = byName.get(name) ?? (qualified ? symbols.get(qualified.localId) : undefined);
     return known ? { kind: "known", symbol: known } : { kind: "named", name };
@@ -55,4 +58,4 @@ export function normalizeJvmFacts(facts: ParsedFactsBlob, context: AdapterContex
   return result;
 }
 
-export const jvmSemanticAdapter: LanguageSemanticAdapter = { adapterId: "jvm-phase14b", adapterVersion: 1, languages: ["java", "kotlin"], capabilities: () => capabilities, normalizeFile: normalizeJvmFacts };
+export const jvmSemanticAdapter: LanguageSemanticAdapter = { adapterId: "jvm-phase14b", adapterVersion: 1, languages: ["java", "kotlin"], capabilities: (language) => language === "java" ? JAVA_CAPABILITIES : KOTLIN_CAPABILITIES, normalizeFile: normalizeJvmFacts };
