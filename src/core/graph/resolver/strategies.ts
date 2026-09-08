@@ -165,6 +165,29 @@ function resolveImports(input: ResolverInput, site: ResolutionSiteIdentity, stra
   })() : []));
 }
 
+function resolveReturns(input: ResolverInput, site: ResolutionSiteIdentity, strategy: ResolutionStrategyId): readonly ResolutionCandidate[] {
+  const returnFact = input.facts.returns.find((fact) => fact.localId === site.localId);
+  const callFacts = input.facts.callSites.filter((fact) => fact.localId === site.localId);
+  const callEvidence = input.evidence.calls.filter((item) => sameSourceUnit(item.sourceUnit, site.sourceUnit) && item.site.localId === site.localId);
+  const calleeNames = new Set([
+    ...callFacts.map((fact) => fact.calleeText),
+    ...callEvidence.map((item) => item.calleeName),
+  ]);
+  const returns = input.evidence.returns.filter((item) => sameSourceUnit(item.sourceUnit, site.sourceUnit) && (
+    returnFact?.ownerSymbolId === item.callable.discriminator
+    || calleeNames.has(item.callable.qualifiedName)
+    || [...calleeNames].some((name) => item.callable.qualifiedName.endsWith(`.${name}`))
+  ));
+  const callEvidenceIds = callEvidence.map((item) => item.evidenceId);
+  return mergeCandidates(returns.flatMap((item) => typeEnvironmentResult(
+    input,
+    site,
+    input.environment.resolveReturn(item.callable),
+    strategy,
+    [item.evidenceId, ...callEvidenceIds],
+  )));
+}
+
 function resolveInheritance(input: ResolverInput, site: ResolutionSiteIdentity, strategy: ResolutionStrategyId): readonly ResolutionCandidate[] {
   const fact = input.facts.inheritances.find((item) => item.localId === site.localId);
   if (!fact) return [];
@@ -189,7 +212,7 @@ function candidates(input: ResolverInput, site: ResolutionSiteIdentity, strategy
     case "constructor": result = resolveTypes(input, site, strategy, input.evidence.constructors.filter((item) => sameSourceUnit(item.sourceUnit, site.sourceUnit) && item.resultBindingId === site.localId).map((item) => item.evidenceId)); break;
     case "assignment": result = resolveTypes(input, site, strategy, input.evidence.assignments.filter((item) => sameSourceUnit(item.sourceUnit, site.sourceUnit) && item.targetBindingId === site.localId).map((item) => item.evidenceId)); break;
     case "parameter": result = resolveTypes(input, site, strategy, input.evidence.parameters.filter((item) => sameSourceUnit(item.sourceUnit, site.sourceUnit) && item.bindingId === site.localId).map((item) => item.evidenceId)); break;
-    case "return": result = resolveTypes(input, site, strategy, input.evidence.returns.filter((item) => sameSourceUnit(item.sourceUnit, site.sourceUnit) && item.callable.discriminator === site.localId).map((item) => item.evidenceId)); break;
+    case "return": result = resolveReturns(input, site, strategy); break;
     case "alias": result = resolveTypes(input, site, strategy, input.evidence.aliases.filter((item) => sameSourceUnit(item.sourceUnit, site.sourceUnit) && input.facts.aliases.some((fact) => fact.localId === site.localId && fact.aliasName === item.alias)).map((item) => item.evidenceId)); break;
     case "inheritance": result = resolveInheritance(input, site, strategy); break;
     case "receiver-member": result = resolveMembers(input, site, strategy); break;

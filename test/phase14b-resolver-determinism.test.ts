@@ -8,11 +8,11 @@ import { ORDERED_STRATEGIES } from "../src/core/graph/resolver/strategies.js";
 import { resolveSite } from "../src/core/graph/resolver/resolver.js";
 import { resolveStrategy } from "../src/core/graph/resolver/strategies.js";
 import type { ParsedFactsBlob } from "../src/core/facts/facts.types.js";
-import type { BindingEvidence, LanguageSemanticAdapter, ResolutionSiteIdentity, SemanticEvidenceBatch, SymbolIdentity } from "../src/core/graph/resolver/types.js";
+import type { BindingEvidence, LanguageSemanticAdapter, ResolutionSiteIdentity, ReturnEvidence, SemanticEvidenceBatch, SymbolIdentity, TypeRef } from "../src/core/graph/resolver/types.js";
 import type { LookupResult, TypeEnvironment } from "../src/core/graph/resolver/type-environment.js";
 
 const sourceUnit = { repositoryId: "repo", relativePath: "src/app.ts", language: "typescript" } as const;
-const site: ResolutionSiteIdentity = { sourceUnit, localId: "missing" };
+const site: ResolutionSiteIdentity = { sourceUnit, localId: "site:fixture" };
 const facts = {} as ParsedFactsBlob;
 const evidence: SemanticEvidenceBatch = {
   bindings: [], imports: [], exports: [], typeAnnotations: [], constructors: [], assignments: [], parameters: [], returns: [], members: [], inheritance: [], implementations: [], aliases: [], modules: [], calls: [], diagnostics: [],
@@ -36,15 +36,20 @@ const environment = (lookup: (scope: BindingEvidence["scope"], name: string) => 
 const baseContext = (options: { memo?: ReturnType<typeof createResolverMemo>; budget?: ReturnType<typeof budgets>; adapter?: LanguageSemanticAdapter; typeEnvironment?: TypeEnvironment } = {}) => createGenerationResolverContext({
   generationId: "generation:1", repositoryIdentity: { id: "repo", identityKey: "path-v1:repo", rootPath: "/repo", displayName: "repo" }, parsedFactsView: [], languageRegistry: options.adapter ? [options.adapter] : [], typeEnvironment: options.typeEnvironment ?? environment(() => ({ status: "unknown", reason: "insufficient_evidence", evidenceIds: [] })), budget: createBudgetLedger(options.budget ?? { candidateExpansions: 10, bindingHops: 10, returnDepth: 10, inheritanceDepth: 10, memberCandidates: 10, expressionNodes: 10, propagationRounds: 10 }), memo: options.memo ?? createResolverMemo(), resolutionVersion: "14b-2",
 });
-const budgets = () => ({ candidateExpansions: 0, bindingHops: 10, returnDepth: 10, inheritanceDepth: 10, memberCandidates: 10, expressionNodes: 10, propagationRounds: 10 });
+const budgets = () => ({ candidateExpansions: 1, bindingHops: 10, returnDepth: 10, inheritanceDepth: 10, memberCandidates: 10, expressionNodes: 10, propagationRounds: 10 });
+const fixtureBinding: BindingEvidence = {
+  evidenceId: "binding:fixture" as never, sourceUnit, range: { startLine: 1, endLine: 1 }, kind: "binding", scope: { sourceUnit, localId: "scope:1" }, name: "service", bindingId: "site:fixture", declaredType: { kind: "known", symbol: target("Fixture") },
+};
 const resolveFixture = (memo: ReturnType<typeof createResolverMemo>) => {
+  const fixtureFacts = makeFacts();
+  const typeEnvironment = environment(() => ({ status: "found", values: [fixtureBinding], evidenceIds: [fixtureBinding.evidenceId] }));
   const context = createGenerationResolverContext({
     generationId: "generation:1",
     repositoryIdentity: { id: "repo", identityKey: "path-v1:repo", rootPath: "/repo", displayName: "repo" },
-    parsedFactsView: [facts], languageRegistry: [], typeEnvironment: {} as never,
+    parsedFactsView: [fixtureFacts], languageRegistry: [], typeEnvironment,
     budget: createBudgetLedger(budgets()), memo, resolutionVersion: "14b-2",
   });
-  return resolveSite({ facts, evidence, environment: context.typeEnvironment, context }, site);
+  return resolveSite({ facts: fixtureFacts, evidence: { ...evidence, bindings: [fixtureBinding] }, environment: typeEnvironment, context }, site);
 };
 
 test("resolver uses the fixed strategy order exactly once", () => {
@@ -57,12 +62,16 @@ test("resolver uses the fixed strategy order exactly once", () => {
 });
 
 test("budget exhaustion and warm memoization preserve deterministic semantics", () => {
-  const cold = resolveFixture(createResolverMemo());
+  const coldMemo = createResolverMemo();
+  const cold = resolveFixture(coldMemo);
+  assert.equal(cold.status, "resolved");
+  assert.equal(coldMemo.size(), 1);
   const warmMemo = createResolverMemo();
   const warmFirst = resolveFixture(warmMemo);
   const warmSecond = resolveFixture(warmMemo);
-  assert.equal(cold.status, "budget_exhausted");
+  assert.equal(warmFirst.status, "resolved");
   assert.deepEqual(warmFirst, warmSecond);
+  assert.equal(warmMemo.size(), 1);
 });
 
 test("strategies query the injected environment only for the requested source unit and site", () => {
@@ -112,4 +121,25 @@ test("warm memo resolution is equivalent and avoids a second environment lookup"
   const warmContext = baseContext({ memo, typeEnvironment: warmEnvironment, budget: budgets() });
   const warm = resolveStrategy({ facts: makeFacts(), evidence: { ...evidence, bindings: [binding] }, environment: warmEnvironment, context: warmContext }, warmSite, "lexical-local");
   assert.deepEqual(warm, cold);
+});
+
+test("return strategy resolves through the injected resolveReturn API for the callable identity", () => {
+  const callable = target("Service.run");
+  const returnEvidence: ReturnEvidence = {
+    evidenceId: "return:site" as never, sourceUnit, range: { startLine: 1, endLine: 1 }, kind: "return", callable,
+  };
+  const returnFact = { localId: "return:1", ownerSymbolId: callable.discriminator, expressionId: undefined, typeText: undefined, range: { startLine: 1, endLine: 1 } } as never;
+  const returnType: TypeRef = { kind: "known", symbol: target("Result") };
+  let resolvedCallable: SymbolIdentity | undefined;
+  const typeEnvironment = environment(() => ({ status: "unknown", reason: "insufficient_evidence", evidenceIds: [] }));
+  typeEnvironment.resolveReturn = (candidate) => {
+    resolvedCallable = candidate;
+    return { status: "found", values: [returnType], evidenceIds: [returnEvidence.evidenceId] };
+  };
+  const context = baseContext({ typeEnvironment });
+  const returnSite: ResolutionSiteIdentity = { sourceUnit, localId: "return:1" };
+  const returnInput = { facts: { ...makeFacts(), returns: [returnFact] }, evidence: { ...evidence, returns: [returnEvidence] }, environment: typeEnvironment, context };
+  const result = resolveStrategy(returnInput, returnSite, "return");
+  assert.deepEqual(result.map((candidate) => candidate.target.qualifiedName), ["Result"]);
+  assert.deepEqual(resolvedCallable, callable);
 });

@@ -13,6 +13,19 @@ Validation:
 - `node --import tsx/esm --test test/phase14b-resolver-contract.test.ts test/phase14b-type-environment.test.ts test/phase14b-resolver-work-controls.test.ts test/phase14b-resolver-decisions.test.ts test/phase14b-resolver-determinism.test.ts` — 19/19 passed.
 - `./node_modules/.bin/tsc --noEmit` — passed.
 - `git diff --check` — passed.
+
+## Loop round 2
+
+Addressed the two remaining review findings:
+
+- The `return` strategy now identifies the requested callable from site-linked facts/evidence and resolves it through the injected `TypeEnvironment.resolveReturn(callable)` API, retaining source/repository scoping and supporting evidence IDs.
+- The determinism fixture now uses a positive candidate budget and a real lexical resolution path. Cold resolution creates a stable memo entry; warm resolution reads it with equivalent output and avoids a second environment lookup.
+
+Loop 2 validation:
+
+- `node --import tsx/esm --test test/phase14b-resolver-contract.test.ts test/phase14b-type-environment.test.ts test/phase14b-resolver-work-controls.test.ts test/phase14b-resolver-decisions.test.ts test/phase14b-resolver-determinism.test.ts` — 25/25 passed.
+- `./node_modules/.bin/tsc --noEmit` — passed.
+- `git diff --check` — passed.
 - `pnpm exec tsc --noEmit` was not usable in this managed non-TTY worktree because pnpm attempted an install and aborted with `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`; the local compiler command above completed successfully.
 
 Scope exclusions honored: no graph integration, persistence, concrete language adapters, or package changes.
