@@ -9,8 +9,8 @@ export type GraphRefreshMode = "full-rebuild" | "incremental";
 export type VectorRefreshMode = "semantic-reindex" | "incremental";
 
 export const INDEX_SCHEMA_VERSION = "1.0.0";
-export const FACTS_SCHEMA_VERSION = "1.0.0";
-export const FACTS_VERSION = "1.0.0";
+export const FACTS_SCHEMA_VERSION = "2.0.0";
+export const FACTS_VERSION = "2.0.0";
 
 export const CURRENT_INDEX_VERSION_DOMAINS: IndexVersionDomains = {
   schemaVersion: INDEX_SCHEMA_VERSION,

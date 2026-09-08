@@ -65,17 +65,17 @@ test("fact blob keys are canonical and path-independent", () => {
   const expected = createHash("sha256")
     .update(JSON.stringify({
       contentHash: facts.contentHash,
+      factsSchemaVersion: facts.factsSchemaVersion,
+      factsVersion: facts.factsVersion,
       language: facts.language,
       parserIdentity: {
-        language: facts.parserIdentity.language,
-        runtimeName: facts.parserIdentity.runtimeName,
-        runtimeVersion: facts.parserIdentity.runtimeVersion,
-        packageName: facts.parserIdentity.packageName,
         grammarName: facts.parserIdentity.grammarName,
         grammarVersion: facts.parserIdentity.grammarVersion,
+        language: facts.parserIdentity.language,
+        packageName: facts.parserIdentity.packageName,
+        runtimeName: facts.parserIdentity.runtimeName,
+        runtimeVersion: facts.parserIdentity.runtimeVersion,
       },
-      factsVersion: facts.factsVersion,
-      factsSchemaVersion: facts.factsSchemaVersion,
     }))
     .digest("hex");
 

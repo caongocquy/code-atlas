@@ -13,19 +13,24 @@ export function factBlobKey(
   >,
 ): FactBlobKey {
   return createHash("sha256")
-    .update(JSON.stringify({
+    .update(canonicalJson({
       contentHash: input.contentHash,
       language: input.language,
-      parserIdentity: {
-        language: input.parserIdentity.language,
-        runtimeName: input.parserIdentity.runtimeName,
-        runtimeVersion: input.parserIdentity.runtimeVersion,
-        packageName: input.parserIdentity.packageName,
-        grammarName: input.parserIdentity.grammarName,
-        grammarVersion: input.parserIdentity.grammarVersion,
-      },
+      parserIdentity: input.parserIdentity,
       factsVersion: input.factsVersion,
       factsSchemaVersion: input.factsSchemaVersion,
     }))
     .digest("hex") as FactBlobKey;
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (typeof value === "object" && value !== null) {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item !== undefined)
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
 }

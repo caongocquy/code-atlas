@@ -113,7 +113,7 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       const adapter = getLanguageAdapter(relativePath);
       if (source === undefined || !adapter) continue;
       const parserIdentity = parserMetadata(adapter);
-      const expected = { contentHash: current.contentHash, language: current.language, parserIdentity, factsVersion: CURRENT_INDEX_VERSION_DOMAINS.factsVersion, factsSchemaVersion: CURRENT_INDEX_VERSION_DOMAINS.schemaVersion };
+      const expected = { contentHash: current.contentHash, language: current.language, parserIdentity, factsVersion: CURRENT_INDEX_VERSION_DOMAINS.factsVersion, factsSchemaVersion: CURRENT_INDEX_VERSION_DOMAINS.factsSchemaVersion };
       let key = factBlobKey(expected);
       const cached = decodeFacts(store.getFactBlob(key), { key, ...expected });
       let facts;
@@ -133,7 +133,7 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
           const stable = await extractStableFacts(
             relativePath,
             readSource,
-            (read) => extractParsedFacts({ filePath: relativePath, source: read.source, language: current.language, contentHash: read.contentHash, factsVersion: CURRENT_INDEX_VERSION_DOMAINS.factsVersion, factsSchemaVersion: CURRENT_INDEX_VERSION_DOMAINS.schemaVersion }),
+            (read) => extractParsedFacts({ filePath: relativePath, source: read.source, language: current.language, contentHash: read.contentHash, factsVersion: CURRENT_INDEX_VERSION_DOMAINS.factsVersion, factsSchemaVersion: CURRENT_INDEX_VERSION_DOMAINS.factsSchemaVersion }),
           );
           source = stable.source;
           facts = stable.facts;
@@ -146,7 +146,7 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
         const stable = await extractStableFacts(
           relativePath,
           readSource,
-          (read) => extractParsedFacts({ filePath: relativePath, source: read.source, language: current.language, contentHash: read.contentHash, factsVersion: CURRENT_INDEX_VERSION_DOMAINS.factsVersion, factsSchemaVersion: CURRENT_INDEX_VERSION_DOMAINS.schemaVersion }),
+          (read) => extractParsedFacts({ filePath: relativePath, source: read.source, language: current.language, contentHash: read.contentHash, factsVersion: CURRENT_INDEX_VERSION_DOMAINS.factsVersion, factsSchemaVersion: CURRENT_INDEX_VERSION_DOMAINS.factsSchemaVersion }),
         );
         source = stable.source;
         facts = stable.facts;

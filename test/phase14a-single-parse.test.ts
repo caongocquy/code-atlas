@@ -16,7 +16,7 @@ function unit(relativePath: string, source: string): IndexedSourceUnit {
     language: "typescript",
     contentHash: `${relativePath}:${source}`,
     factsVersion: CURRENT_INDEX_VERSION_DOMAINS.factsVersion,
-    factsSchemaVersion: "1.0.0",
+    factsSchemaVersion: CURRENT_INDEX_VERSION_DOMAINS.factsSchemaVersion,
   });
   assert.equal(extracted.kind, "facts");
   if (extracted.kind !== "facts") throw extracted.error;

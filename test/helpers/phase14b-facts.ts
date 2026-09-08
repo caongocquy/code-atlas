@@ -21,8 +21,8 @@ const parserIdentity = {
 
 export function makeFacts(overrides: Partial<ParsedFactsBlob> = {}): ParsedFactsBlob {
   return {
-    factsSchemaVersion: "1",
-    factsVersion: "1",
+    factsSchemaVersion: "2.0.0",
+    factsVersion: "2.0.0",
     contentHash: "content-hash",
     language: "typescript",
     parserIdentity,
