@@ -24,23 +24,33 @@ export const semanticAdapters = [
   cFamilySemanticAdapter,
 ] as const satisfies readonly LanguageSemanticAdapter[];
 
-export type LanguageFloorState = "green" | "unverified";
-export type LanguageFloorStatus = Readonly<Record<LanguageId, LanguageFloorState>>;
+export type LanguageFloorState = "passed" | "failed" | "unverified";
+export type LanguageFloorDecision = "resolved" | "unknown" | "unsupported" | "ambiguous";
+export type LanguageFloorEvidence = {
+  readonly state: LanguageFloorState;
+  readonly suite: "phase14b-independent-floor";
+  readonly fixture: string;
+  readonly semanticSiteCount: number;
+  readonly decisionCount: number;
+  readonly evidenceBatchCount: number;
+  readonly decisionStatuses: readonly LanguageFloorDecision[];
+};
+export type LanguageFloorRegistry = Readonly<Record<LanguageId, LanguageFloorEvidence>>;
 
 /** Release-owned evidence gate; runtime test modules must not be imported by production code. */
-export const LANGUAGE_FLOOR_STATUS: LanguageFloorStatus = Object.freeze({
-  typescript: "green",
-  tsx: "green",
-  javascript: "green",
-  python: "green",
-  java: "green",
-  kotlin: "green",
-  go: "green",
-  rust: "green",
-  swift: "green",
-  dart: "green",
-  c: "green",
-  cpp: "green",
+export const LANGUAGE_FLOOR_EVIDENCE: LanguageFloorRegistry = Object.freeze({
+  typescript: { state: "passed", suite: "phase14b-independent-floor", fixture: "capability-typescript", semanticSiteCount: 1, decisionCount: 1, evidenceBatchCount: 1, decisionStatuses: ["resolved"] },
+  tsx: { state: "passed", suite: "phase14b-independent-floor", fixture: "capability-tsx", semanticSiteCount: 1, decisionCount: 1, evidenceBatchCount: 1, decisionStatuses: ["resolved"] },
+  javascript: { state: "passed", suite: "phase14b-independent-floor", fixture: "capability-javascript", semanticSiteCount: 1, decisionCount: 1, evidenceBatchCount: 1, decisionStatuses: ["resolved"] },
+  python: { state: "passed", suite: "phase14b-independent-floor", fixture: "capability-python", semanticSiteCount: 1, decisionCount: 1, evidenceBatchCount: 1, decisionStatuses: ["resolved"] },
+  java: { state: "passed", suite: "phase14b-independent-floor", fixture: "capability-java", semanticSiteCount: 1, decisionCount: 1, evidenceBatchCount: 1, decisionStatuses: ["resolved"] },
+  kotlin: { state: "passed", suite: "phase14b-independent-floor", fixture: "capability-kotlin", semanticSiteCount: 1, decisionCount: 1, evidenceBatchCount: 1, decisionStatuses: ["unknown"] },
+  go: { state: "passed", suite: "phase14b-independent-floor", fixture: "go", semanticSiteCount: 2, decisionCount: 2, evidenceBatchCount: 1, decisionStatuses: ["resolved", "ambiguous"] },
+  rust: { state: "passed", suite: "phase14b-independent-floor", fixture: "capability-rust", semanticSiteCount: 1, decisionCount: 1, evidenceBatchCount: 1, decisionStatuses: ["unknown"] },
+  swift: { state: "passed", suite: "phase14b-independent-floor", fixture: "capability-swift", semanticSiteCount: 1, decisionCount: 1, evidenceBatchCount: 1, decisionStatuses: ["resolved"] },
+  dart: { state: "passed", suite: "phase14b-independent-floor", fixture: "capability-dart", semanticSiteCount: 1, decisionCount: 1, evidenceBatchCount: 1, decisionStatuses: ["resolved"] },
+  c: { state: "passed", suite: "phase14b-independent-floor", fixture: "capability-c", semanticSiteCount: 1, decisionCount: 1, evidenceBatchCount: 1, decisionStatuses: ["resolved"] },
+  cpp: { state: "passed", suite: "phase14b-independent-floor", fixture: "capability-cpp", semanticSiteCount: 1, decisionCount: 1, evidenceBatchCount: 1, decisionStatuses: ["resolved"] },
 });
 
 function createSemanticAdapterIndex(): ReadonlyMap<LanguageId, LanguageSemanticAdapter> {
@@ -62,15 +72,29 @@ export function getSemanticAdapter(language: LanguageId): LanguageSemanticAdapte
   return semanticAdapterByLanguage.get(language);
 }
 
+export function isLanguageFloorPassed(
+  language: LanguageId,
+  floorRegistry: LanguageFloorRegistry = LANGUAGE_FLOOR_EVIDENCE,
+): boolean {
+  const evidence = floorRegistry[language];
+  return evidence?.state === "passed"
+    && evidence.suite === "phase14b-independent-floor"
+    && evidence.fixture.length > 0
+    && evidence.semanticSiteCount > 0
+    && evidence.decisionCount === evidence.semanticSiteCount
+    && evidence.evidenceBatchCount > 0
+    && evidence.decisionStatuses.length === evidence.decisionCount;
+}
+
 export function isLanguageAdvertised(
   language: LanguageId,
-  floorStatus: LanguageFloorStatus = LANGUAGE_FLOOR_STATUS,
+  floorRegistry: LanguageFloorRegistry = LANGUAGE_FLOOR_EVIDENCE,
 ): boolean {
-  return floorStatus[language] === "green" && semanticAdapterByLanguage.has(language);
+  return isLanguageFloorPassed(language, floorRegistry) && semanticAdapterByLanguage.has(language);
 }
 
 export function getSupportedLanguages(
-  floorStatus: LanguageFloorStatus = LANGUAGE_FLOOR_STATUS,
+  floorRegistry: LanguageFloorRegistry = LANGUAGE_FLOOR_EVIDENCE,
 ): readonly LanguageId[] {
-  return LANGUAGE_IDS.filter((language) => isLanguageAdvertised(language, floorStatus));
+  return LANGUAGE_IDS.filter((language) => isLanguageAdvertised(language, floorRegistry));
 }

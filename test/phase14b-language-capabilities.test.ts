@@ -11,8 +11,9 @@ import {
   getSemanticAdapter,
   getSupportedLanguages,
   isLanguageAdvertised,
-  LANGUAGE_FLOOR_STATUS,
-  type LanguageFloorStatus,
+  isLanguageFloorPassed,
+  LANGUAGE_FLOOR_EVIDENCE,
+  type LanguageFloorRegistry,
 } from "../src/core/graph/resolver/adapter-registry.js";
 import type { CapabilityLevel, LanguageSemanticAdapter, SemanticCapabilities, SemanticEvidenceBatch } from "../src/core/graph/resolver/types.js";
 import type { LanguageId } from "../src/core/graph/parsers/types.js";
@@ -25,6 +26,7 @@ import {
   runLanguageFixture,
   type LanguageFixtureCase,
   type LanguageFixtureDefinition,
+  type LanguageFixtureResult,
 } from "./helpers/phase14b-language-fixtures.js";
 
 const TARGET_LANGUAGES = targetLanguages;
@@ -59,6 +61,13 @@ function evidenceCount(batch: SemanticEvidenceBatch): number {
   return Object.values(batch).reduce((count, value) => count + (Array.isArray(value) ? value.length : 0), 0);
 }
 
+function assertNonEmptyFloorEvidence(language: LanguageId, floor: LanguageFixtureResult): void {
+  assert.ok(floor.normalizedFacts.length > 0, `missing facts for ${language}`);
+  assert.ok(floor.decisions.length > 0, `missing semantic decision for ${language}`);
+  const evidence = floor.resolverState.evidence.reduce((count, batch) => count + evidenceCount(batch), 0);
+  assert.ok(evidence > 0, `missing semantic evidence for ${language}`);
+}
+
 async function runCapabilityFloor(
   language: LanguageId,
   extractor: NonNullable<ReturnType<typeof getLanguageFactExtractor>>,
@@ -80,10 +89,8 @@ async function runCapabilityFloor(
     expectedDecisionStatuses: [item.expectedStatus],
   };
   const result = await runFixtureThroughResolver(fixture, [outcome.facts], adapter);
-  const evidence = result.resolverState.evidence.reduce((count, batch) => count + evidenceCount(batch), 0);
-  assert.ok(result.decisions.length > 0, `missing semantic decision for ${language}`);
-  assert.ok(evidence > 0, `missing semantic evidence for ${language}`);
-  return { ...result, floorPassed: result.floorPassed && result.decisions.length > 0 && evidence > 0 };
+  assertNonEmptyFloorEvidence(language, result);
+  return { ...result, floorPassed: result.floorPassed };
 }
 
 export async function getPhase14bCapabilities(): Promise<Record<string, Phase14bCapability>> {
@@ -96,6 +103,7 @@ export async function getPhase14bCapabilities(): Promise<Record<string, Phase14b
     const floor = language === "go"
       ? await runLanguageFixture(language, { extractors: [extractor], adapter })
       : await runCapabilityFloor(language, extractor, adapter);
+    assertNonEmptyFloorEvidence(language, floor);
     result[language] = {
       floorPassed: floor.floorPassed,
       supported: floor.floorPassed && isLanguageAdvertised(language),
@@ -137,7 +145,11 @@ test("repository status advertises only the registered, floor-gated languages", 
 
 test("production floor gate excludes an unverified language despite its registered adapter", () => {
   assert.ok(getSemanticAdapter("python"));
-  const unverified: LanguageFloorStatus = { ...LANGUAGE_FLOOR_STATUS, python: "unverified" };
+  const unverified: LanguageFloorRegistry = {
+    ...LANGUAGE_FLOOR_EVIDENCE,
+    python: { ...LANGUAGE_FLOOR_EVIDENCE.python, state: "unverified" },
+  };
+  assert.equal(isLanguageFloorPassed("python", unverified), false);
   assert.equal(isLanguageAdvertised("python", unverified), false);
   assert.deepEqual(getSupportedLanguages(unverified), TARGET_LANGUAGES.filter((language) => language !== "python"));
 });
