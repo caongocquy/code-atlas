@@ -16,12 +16,26 @@ export type ResolverMemo = {
   size(): number;
 };
 
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const child of Object.values(value as Record<string, unknown>)) {
+      deepFreeze(child);
+    }
+  }
+  return value;
+}
+
+function cloneMemoEntry(value: MemoEntry): MemoEntry {
+  return deepFreeze(structuredClone(value) as MemoEntry);
+}
+
 export function createResolverMemo(): ResolverMemo {
   const values = new Map<string, MemoEntry>();
   return {
     get: (key) => values.get(key),
     set: (key, value) => {
-      values.set(key, value);
+      values.set(key, cloneMemoEntry(value));
     },
     size: () => values.size,
   };
