@@ -1,19 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import ignore, { type Ignore } from "ignore";
+import { LANGUAGE_CONFIGS } from "../graph/parsers/languages.js";
 import { canonicalRepositoryPath } from "./repository-identity.js";
 
 export { getRepoId } from "./repository-identity.js";
 
-const allowedExtensions = new Set([
-  ".ts",
-  ".tsx",
-  ".js",
-  ".jsx",
-  ".dart",
-  ".py",
-  ".md",
-]);
+const allowedExtensions = new Set(LANGUAGE_CONFIGS.flatMap((config) => config.extensions));
 
 const ignoredDirectories = new Set([
   ".git",

@@ -30,7 +30,11 @@ import {
   scanRepo,
 } from "./repository-files.js";
 import { detectChangeDetectionMode } from "../indexing/change-detector.js";
-import { getLanguageAdapter } from "../graph/parsers/registry.js";
+import type { LanguageId } from "../graph/parsers/types.js";
+import {
+  getLanguageAdapter,
+  getSupportedLanguages,
+} from "../graph/resolver/adapter-registry.js";
 
 export type RepositoryStatus = {
   changeDetection: "git" | "filesystem";
@@ -40,6 +44,7 @@ export type RepositoryStatus = {
     sourceFiles: number;
   };
   capabilities: {
+    languages: readonly LanguageId[];
     graph: CapabilitySummary;
     lexical: CapabilitySummary;
     semantic: CapabilitySummary;
@@ -122,6 +127,7 @@ async function emptyStatus(
     changeDetection,
     repository: { path: repoPath, repoId, sourceFiles },
     capabilities: {
+      languages: getSupportedLanguages(),
       graph: { state: "not_indexed", indexedFiles: 0, itemCount: 0 },
       lexical: { state: "not_indexed", indexedFiles: 0, itemCount: 0 },
       semantic: { state: semanticConfigured ? (semanticReady ? "not_indexed" : "unavailable") : "not_configured", indexedFiles: 0, itemCount: 0 },
@@ -333,6 +339,7 @@ async function getCapabilitySummaries(
   const lexicalStates = store.getFileCapabilityStates(repoId, "lexical");
 
   return {
+    languages: getSupportedLanguages(),
     graph: capabilityFromFiles(
       graphStates,
       store.getMetadata(repoId, "graph"),
