@@ -52,6 +52,25 @@ test("resolver diagnostics keep legacy resolved-only coverage non-authoritative"
   assert.equal(result.authoritativeNegativeResults, false);
 });
 
+test("ambiguous resolver diagnostics add the existing ambiguous-target coverage gap", () => {
+  const result = createCoverageDiagnostics({ resolverDiagnostics: [{
+    kind: "ambiguous",
+    language: "typescript",
+    file: "src/ambiguous.ts",
+    count: 2,
+    reason: "two equally ranked targets",
+  }] });
+  assert.equal(result.mayBeIncomplete, true);
+  assert.equal(result.authoritativeNegativeResults, false);
+  assert.deepEqual(result.gaps, [{
+    kind: "ambiguous_target",
+    count: 2,
+    files: ["src/ambiguous.ts"],
+    details: ["two equally ranked targets"],
+  }]);
+  assert.deepEqual(result.reasons, ["2 ambiguous targets prevent authoritative resolution"]);
+});
+
 test("coverage diagnostics aggregate gaps, targets, and only defensible metrics", () => {
   const diagnostics = createCoverageDiagnostics({
     graphState: "ready",

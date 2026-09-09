@@ -21,6 +21,7 @@ export type CoverageResult = {
 };
 
 const INCOMPLETE_RESOLVER_DIAGNOSTICS = new Set<ResolverDiagnostic["kind"]>([
+  "ambiguous",
   "unknown",
   "unsupported",
   "budgetExhausted",
@@ -139,6 +140,16 @@ function addResolutionDiagnostics(
   return counts;
 }
 
+function addResolverDiagnosticGaps(
+  gaps: Map<CoverageGapKind, GapAccumulator>,
+  diagnostics: readonly ResolverDiagnostic[],
+): void {
+  for (const diagnostic of diagnostics) {
+    if (diagnostic.kind !== "ambiguous") continue;
+    addGap(gaps, "ambiguous_target", diagnostic.count, [diagnostic.file], [diagnostic.reason ?? "ambiguous resolver target"]);
+  }
+}
+
 function addResolutionCoverage(
   gaps: Map<CoverageGapKind, GapAccumulator>,
   coverage: ResolutionCoverage | undefined,
@@ -164,6 +175,7 @@ function metric(input: CoverageDiagnosticsInput["internalCallResolution"]): Cove
 function buildGaps(input: CoverageDiagnosticsInput): Map<CoverageGapKind, GapAccumulator> {
   const gaps = new Map<CoverageGapKind, GapAccumulator>();
   const diagnosticCounts = addResolutionDiagnostics(gaps, input.resolutionDiagnostics ?? []);
+  addResolverDiagnosticGaps(gaps, input.resolverDiagnostics ?? []);
   addResolutionCoverage(gaps, input.resolutionCoverage, diagnosticCounts);
 
   if (input.graphState === "not_indexed") addGap(gaps, "not_indexed");
