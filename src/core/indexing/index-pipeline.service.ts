@@ -439,7 +439,8 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
     );
     recordIndexWork(counters, "filesResolved", persistedResolution.size);
     if (plan.fullGraphResolution && !graphCompatible) recordIndexWork(counters, "fullResolutionFallbacks");
-    store.writeCandidateGraph(generation.id, graph.graph, changes.fileHashes, graphCompatible ? undefined : persistedResolution, plan.reusePaths);
+    const reuseResolutionPaths = plan.reasons.includes("resolution_version_changed") ? [] : plan.reusePaths;
+    store.writeCandidateGraph(generation.id, graph.graph, changes.fileHashes, graphCompatible ? undefined : persistedResolution, reuseResolutionPaths);
     const lexical: LexicalFileUpdate[] = units.map((unit) => ({ file: unit.relativePath, fileHash: unit.facts.contentHash, documents: toLexicalDocumentsFromFacts(repoId, unit) }));
     store.writeCandidateLexicalDocuments(generation.id, lexical);
     const semanticStartedAt = performance.now();
