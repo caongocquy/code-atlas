@@ -5,14 +5,23 @@ import { GRAPH_INDEX_VERSION, LEXICAL_INDEX_VERSION, VECTOR_INDEX_VERSION } from
 import { decodeFacts } from "../facts/facts-codec.js";
 import { extractParsedFacts } from "../facts/facts-extractor.js";
 import { factBlobKey } from "../facts/facts-identity.js";
-import { buildCodeGraphWithResolutionFromFacts } from "../graph/build-graph.js";
+import { buildCodeGraphWithResolutionFromFacts, normalizeFacts } from "../graph/build-graph.js";
 import { isRelativeImport, resolveImportCandidates } from "../graph/imports.js";
 import { parserMetadata } from "../graph/parsers/code-parser.js";
 import { getLanguageAdapter } from "../graph/parsers/registry.js";
+import { createBudgetLedger } from "../graph/resolver/budgets.js";
+import { createGenerationResolverContext, type GenerationResolverContext } from "../graph/resolver/generation-context.js";
+import { createResolverMemo } from "../graph/resolver/memo.js";
+import { createTypeEnvironment } from "../graph/resolver/type-environment.js";
+import { semanticAdapters } from "../graph/resolver/adapter-registry.js";
+import { symbolIdentity } from "../graph/resolver/identities.js";
+import type { LanguageSemanticAdapter } from "../graph/resolver/types.js";
+import type { GraphResolutionFile, ResolutionDiagnostic } from "../graph/resolution.types.js";
 import type { LexicalFileUpdate } from "../../storage/atlas/atlas.types.js";
 import type { SemanticIndexResult } from "../semantic/semantic-index.service.js";
 import { prepareSemanticCandidateFromFacts, type SemanticCandidate } from "../semantic/semantic-index.service.js";
 import type { FactBlobKey } from "../facts/facts.types.js";
+import type { ParsedFactsBlob } from "../facts/facts.types.js";
 import type { SupportedLanguage } from "../graph/parsers/types.js";
 import { AtlasStore } from "../../storage/atlas/atlas.store.js";
 import { getRepositoryIdentity, canonicalRepositoryPath } from "../repository/repository-identity.js";
@@ -24,7 +33,89 @@ import { createCandidateGeneration } from "./index-manifest.js";
 import { planInvalidation } from "./invalidation-planner.js";
 import { extractStableFacts, SourceRaceError, type SourceReader } from "./filesystem-change-detector.js";
 import { createIndexWorkCounters, freezeIndexWorkCounters, recordIndexWork } from "./index-work-counters.js";
+import { createCandidateResolutionInput } from "./resolution-scope.js";
+import { createResolutionScope } from "./invalidation-planner.js";
 import type { IndexPipelineOptions, IndexingChanges, IndexRunOutcome, IndexFailure, IndexedSourceUnit, PublishedIndexRun } from "./indexing.types.js";
+
+const RESOLVER_BUDGETS = {
+  candidateExpansions: 1000,
+  bindingHops: 1000,
+  returnDepth: 1000,
+  inheritanceDepth: 1000,
+  memberCandidates: 1000,
+  expressionNodes: 1000,
+  propagationRounds: 1000,
+} as const;
+
+export function buildPipelineResolverContext(input: {
+  generationId: string;
+  repositoryIdentity: ReturnType<typeof getRepositoryIdentity>;
+  facts: readonly ParsedFactsBlob[];
+  adapters: readonly LanguageSemanticAdapter[];
+  resolutionVersion: string;
+  relativePaths?: readonly string[];
+}): GenerationResolverContext {
+  const budget = createBudgetLedger(RESOLVER_BUDGETS);
+  const memo = createResolverMemo();
+  const base = createGenerationResolverContext({
+    generationId: input.generationId,
+    repositoryIdentity: input.repositoryIdentity,
+    parsedFactsView: input.facts,
+    languageRegistry: input.adapters,
+    typeEnvironment: undefined as never,
+    budget,
+    memo,
+    resolutionVersion: input.resolutionVersion,
+  });
+  const evidence = normalizeFacts(input.facts.map((facts, index) => ({
+    facts,
+    sourceUnit: {
+      repositoryId: input.repositoryIdentity.id,
+      relativePath: input.relativePaths?.[index] ?? "",
+      language: facts.language,
+    },
+  })), base);
+  const symbols = input.facts.flatMap((facts, index) => facts.symbols.map((fact) => symbolIdentity({
+    repositoryId: input.repositoryIdentity.id,
+    relativePath: input.relativePaths?.[index] ?? "",
+    language: facts.language,
+    kind: fact.kind,
+    qualifiedName: fact.declaredQualifiedName ?? fact.name,
+    discriminator: fact.localId,
+  })));
+  const typeEnvironment = createTypeEnvironment({ generationId: input.generationId, symbols, evidence, budget, memo });
+  return createGenerationResolverContext({
+    ...base,
+    typeEnvironment,
+    diagnostics: base.diagnostics,
+  });
+}
+
+function toPersistedResolution(unit: IndexedSourceUnit, resolution: { decisions: ReadonlyArray<{ site: { localId: string }; status: string; edgeKind?: string; reason?: string; candidates?: ReadonlyArray<{ qualifiedName: string }> }> }): GraphResolutionFile {
+  const calls = resolution.decisions.filter((decision) => decision.edgeKind === "calls");
+  const inheritance = resolution.decisions.filter((decision) => decision.edgeKind === "extends");
+  const resolved = (items: typeof calls) => items.filter((item) => item.status === "resolved").length;
+  const ambiguous = (items: typeof calls) => items.filter((item) => item.status === "ambiguous").length;
+  const unresolved = (items: typeof calls) => items.filter((item) => item.status !== "resolved" && item.status !== "ambiguous").length;
+  const diagnostics: ResolutionDiagnostic[] = [];
+  for (const decision of resolution.decisions) {
+    if (decision.status === "resolved") continue;
+    const line = unit.facts.callSites.find((site) => site.localId === decision.site.localId)?.range.startLine
+      ?? unit.facts.inheritances.find((site) => site.localId === decision.site.localId)?.range.startLine ?? 1;
+    const source = { file: unit.relativePath, line };
+    if (decision.status === "ambiguous") diagnostics.push({ kind: "ambiguous", candidates: (decision.candidates ?? []).map((candidate) => candidate.qualifiedName), evidence: [], ambiguityReason: decision.reason ?? "ambiguous", source });
+    else diagnostics.push({ kind: "unresolved", evidence: [], reason: decision.reason ?? decision.status, source });
+  }
+  return {
+    coverage: {
+      calls: calls.length, resolvedCalls: resolved(calls), unresolvedCalls: unresolved(calls), ambiguousCalls: ambiguous(calls),
+      extends: inheritance.length, resolvedExtends: resolved(inheritance), unresolvedExtends: unresolved(inheritance), ambiguousExtends: ambiguous(inheritance),
+      parserErrors: unit.facts.parseStatus === "deterministic_partial" ? 1 : 0, unsupportedDynamic: 0,
+      mayBeIncomplete: diagnostics.length > 0 || unit.facts.parseStatus !== "complete",
+    },
+    diagnostics,
+  };
+}
 
 type LegacyIndexResult = {
   repoPath: string; repoId: string; operation: "index" | "sync"; changeDetection: "git" | "filesystem";
@@ -177,12 +268,11 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
         const targets = isRelativeImport(reference.moduleSpecifier)
           ? resolveImportCandidates(unit.relativePath, reference.moduleSpecifier)
           : [`module:${reference.moduleSpecifier}`];
-        for (const target of targets) {
-          if (target.startsWith("module:") || !currentFileSet.has(target)) {
-            addImporter(target.startsWith("module:") ? target : `unresolved:${target}`, unit.relativePath);
-          } else {
-            addImporter(target, unit.relativePath);
-          }
+        const resolvedTarget = targets.find((target) => currentFileSet.has(target));
+        if (resolvedTarget) {
+          addImporter(resolvedTarget, unit.relativePath);
+        } else {
+          for (const target of targets) addImporter(target.startsWith("module:") ? target : `unresolved:${target}`, unit.relativePath);
         }
       }
     }
@@ -192,13 +282,34 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
     const generation = createCandidateGeneration(repoId, activeGenerationId, CURRENT_INDEX_VERSION_DOMAINS, bindings);
     store.beginCandidateGeneration(generation);
     store.writeCandidateManifest(generation.manifest);
+    const scope = createResolutionScope(plan);
+    const candidateInput = createCandidateResolutionInput(units, scope, activeGenerationId, previousGraph);
+    const resolverContext = buildPipelineResolverContext({
+      generationId: generation.id,
+      repositoryIdentity: getRepositoryIdentity(repoPath),
+      facts: candidateInput.allUnits.map((unit) => unit.facts),
+      adapters: semanticAdapters,
+      resolutionVersion: CURRENT_INDEX_VERSION_DOMAINS.resolutionVersion,
+      relativePaths: candidateInput.allUnits.map((unit) => unit.relativePath),
+    });
     const graphCompatible = plan.parsePaths.length === 0 && plan.resolvePaths.length === 0 && plan.removedPaths.length === 0 && previousManifest !== undefined;
     const graph = graphCompatible
       ? { graph: previousGraph, resolutionByFile: new Map() }
-      : await buildCodeGraphWithResolutionFromFacts(repoPath, units, undefined, repoId);
-    recordIndexWork(counters, "filesResolved", graph.resolutionByFile.size);
+      : previousManifest === undefined
+        ? await buildCodeGraphWithResolutionFromFacts(repoPath, [...candidateInput.allUnits], undefined, repoId)
+        : await buildCodeGraphWithResolutionFromFacts(repoPath, candidateInput.allUnits, undefined, repoId, candidateInput.scope.paths, resolverContext);
+    const persistedResolution = new Map(
+      [...graph.resolutionByFile].map(([file, resolution]) => {
+        const unit = candidateInput.allUnits.find((candidate) => candidate.relativePath === file);
+        if (!unit) return undefined;
+        return "decisions" in resolution
+          ? [file, toPersistedResolution(unit, resolution)] as const
+          : [file, resolution] as const;
+      }).filter((entry): entry is readonly [string, GraphResolutionFile] => entry !== undefined),
+    );
+    recordIndexWork(counters, "filesResolved", persistedResolution.size);
     if (plan.fullGraphResolution && !graphCompatible) recordIndexWork(counters, "fullResolutionFallbacks");
-    store.writeCandidateGraph(generation.id, graph.graph, changes.fileHashes, graphCompatible ? undefined : graph.resolutionByFile);
+    store.writeCandidateGraph(generation.id, graph.graph, changes.fileHashes, graphCompatible ? undefined : persistedResolution);
     if (graphCompatible) store.copyActiveGraphResolutionToCandidate(generation.id);
     const lexical: LexicalFileUpdate[] = units.map((unit) => ({ file: unit.relativePath, fileHash: unit.facts.contentHash, documents: toLexicalDocumentsFromFacts(repoId, unit) }));
     store.writeCandidateLexicalDocuments(generation.id, lexical);
