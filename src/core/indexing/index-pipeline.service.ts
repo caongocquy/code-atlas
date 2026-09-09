@@ -31,9 +31,10 @@ import { getRepositoryIdentity, canonicalRepositoryPath } from "../repository/re
 import { createFileHash } from "../repository/file-hash.js";
 import { toLexicalDocumentsFromFacts } from "../lexical/lexical-index.service.js";
 import { CURRENT_INDEX_VERSION_DOMAINS } from "../repository/index-version.js";
+import { buildCandidateSymbolBindings, rebindCandidateEdges } from "../graph/build-file-updates.js";
 import { detectRepositoryChanges } from "./change-detector.js";
 import { createCandidateGeneration } from "./index-manifest.js";
-import { planInvalidation } from "./invalidation-planner.js";
+import { planInvalidation, requiresRepositoryResolution } from "./invalidation-planner.js";
 import { extractStableFacts, SourceRaceError, type SourceReader } from "./filesystem-change-detector.js";
 import { createIndexWorkCounters, freezeIndexWorkCounters, recordIndexWork } from "./index-work-counters.js";
 import { createCandidateResolutionInput } from "./resolution-scope.js";
@@ -130,27 +131,6 @@ function isUnsupportedDynamic(unit: IndexedSourceUnit, localId: string, reason: 
   return Boolean(call && /[?[\]*]/.test(call.calleeText));
 }
 
-function candidateSymbols(repoId: string, units: readonly IndexedSourceUnit[], graph: CodeGraph): Map<string, string> {
-  const result = new Map<string, string>();
-  for (const unit of units) {
-    for (const fact of unit.facts.symbols) {
-      const identity: SymbolIdentity = symbolIdentity({
-        repositoryId: repoId,
-        relativePath: unit.relativePath,
-        language: unit.facts.language,
-        kind: fact.kind,
-        qualifiedName: fact.declaredQualifiedName ?? fact.name,
-        discriminator: fact.localId,
-      });
-      const node = graph.nodes.find((candidate) => candidate.file === unit.relativePath
-        && candidate.type === fact.kind
-        && candidate.qualifiedName === identity.qualifiedName);
-      if (node && !result.has(symbolIdentityKey(identity))) result.set(symbolIdentityKey(identity), node.id);
-    }
-  }
-  return result;
-}
-
 function resolutionSourceFact(unit: IndexedSourceUnit, localId: string): string | undefined {
   const site = unit.facts.callSites.find((item) => item.localId === localId)
     ?? unit.facts.inheritances.find((item) => item.localId === localId)
@@ -174,7 +154,7 @@ function addResolutionProvenance(
   repoId: string,
   resolutionVersion: string,
 ): void {
-  const byIdentity = candidateSymbols(repoId, units, graph);
+  const byIdentity = new Map(buildCandidateSymbolBindings(repoId, units, graph).map(({ identity, graphNodeId }) => [symbolIdentityKey(identity), graphNodeId] as const));
   for (const unit of units) {
     for (const decision of resolutions.get(unit.relativePath)?.decisions ?? []) {
       if (decision.status !== "resolved" || (decision.edgeKind !== "calls" && decision.edgeKind !== "extends")) continue;
@@ -204,19 +184,17 @@ function rebindUnchangedSemanticEdges(
   resolutionVersion: string,
   resolvedPaths: ReadonlySet<string>,
 ): void {
-  const byIdentity = candidateSymbols(repoId, units, graph);
   const previousNodes = new Map(previousGraph.nodes.map((node) => [node.id, node]));
-  for (const edge of previousGraph.edges) {
-    if (edge.type !== "calls" && edge.type !== "extends") continue;
+  const unchangedEdges = previousGraph.edges.filter((edge) => {
+    if (edge.type !== "calls" && edge.type !== "extends") return false;
     const previousFrom = previousNodes.get(edge.from);
     const previousTo = previousNodes.get(edge.to);
-    if (resolvedPaths.has(previousFrom?.file ?? "") || resolvedPaths.has(previousTo?.file ?? "")) continue;
-    if (!edge.resolution || edge.resolution.resolutionVersion !== resolutionVersion) continue;
-    const from = byIdentity.get(edge.resolution.sourceLogicalIdentity);
-    const to = byIdentity.get(edge.resolution.targetLogicalIdentity);
-    if (!from || !to || graph.edges.some((candidate) => candidate.from === from && candidate.to === to && candidate.type === edge.type)) continue;
-    graph.edges.push({ ...edge, from, to });
-  }
+    return !resolvedPaths.has(previousFrom?.file ?? "") && !resolvedPaths.has(previousTo?.file ?? "");
+  });
+  const candidateSymbols = buildCandidateSymbolBindings(repoId, units, graph);
+  const rebound = rebindCandidateEdges({ nodes: previousGraph.nodes, edges: unchangedEdges }, candidateSymbols, resolutionVersion);
+  const existing = new Set(graph.edges.map((edge) => `${edge.from}:${edge.to}:${edge.type}`));
+  graph.edges.push(...rebound.filter((edge) => !existing.has(`${edge.from}:${edge.to}:${edge.type}`)));
   graph.edges = [...new Map(graph.edges.map((edge) => [`${edge.from}:${edge.to}:${edge.type}`, edge])).values()]
     .sort((left, right) => left.from.localeCompare(right.from) || left.to.localeCompare(right.to) || left.type.localeCompare(right.type));
 }
@@ -396,7 +374,11 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       resolutionVersion: CURRENT_INDEX_VERSION_DOMAINS.resolutionVersion,
       relativePaths: candidateInput.allUnits.map((unit) => unit.relativePath),
     });
-    const graphCompatible = plan.parsePaths.length === 0 && plan.resolvePaths.length === 0 && plan.removedPaths.length === 0 && previousManifest !== undefined;
+    const graphCompatible = !requiresRepositoryResolution(plan)
+      && plan.parsePaths.length === 0
+      && plan.resolvePaths.length === 0
+      && plan.removedPaths.length === 0
+      && previousManifest !== undefined;
     const graph = graphCompatible
       ? { graph: structuredClone(previousGraph), resolutionByFile: new Map() }
       : await buildCodeGraphWithResolutionFromFacts(repoPath, candidateInput.allUnits, undefined, repoId, candidateInput.scope.paths, resolverContext);

@@ -79,8 +79,9 @@ test("facts import edges deduplicate bindings from the same module", async () =>
 });
 
 function normalizedGraph(graph: { nodes: Array<Record<string, unknown>>; edges: Array<Record<string, unknown>> }) {
+  const nodeKey = (node: Record<string, unknown>) => `${node.type}:${node.file}:${node.qualifiedName ?? node.name}`;
   const nodes = graph.nodes.map(({ id: _id, ...node }) => node).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
-  const byId = new Map(graph.nodes.map((node) => [node.id, `${node.type}:${node.file}:${node.qualifiedName ?? node.name}`]));
+  const byId = new Map(graph.nodes.map((node) => [node.id, nodeKey(node)]));
   const edges = graph.edges.map(({ from, to, ...edge }) => ({
     ...edge,
     from: byId.get(from) ?? from,

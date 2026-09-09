@@ -23,6 +23,64 @@ import { extractExtendsFactEvidence, resolveExtendsResults } from "./extends.js"
 import { emptyResolutionCoverage, mergeResolutionCoverage, type GraphResolutionFile } from "./resolution.types.js";
 import type { ProgressReporter } from "../progress/progress.types.js";
 import { codeChunksFromFacts, type IndexedSourceUnit } from "../indexing/indexing.types.js";
+import { symbolIdentity, symbolIdentityKey, type SymbolIdentity } from "./resolver/identities.js";
+
+export type CandidateSymbolBinding = {
+  identity: SymbolIdentity;
+  graphNodeId: string;
+};
+
+export function buildCandidateSymbolBindings(
+  repoId: string,
+  units: readonly IndexedSourceUnit[],
+  graph: CodeGraph,
+): CandidateSymbolBinding[] {
+  const bindings = units.flatMap((unit) => unit.facts.symbols.flatMap((fact) => {
+    const identity = symbolIdentity({
+      repositoryId: repoId,
+      relativePath: unit.relativePath,
+      language: unit.facts.language,
+      kind: fact.kind,
+      qualifiedName: fact.declaredQualifiedName ?? fact.name,
+      discriminator: fact.localId,
+    });
+    const nodes = graph.nodes.filter((node) => node.file === unit.relativePath
+      && node.type === fact.kind
+      && node.qualifiedName === identity.qualifiedName);
+    return nodes.length === 1 ? [{ identity, graphNodeId: nodes[0].id }] : [];
+  })).sort((left, right) => symbolIdentityKey(left.identity).localeCompare(symbolIdentityKey(right.identity)));
+  const identitiesByNode = new Map<string, Set<string>>();
+  for (const binding of bindings) {
+    const identities = identitiesByNode.get(binding.graphNodeId) ?? new Set<string>();
+    identities.add(symbolIdentityKey(binding.identity));
+    identitiesByNode.set(binding.graphNodeId, identities);
+  }
+  return bindings.filter((binding) => identitiesByNode.get(binding.graphNodeId)?.size === 1);
+}
+
+export function rebindCandidateEdges(
+  previousGraph: CodeGraph,
+  candidateSymbols: readonly CandidateSymbolBinding[],
+  resolutionVersion: string,
+): GraphEdge[] {
+  const byIdentity = new Map<string, string>();
+  const ambiguousIdentities = new Set<string>();
+  for (const { identity, graphNodeId } of candidateSymbols) {
+    const key = symbolIdentityKey(identity);
+    const existing = byIdentity.get(key);
+    if (existing !== undefined && existing !== graphNodeId) ambiguousIdentities.add(key);
+    else if (existing === undefined) byIdentity.set(key, graphNodeId);
+  }
+  return previousGraph.edges.flatMap((edge) => {
+    if (edge.type !== "calls" && edge.type !== "extends") return [];
+    const resolution = edge.resolution;
+    if (!resolution || resolution.resolutionVersion !== resolutionVersion) return [];
+    if (ambiguousIdentities.has(resolution.sourceLogicalIdentity) || ambiguousIdentities.has(resolution.targetLogicalIdentity)) return [];
+    const from = byIdentity.get(resolution.sourceLogicalIdentity);
+    const to = byIdentity.get(resolution.targetLogicalIdentity);
+    return from && to ? [{ ...edge, from, to }] : [];
+  });
+}
 
 export type BuiltFileGraph = {
   file: string;

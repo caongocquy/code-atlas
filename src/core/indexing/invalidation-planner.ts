@@ -39,6 +39,21 @@ export type InvalidationPlan = {
   reasons: InvalidationReasonCode[];
 };
 
+const REPOSITORY_RESOLUTION_REASONS = new Set<InvalidationReasonCode>([
+  "unresolved_import_ownership",
+  "path_moved",
+  "path_renamed",
+  "module_config_changed",
+  "export_ambiguous",
+  "dependency_provenance_incomplete",
+  "facts_version_changed",
+  "resolution_version_changed",
+]);
+
+export function requiresRepositoryResolution(plan: InvalidationPlan): boolean {
+  return plan.fullGraphResolution || plan.reasons.some((reason) => REPOSITORY_RESOLUTION_REASONS.has(reason));
+}
+
 function assertNever(value: never): never {
   throw new Error(`unhandled invalidation reason: ${String(value)}`);
 }
@@ -62,7 +77,7 @@ export function toResolutionScopeReason(reason: InvalidationReasonCode): Resolut
 export function createResolutionScope(plan: InvalidationPlan): ResolutionScope {
   const reasons = [...new Set(plan.reasons.map(toResolutionScopeReason))].sort();
   const paths = [...new Set(plan.resolvePaths)].sort();
-  return { mode: plan.fullGraphResolution ? "repository" : "bounded", paths, reasons };
+  return { mode: requiresRepositoryResolution(plan) ? "repository" : "bounded", paths, reasons };
 }
 
 const sorted = (paths: Iterable<string>): string[] => [...new Set(paths)].sort();
