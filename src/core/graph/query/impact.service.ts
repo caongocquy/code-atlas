@@ -14,8 +14,8 @@ const DEFAULT_MAX_DEPTH = 3;
 const DEFAULT_MAX_RESULTS = 100;
 const MAX_DEPTH = 10;
 const MAX_RESULTS = 1_000;
-const impactRelations: GraphEdgeType[] = ["calls", "imports", "extends"];
-const relationPriority: Record<GraphEdgeType, number> = { calls: 0, extends: 1, imports: 2, contains: 3 };
+const impactRelations: GraphEdgeType[] = ["calls", "imports", "extends", "implements", "references"];
+const relationPriority: Record<GraphEdgeType, number> = { calls: 0, extends: 1, implements: 1, imports: 2, references: 3, contains: 4 };
 
 function clamp(value: number | undefined, fallback: number, maximum: number): number {
   return Math.max(0, Math.min(maximum, Math.floor(value ?? fallback)));

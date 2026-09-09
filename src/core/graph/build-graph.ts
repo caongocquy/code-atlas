@@ -356,7 +356,6 @@ export function assembleFactsGraph(
     if (!resolution) continue;
     for (const decision of resolution.decisions) {
       if (decision.status !== "resolved") continue;
-      if (decision.edgeKind !== "calls" && decision.edgeKind !== "extends") continue;
       const fact = unit.facts.symbols.find((item) => item.localId === (unit.facts.callSites.find((site) => site.localId === decision.site.localId)?.callerId
         ?? unit.facts.inheritances.find((site) => site.localId === decision.site.localId)?.subjectId
         ?? unit.facts.implementations.find((site) => site.localId === decision.site.localId)?.subjectId
@@ -365,7 +364,7 @@ export function assembleFactsGraph(
       const sourceId = symbols.get(symbolIdentityKey(factSymbolIdentity(repoId, unit.relativePath, unit.facts.language, fact)));
       const targetId = symbols.get(symbolIdentityKey(decision.target));
       if (!sourceId || !targetId) continue;
-      const type = decision.edgeKind === "calls" ? "calls" : "extends";
+      const type = decision.edgeKind;
       if (!graph.edges.some((edge) => edge.from === sourceId && edge.to === targetId && edge.type === type)) graph.edges.push({ from: sourceId, to: targetId, type });
     }
   }

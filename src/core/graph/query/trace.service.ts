@@ -6,8 +6,8 @@ import { resolutionCoverageIsIncomplete } from "./graph-query.types.js";
 
 const DEFAULT_MAX_DEPTH = 8;
 const MAX_DEPTH = 32;
-const defaultRelations: GraphEdgeType[] = ["calls", "extends", "imports"];
-const relationPriority: Record<GraphEdgeType, number> = { calls: 0, extends: 1, imports: 2, contains: 3 };
+const defaultRelations: GraphEdgeType[] = ["calls", "extends", "implements", "references", "imports"];
+const relationPriority: Record<GraphEdgeType, number> = { calls: 0, extends: 1, implements: 1, references: 2, imports: 3, contains: 4 };
 
 function nodeKey(node: GraphNode): string {
   return [node.file, node.type, node.qualifiedName ?? node.name, node.id].join(":");

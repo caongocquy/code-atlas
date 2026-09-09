@@ -73,6 +73,8 @@ export type RepositoryStatus = {
       calls: number;
       imports: number;
       extends: number;
+      implements: number;
+      references: number;
       contains: number;
     };
     resolutionCoverage: ResolutionCoverage;
@@ -148,7 +150,7 @@ async function emptyStatus(
       indexedFiles: 0,
       nodes: 0,
       edges: 0,
-      edgeBreakdown: { calls: 0, imports: 0, extends: 0, contains: 0 },
+      edgeBreakdown: { calls: 0, imports: 0, extends: 0, implements: 0, references: 0, contains: 0 },
       resolutionCoverage: emptyResolutionCoverage(),
       sqlitePath: path.join(repoPath, ".codeatlas", "atlas.db"),
       reachable: false,
@@ -517,6 +519,8 @@ async function getGraphStatus(
       calls: 0,
       imports: 0,
       extends: 0,
+      implements: 0,
+      references: 0,
       contains: 0,
     },
     resolutionCoverage: store.getGraphResolutionCoverage(repoId),
@@ -540,6 +544,8 @@ async function getGraphStatus(
       calls: graph.edges.filter((edge) => edge.type === "calls").length,
       imports: graph.edges.filter((edge) => edge.type === "imports").length,
       extends: graph.edges.filter((edge) => edge.type === "extends").length,
+      implements: graph.edges.filter((edge) => edge.type === "implements").length,
+      references: graph.edges.filter((edge) => edge.type === "references").length,
       contains: graph.edges.filter((edge) => edge.type === "contains").length,
   };
   const needsRebuild = base.needsRebuild || hasChanges(hashes, states);

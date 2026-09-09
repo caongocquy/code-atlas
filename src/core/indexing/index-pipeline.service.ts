@@ -105,7 +105,9 @@ function toPersistedResolution(unit: IndexedSourceUnit, resolution: FactsGraphRe
   for (const decision of resolution.decisions) {
     if (decision.status === "resolved") continue;
     const line = unit.facts.callSites.find((site) => site.localId === decision.site.localId)?.range.startLine
-      ?? unit.facts.inheritances.find((site) => site.localId === decision.site.localId)?.range.startLine ?? 1;
+      ?? unit.facts.inheritances.find((site) => site.localId === decision.site.localId)?.range.startLine
+      ?? unit.facts.implementations.find((site) => site.localId === decision.site.localId)?.range.startLine
+      ?? unit.facts.references.find((site) => site.localId === decision.site.localId)?.range.startLine ?? 1;
     const source = { file: unit.relativePath, line };
     const evidence: ResolutionEvidence[] = decision.evidenceIds.length > 0
       ? decision.evidenceIds.map((evidenceId) => ({ evidenceKind: "INFERRED", source, detail: evidenceId }))
@@ -144,7 +146,9 @@ function resolutionSourceFact(unit: IndexedSourceUnit, localId: string): string 
 
 function sourceLine(unit: IndexedSourceUnit, localId: string): number {
   return unit.facts.callSites.find((site) => site.localId === localId)?.range.startLine
-    ?? unit.facts.inheritances.find((site) => site.localId === localId)?.range.startLine ?? 1;
+    ?? unit.facts.inheritances.find((site) => site.localId === localId)?.range.startLine
+    ?? unit.facts.implementations.find((site) => site.localId === localId)?.range.startLine
+    ?? unit.facts.references.find((site) => site.localId === localId)?.range.startLine ?? 1;
 }
 
 function hasAmbiguousExports(units: readonly IndexedSourceUnit[]): boolean {
@@ -190,7 +194,7 @@ function addResolutionProvenance(
   const byIdentity = new Map(buildCandidateSymbolBindings(repoId, units, graph).map(({ identity, graphNodeId }) => [symbolIdentityKey(identity), graphNodeId] as const));
   for (const unit of units) {
     for (const decision of resolutions.get(unit.relativePath)?.decisions ?? []) {
-      if (decision.status !== "resolved" || (decision.edgeKind !== "calls" && decision.edgeKind !== "extends")) continue;
+      if (decision.status !== "resolved") continue;
       const sourceLocalId = resolutionSourceFact(unit, decision.site.localId);
       const sourceFact = unit.facts.symbols.find((fact) => fact.localId === sourceLocalId);
       if (!sourceFact) continue;
@@ -219,7 +223,7 @@ function rebindUnchangedSemanticEdges(
 ): void {
   const previousNodes = new Map(previousGraph.nodes.map((node) => [node.id, node]));
   const unchangedEdges = previousGraph.edges.filter((edge) => {
-    if (edge.type !== "calls" && edge.type !== "extends") return false;
+    if (edge.type !== "calls" && edge.type !== "references" && edge.type !== "extends" && edge.type !== "implements") return false;
     const previousFrom = previousNodes.get(edge.from);
     const previousTo = previousNodes.get(edge.to);
     return !resolvedPaths.has(previousFrom?.file ?? "") && !resolvedPaths.has(previousTo?.file ?? "");
@@ -395,7 +399,7 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
     if (changes.moduleConfigChanged) unsafeTopologyReasons.add("module_config_changed");
     if (hasAmbiguousExports(units)) unsafeTopologyReasons.add("export_ambiguous");
     if (previousGraph.edges.some((edge) =>
-      (edge.type === "calls" || edge.type === "extends") && edge.resolution === undefined,
+      (edge.type === "calls" || edge.type === "references" || edge.type === "extends" || edge.type === "implements") && edge.resolution === undefined,
     )) unsafeTopologyReasons.add("dependency_provenance_incomplete");
     const plan = planInvalidation({ repositoryFiles: [...currentFiles.keys()], currentFiles, previousBindings, directImporters, unsafeTopologyReasons, versions: CURRENT_INDEX_VERSION_DOMAINS, previousVersions: previousManifest?.versions });
     recordIndexWork(counters, "importersInvalidated", plan.importersInvalidated.length);
@@ -422,7 +426,7 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       ? { graph: structuredClone(previousGraph), resolutionByFile: new Map() }
       : await buildCodeGraphWithResolutionFromFacts(repoPath, candidateInput.allUnits, undefined, repoId, candidateInput.scope.paths, resolverContext);
     if (graphCompatible) {
-      graph.graph.edges = graph.graph.edges.filter((edge) => edge.type !== "calls" && edge.type !== "extends");
+      graph.graph.edges = graph.graph.edges.filter((edge) => edge.type !== "calls" && edge.type !== "references" && edge.type !== "extends" && edge.type !== "implements");
       rebindUnchangedSemanticEdges(graph.graph, previousGraph, candidateInput.allUnits, repoId, resolverContext.resolutionVersion, new Set());
     } else {
       addResolutionProvenance(graph.graph, candidateInput.allUnits, graph.resolutionByFile, repoId, resolverContext.resolutionVersion);

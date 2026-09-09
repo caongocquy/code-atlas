@@ -13,9 +13,9 @@ const DEFAULT_MAX_RESULTS = 10_000;
 const MAX_RESULTS = 10_000;
 const DEFAULT_MAX_COMMUNITY_SIZE = 200;
 const MODULARITY_ITERATIONS = 20;
-const communityEdgeTypes = new Set<GraphEdgeType>(["calls", "imports", "extends", "contains"]);
-const couplingEdgeTypes = new Set<GraphEdgeType>(["calls", "imports", "extends"]);
-const edgeWeight: Record<GraphEdgeType, number> = { calls: 3, extends: 2, imports: 1.5, contains: 0.5 };
+const communityEdgeTypes = new Set<GraphEdgeType>(["calls", "imports", "extends", "implements", "references", "contains"]);
+const couplingEdgeTypes = new Set<GraphEdgeType>(["calls", "imports", "extends", "implements", "references"]);
+const edgeWeight: Record<GraphEdgeType, number> = { calls: 3, extends: 2, implements: 2, references: 1, imports: 1.5, contains: 0.5 };
 
 function nodeKey(node: GraphNode): string {
   return [node.file, node.type, node.qualifiedName ?? node.name, node.id].join(":");

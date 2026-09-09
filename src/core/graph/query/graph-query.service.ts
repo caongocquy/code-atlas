@@ -6,6 +6,8 @@ const relationPriority: Record<GraphEdgeType, number> = {
   extends: 1,
   imports: 2,
   contains: 3,
+  implements: 1,
+  references: 4,
 };
 
 function nodeKey(node: GraphNode): string {

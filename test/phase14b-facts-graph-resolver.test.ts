@@ -1,14 +1,24 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import { createBudgetLedger } from "../src/core/graph/resolver/budgets.js";
 import { createGenerationResolverContext } from "../src/core/graph/resolver/generation-context.js";
 import { createResolverMemo } from "../src/core/graph/resolver/memo.js";
 import type { IndexedSourceUnit } from "../src/core/indexing/indexing.types.js";
+import { indexRepository } from "../src/core/indexing/index-pipeline.service.js";
 import { buildCodeGraphWithResolutionFromFacts, normalizeFacts } from "../src/core/graph/build-graph.js";
+import { buildPipelineResolverContext } from "../src/core/indexing/index-pipeline.service.js";
+import { getLanguageFactExtractor } from "../src/core/facts/language-fact-extractor.js";
+import { getSemanticAdapter } from "../src/core/graph/resolver/adapter-registry.js";
+import { getRepositoryIdentity } from "../src/core/repository/repository-identity.js";
+import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
 import type { LanguageSemanticAdapter, SemanticEvidenceBatch, SymbolIdentity } from "../src/core/graph/resolver/types.js";
 import type { TypeEnvironment } from "../src/core/graph/resolver/type-environment.js";
 import { makeFacts } from "./helpers/phase14b-facts.js";
+import { factExtractorInput } from "./helpers/phase14b-language-fixtures.js";
 
 const repositoryIdentity = { id: "repo", identityKey: "path-v1:repo", rootPath: "/repo", displayName: "repo" };
 const sourceUnit = { repositoryId: "repo", relativePath: "consumer.ts", language: "typescript" } as const;
@@ -67,6 +77,53 @@ test("facts graph accepts only the strong semantic decision returned by the reso
   if (decision?.status === "resolved") assert.equal(decision.confidence, "strong");
   assert.equal(result.graph.edges.filter((edge) => edge.type === "calls").length, 1);
   assert.equal(result.resolutionByFile.get("consumer.ts")?.relativePath, "consumer.ts");
+});
+
+test("facts graph materializes accepted implementation edges", async () => {
+  const item = {
+    filePath: "consumer.ts",
+    source: "class Base {} interface Api {} class Child extends Base implements Api {}\n",
+    language: "typescript" as const,
+  };
+  const extractor = getLanguageFactExtractor(item.language);
+  const adapter = getSemanticAdapter(item.language);
+  assert.ok(extractor);
+  assert.ok(adapter);
+  const outcome = extractor.extract(factExtractorInput(item));
+  assert.equal(outcome.kind, "facts");
+  if (outcome.kind !== "facts") return;
+  const repositoryIdentity = getRepositoryIdentity("/repo");
+  const context = buildPipelineResolverContext({
+    generationId: "generation:implementation-edge",
+    repositoryIdentity,
+    facts: [outcome.facts],
+    adapters: [adapter],
+    resolutionVersion: "14b-2",
+    relativePaths: [item.filePath],
+  });
+  const unit = { relativePath: item.filePath, source: item.source, facts: outcome.facts } satisfies IndexedSourceUnit;
+  const result = await buildCodeGraphWithResolutionFromFacts("/repo", [unit], undefined, repositoryIdentity.id, [item.filePath], context);
+  assert.equal(result.resolutionByFile.get(item.filePath)?.decisions.find((decision) => decision.edgeKind === "implements")?.status, "resolved");
+  assert.ok(result.graph.edges.some((edge) => edge.type === "implements"));
+});
+
+test("published graph persists accepted implementation provenance", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase14b-implementation-edge-"));
+  try {
+    await writeFile(path.join(root, "main.ts"), "class Base {} interface Api {} class Child extends Base implements Api {}\n");
+    const indexed = await indexRepository(root, { skipGit: true });
+    assert.equal(indexed.kind, "published");
+    const store = new AtlasStore(path.join(root, ".codeatlas", "atlas.db"));
+    try {
+      const edge = store.loadGraph(getRepositoryIdentity(root).id).edges.find((candidate) => candidate.type === "implements");
+      assert.ok(edge);
+      assert.equal(edge.resolution?.confidence, "strong");
+    } finally {
+      store.close();
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("normalization repairs actual and nested source-unit identities", () => {

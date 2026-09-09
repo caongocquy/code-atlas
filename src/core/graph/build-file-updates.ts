@@ -72,7 +72,7 @@ export function rebindCandidateEdges(
     else if (existing === undefined) byIdentity.set(key, graphNodeId);
   }
   return previousGraph.edges.flatMap((edge) => {
-    if (edge.type !== "calls" && edge.type !== "extends") return [];
+    if (edge.type !== "calls" && edge.type !== "references" && edge.type !== "extends" && edge.type !== "implements") return [];
     const resolution = edge.resolution;
     if (!resolution || resolution.resolutionVersion !== resolutionVersion) return [];
     if (ambiguousIdentities.has(resolution.sourceLogicalIdentity) || ambiguousIdentities.has(resolution.targetLogicalIdentity)) return [];

@@ -141,8 +141,8 @@ app.get("/api/graph/neighbors/:id", async (request, reply) => {
     const graph = await loadGraph();
     const edgeTypes = query.edgeTypes
       ?.split(",")
-      .filter((type): type is "calls" | "imports" | "extends" | "contains" =>
-        ["calls", "imports", "extends", "contains"].includes(type),
+      .filter((type): type is "calls" | "imports" | "extends" | "implements" | "references" | "contains" =>
+        ["calls", "imports", "extends", "implements", "references", "contains"].includes(type),
       );
 
     return getGraphNeighborhood(

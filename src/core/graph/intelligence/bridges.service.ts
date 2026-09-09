@@ -9,7 +9,7 @@ import type {
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1_000;
-const relationWeight: Record<GraphEdgeType, number> = { calls: 1, imports: 0.8, extends: 1.2, contains: 0 };
+const relationWeight: Record<GraphEdgeType, number> = { calls: 1, imports: 0.8, extends: 1.2, implements: 1.2, references: 0.9, contains: 0 };
 
 function nodeKey(node: GraphNode): string {
   return [node.file, node.type, node.qualifiedName ?? node.name, node.id].join(":");

@@ -15,7 +15,9 @@ export const GRAPH_EDGE_TYPES = [
   "contains",
   "imports",
   "calls",
+  "references",
   "extends",
+  "implements",
 ] as const;
 
 export type GraphEdgeType = (typeof GRAPH_EDGE_TYPES)[number];
