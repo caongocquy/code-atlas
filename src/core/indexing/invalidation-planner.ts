@@ -21,11 +21,13 @@ export type InvalidationInput = {
   currentFiles: Map<string, { contentHash: string; language: SupportedLanguage }>;
   previousBindings: Map<string, FileFactBinding>;
   directImporters: Map<string, Set<string>>;
+  unsafeTopologyReasons?: ReadonlySet<UnsafeTopologyReason>;
   versions: IndexVersionDomains;
   previousVersions?: IndexVersionDomains;
 };
 
 export type DependencyImpact = "bounded" | "uncertain";
+export type UnsafeTopologyReason = Extract<InvalidationReasonCode, "module_config_changed" | "export_ambiguous" | "dependency_provenance_incomplete">;
 
 export type InvalidationPlan = {
   parsePaths: string[];
@@ -115,13 +117,10 @@ function compatibleBinding(
   return binding?.contentHash === current.contentHash && binding.language === current.language;
 }
 
-function unsafeTopologyReasons(directImporters: Map<string, Set<string>>): InvalidationReasonCode[] {
-  const reasons = new Set<InvalidationReasonCode>();
-  for (const target of directImporters.keys()) {
-    if (target === "*") reasons.add("export_ambiguous");
-    else if (target.startsWith("module:")) reasons.add("module_config_changed");
-    else if (target === "unresolved:provenance") reasons.add("dependency_provenance_incomplete");
-    else if (target.startsWith("unresolved:")) reasons.add("unresolved_import_ownership");
+function unsafeTopologyReasons(input: InvalidationInput): InvalidationReasonCode[] {
+  const reasons = new Set<InvalidationReasonCode>(input.unsafeTopologyReasons);
+  for (const target of input.directImporters.keys()) {
+    if (target.startsWith("unresolved:")) reasons.add("unresolved_import_ownership");
   }
   return [...reasons].sort();
 }
@@ -174,7 +173,7 @@ export function planInvalidation(input: InvalidationInput): InvalidationPlan {
     [...directChanges].flatMap((target) => [...(input.directImporters.get(target) ?? [])])
       .filter((file) => currentPathSet.has(file)),
   );
-  const topologyReasons = unsafeTopologyReasons(input.directImporters);
+  const topologyReasons = unsafeTopologyReasons(input);
   const dependencyImpact: DependencyImpact = topologyReasons.length > 0
     ? "uncertain"
     : "bounded";

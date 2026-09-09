@@ -87,6 +87,7 @@ export type IndexingChanges = {
   addedFiles: string[];
   changedFiles: string[];
   deletedFiles: string[];
+  moduleConfigChanged?: boolean;
 };
 
 export type IndexPipelineOptions = {

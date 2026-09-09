@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import path from "node:path";
 
 import type { AtlasCapability, AtlasFileCapabilityState } from "../../storage/atlas/atlas.types.js";
 import type { AtlasStore } from "../../storage/atlas/atlas.store.js";
@@ -28,6 +29,12 @@ export type ChangeDetectorOptions = {
 };
 
 type FileStates = Map<IndexCapability, Map<string, AtlasFileCapabilityState>>;
+
+const MODULE_CONFIG_FILENAMES = new Set(["package.json", "tsconfig.json", "jsconfig.json"]);
+
+function isModuleConfigPath(relativePath: string): boolean {
+  return MODULE_CONFIG_FILENAMES.has(path.posix.basename(relativePath));
+}
 
 export type SourceRead = { source: string; contentHash: string };
 export type SourceReader = (relativePath: string) => Promise<SourceRead>;
@@ -189,5 +196,6 @@ export async function detectFilesystemChanges(
     addedFiles: addedFiles.sort(),
     changedFiles: changedFiles.sort(),
     deletedFiles,
+    ...(candidateHint && [...candidateHint].some(isModuleConfigPath) ? { moduleConfigChanged: true } : {}),
   };
 }

@@ -34,7 +34,7 @@ import { CURRENT_INDEX_VERSION_DOMAINS } from "../repository/index-version.js";
 import { buildCandidateSymbolBindings, rebindCandidateEdges } from "../graph/build-file-updates.js";
 import { detectRepositoryChanges } from "./change-detector.js";
 import { createCandidateGeneration } from "./index-manifest.js";
-import { planInvalidation, requiresRepositoryResolution } from "./invalidation-planner.js";
+import { planInvalidation, requiresRepositoryResolution, type UnsafeTopologyReason } from "./invalidation-planner.js";
 import { extractStableFacts, SourceRaceError, type SourceReader } from "./filesystem-change-detector.js";
 import { createIndexWorkCounters, freezeIndexWorkCounters, recordIndexWork } from "./index-work-counters.js";
 import { createCandidateResolutionInput } from "./resolution-scope.js";
@@ -145,6 +145,39 @@ function resolutionSourceFact(unit: IndexedSourceUnit, localId: string): string 
 function sourceLine(unit: IndexedSourceUnit, localId: string): number {
   return unit.facts.callSites.find((site) => site.localId === localId)?.range.startLine
     ?? unit.facts.inheritances.find((site) => site.localId === localId)?.range.startLine ?? 1;
+}
+
+function hasAmbiguousExports(units: readonly IndexedSourceUnit[]): boolean {
+  const namesByPath = new Map<string, Set<string>>();
+  for (const unit of units) {
+    const names = new Set<string>();
+    for (const exportedName of unit.facts.exports.map((item) => item.exportedName).filter((name): name is string => Boolean(name) && name !== "*")) {
+      if (names.has(exportedName)) return true;
+      names.add(exportedName);
+    }
+    namesByPath.set(unit.relativePath, names);
+  }
+
+  for (const unit of units) {
+    const starSources = new Map<string, Set<string>>();
+    const starSpecifiers = new Set([
+      ...unit.facts.exports
+        .filter((exportFact) => exportFact.kind === "star" && exportFact.moduleSpecifier)
+        .map((exportFact) => exportFact.moduleSpecifier as string),
+      ...[...unit.source.matchAll(/\bexport\s*\*\s+from\s+["']([^"']+)["']/g)].map((match) => match[1]!),
+    ]);
+    for (const moduleSpecifier of starSpecifiers) {
+      for (const target of resolveImportCandidates(unit.relativePath, moduleSpecifier)) {
+        for (const exportedName of namesByPath.get(target) ?? []) {
+          const sources = starSources.get(exportedName) ?? new Set<string>();
+          sources.add(target);
+          starSources.set(exportedName, sources);
+          if (sources.size > 1) return true;
+        }
+      }
+    }
+  }
+  return false;
 }
 
 function addResolutionProvenance(
@@ -344,11 +377,6 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       const target = previousNodes.get(edge.to)?.file;
       if (importer && target) addImporter(target, importer);
     }
-    if (previousGraph.edges.some((edge) =>
-      (edge.type === "calls" || edge.type === "extends") && edge.resolution === undefined,
-    )) {
-      directImporters.set("unresolved:provenance", new Set());
-    }
     const currentFileSet = new Set(currentFiles.keys());
     for (const unit of units) {
       for (const reference of unit.facts.imports) {
@@ -363,7 +391,13 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
         }
       }
     }
-    const plan = planInvalidation({ repositoryFiles: [...currentFiles.keys()], currentFiles, previousBindings, directImporters, versions: CURRENT_INDEX_VERSION_DOMAINS, previousVersions: previousManifest?.versions });
+    const unsafeTopologyReasons = new Set<UnsafeTopologyReason>();
+    if (changes.moduleConfigChanged) unsafeTopologyReasons.add("module_config_changed");
+    if (hasAmbiguousExports(units)) unsafeTopologyReasons.add("export_ambiguous");
+    if (previousGraph.edges.some((edge) =>
+      (edge.type === "calls" || edge.type === "extends") && edge.resolution === undefined,
+    )) unsafeTopologyReasons.add("dependency_provenance_incomplete");
+    const plan = planInvalidation({ repositoryFiles: [...currentFiles.keys()], currentFiles, previousBindings, directImporters, unsafeTopologyReasons, versions: CURRENT_INDEX_VERSION_DOMAINS, previousVersions: previousManifest?.versions });
     recordIndexWork(counters, "importersInvalidated", plan.importersInvalidated.length);
 
     const generation = createCandidateGeneration(repoId, activeGenerationId, CURRENT_INDEX_VERSION_DOMAINS, bindings);

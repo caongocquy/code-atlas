@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import test from "node:test";
 
 import { indexRepository, syncRepository } from "../src/core/indexing/index-pipeline.service.js";
@@ -9,6 +11,20 @@ import { createCandidateGeneration } from "../src/core/indexing/index-manifest.j
 import { getRepositoryIdentity } from "../src/core/repository/repository-identity.js";
 import { CURRENT_INDEX_VERSION_DOMAINS } from "../src/core/repository/index-version.js";
 import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
+
+const execFileAsync = promisify(execFile);
+
+async function git(repoPath: string, args: string[]): Promise<void> {
+  await execFileAsync("git", args, { cwd: repoPath });
+}
+
+async function initializeGitRepository(repoPath: string): Promise<void> {
+  await git(repoPath, ["init", "-q"]);
+  await git(repoPath, ["config", "user.email", "test@example.com"]);
+  await git(repoPath, ["config", "user.name", "CodeAtlas Test"]);
+  await git(repoPath, ["add", "."]);
+  await git(repoPath, ["commit", "-qm", "initial"]);
+}
 
 function semanticEdgeKeys(store: AtlasStore, repositoryId: string): string[] {
   const graph = store.loadGraph(repositoryId);
@@ -22,6 +38,59 @@ function semanticEdgeKeys(store: AtlasStore, repositoryId: string): string[] {
 function graphNodeFiles(store: AtlasStore, repositoryId: string): string[] {
   return [...new Set(store.loadGraph(repositoryId).nodes.map((node) => node.file))].sort();
 }
+
+test("ordinary package imports remain bounded in the production pipeline", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase14b-package-import-"));
+  try {
+    await writeFile(path.join(root, "consumer.ts"), 'import path from "node:path"; export const value = path.sep;\n');
+    await indexRepository(root, { skipGit: true });
+    const result = await syncRepository(root, { skipGit: true });
+    assert.equal(result.kind, "published");
+    assert.equal(result.plan.fullGraphResolution, false);
+    assert.equal(result.counters.filesParsed, 0);
+    assert.equal(result.counters.filesResolved, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a changed module configuration file forces repository resolution", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase14b-module-config-"));
+  try {
+    await writeFile(path.join(root, "tsconfig.json"), '{"compilerOptions":{"module":"commonjs"}}\n');
+    await writeFile(path.join(root, "source.ts"), "export function source() { return 1; }\n");
+    await initializeGitRepository(root);
+    await indexRepository(root);
+    await writeFile(path.join(root, "tsconfig.json"), '{"compilerOptions":{"module":"esnext"}}\n');
+    const result = await syncRepository(root);
+    assert.equal(result.kind, "published");
+    assert.equal(result.plan.fullGraphResolution, true);
+    assert.ok(result.plan.reasons.includes("module_config_changed"));
+    assert.equal(result.counters.filesParsed, 0);
+    assert.equal(result.counters.filesResolved, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("ambiguous star exports force repository resolution from current facts", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase14b-export-ambiguity-"));
+  try {
+    await writeFile(path.join(root, "a.ts"), "export function duplicate() { return 1; }\n");
+    await writeFile(path.join(root, "b.ts"), "export function duplicate() { return 2; }\n");
+    await writeFile(path.join(root, "barrel.ts"), 'export * from "./a.js";\nexport * from "./b.js";\n');
+    await writeFile(path.join(root, "consumer.ts"), 'import { duplicate } from "./barrel.js"; export function value() { return duplicate(); }\n');
+    await indexRepository(root, { skipGit: true });
+    const result = await syncRepository(root, { skipGit: true });
+    assert.equal(result.kind, "published");
+    assert.equal(result.plan.fullGraphResolution, true);
+    assert.ok(result.plan.reasons.includes("export_ambiguous"));
+    assert.equal(result.counters.filesParsed, 0);
+    assert.equal(result.counters.filesResolved, 4);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("pipeline resolves only changed file and direct importer while retaining unrelated graph state", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase14b-pipeline-scope-"));

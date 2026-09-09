@@ -138,12 +138,13 @@ test("version domains invalidate only the work they own", () => {
   assert.equal(derived.derivedRebuild, true);
 });
 
-test("uncertain module evidence broadens resolution without parsing reusable facts", () => {
+test("explicit module configuration evidence broadens resolution without parsing reusable facts", () => {
   const result = planInvalidation(input({
     directImporters: new Map([
       ["src/a.ts", new Set(["src/b.ts"])],
       ["module:workspace-alias", new Set(["src/c.ts"])],
     ]),
+    unsafeTopologyReasons: new Set(["module_config_changed"]),
     currentFiles: new Map([
       ["src/a.ts", { contentHash: "a-2", language: "typescript" as const }],
       ["src/b.ts", { contentHash: "b-1", language: "typescript" as const }],

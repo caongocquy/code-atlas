@@ -85,11 +85,29 @@ test("every unsafe invalidation reason forces repository resolution", () => {
   }
 });
 
-test("unsafe topology markers in planner input force repository resolution", () => {
-  for (const [cause, target, reason] of [
-    ["module configuration", "module:workspace-alias", "module_config_changed"],
-    ["export ambiguity", "*", "export_ambiguous"],
-    ["incomplete provenance", "unresolved:provenance", "dependency_provenance_incomplete"],
+test("ordinary package reverse-import evidence stays bounded", () => {
+  const plan = planInvalidation(fixtureInput({
+    directImporters: new Map([
+      ["module:lodash", new Set(["src/consumer.ts"])],
+    ]),
+    currentFiles: new Map([
+      ["src/consumer.ts", { contentHash: "consumer-1", language: "typescript" as const }],
+      ["src/dep.ts", { contentHash: "dep-1", language: "typescript" as const }],
+      ["src/other.ts", { contentHash: "other-1", language: "typescript" as const }],
+    ]),
+  }));
+
+  assert.equal(plan.fullGraphResolution, false);
+  assert.equal(plan.dependencyImpact, "bounded");
+  assert.deepEqual(plan.resolvePaths, []);
+  assert.deepEqual(plan.reasons, []);
+});
+
+test("explicit unsafe topology signals force repository resolution", () => {
+  for (const [cause, signal, reason] of [
+    ["module configuration", "module_config_changed", "module_config_changed"],
+    ["export ambiguity", "export_ambiguous", "export_ambiguous"],
+    ["incomplete provenance", "dependency_provenance_incomplete", "dependency_provenance_incomplete"],
   ] as const) {
     const plan = planInvalidation(fixtureInput({
       currentFiles: new Map([
@@ -97,7 +115,7 @@ test("unsafe topology markers in planner input force repository resolution", () 
         ["src/dep.ts", { contentHash: "dep-1", language: "typescript" as const }],
         ["src/other.ts", { contentHash: "other-1", language: "typescript" as const }],
       ]),
-      directImporters: new Map([[target, new Set(["src/consumer.ts"])]]),
+      unsafeTopologyReasons: new Set([signal]),
     }));
 
     assert.equal(plan.fullGraphResolution, true, cause);
