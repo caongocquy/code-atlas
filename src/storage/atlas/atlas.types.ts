@@ -90,6 +90,15 @@ export type GraphFileUpdate = {
   resolution?: GraphResolutionFile;
 };
 
+export type AtlasEdgeResolutionColumns = {
+  resolution_strategy: string | null;
+  resolution_confidence: "exact" | "strong" | null;
+  resolution_evidence_json: string | null;
+  resolution_version: string | null;
+  resolution_source_identity: string | null;
+  resolution_target_identity: string | null;
+};
+
 export type GraphResolutionCoverage = ResolutionCoverage & {
   resolvedExtends: number;
   unresolvedExtends: number;

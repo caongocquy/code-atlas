@@ -3,7 +3,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 
-import { initializeAtlasSchema, ATLAS_SCHEMA_VERSION } from "./atlas.schema.js";
+import { initializeAtlasSchema, migrateAtlasSchema, ATLAS_SCHEMA_VERSION } from "./atlas.schema.js";
 import { decodeFacts, encodeFacts } from "../../core/facts/facts-codec.js";
 import { factBlobKey } from "../../core/facts/facts-identity.js";
 import type { FactBlobKey, FileFactBinding, IndexVersionDomains, ParsedFactsBlob, ParserIdentity } from "../../core/facts/facts.types.js";
@@ -31,6 +31,8 @@ import type { CodeGraph, GraphEdge, GraphEdgeType, GraphNode, GraphNodeType } fr
 import type { RepositoryIdentity } from "../../core/repository/repository-identity.js";
 import type { IndexedFileState } from "../../core/repository/indexed-file-state.js";
 import type { VectorPoint, VectorSearchResult } from "../../core/semantic/vector-store.js";
+import { withProvenance } from "../../core/graph/resolver/provenance.js";
+import { isSymbolIdentityKey } from "../../core/graph/resolver/identities.js";
 
 export const DEFAULT_ATLAS_DB_PATH = ".codeatlas/atlas.db";
 
@@ -108,6 +110,52 @@ function repositoryFromRow(row: RepositoryRow): AtlasRepository {
   };
 }
 
+type StoredResolution = {
+  resolution_strategy: string | null;
+  resolution_confidence: "exact" | "strong" | null;
+  resolution_evidence_json: string | null;
+  resolution_version: string | null;
+  resolution_source_identity: string | null;
+  resolution_target_identity: string | null;
+};
+
+function resolutionColumns(edge: GraphEdge): [string | null, string | null, string | null, string | null, string | null, string | null] {
+  const resolution = edge.resolution;
+  if (!resolution) return [null, null, null, null, null, null];
+  const normalized = withProvenance(edge, resolution).resolution!;
+  return [normalized.strategy, normalized.confidence, JSON.stringify(normalized.evidence), normalized.resolutionVersion, normalized.sourceLogicalIdentity, normalized.targetLogicalIdentity];
+}
+
+function restoreResolution(row: StoredResolution): GraphEdge["resolution"] | undefined {
+  if (!row.resolution_strategy && !row.resolution_confidence && !row.resolution_evidence_json && !row.resolution_version && !row.resolution_source_identity && !row.resolution_target_identity) return undefined;
+  if (
+    !row.resolution_strategy ||
+    (row.resolution_confidence !== "exact" && row.resolution_confidence !== "strong") ||
+    !row.resolution_version ||
+    !row.resolution_source_identity ||
+    !row.resolution_target_identity ||
+    !isSymbolIdentityKey(row.resolution_source_identity) ||
+    !isSymbolIdentityKey(row.resolution_target_identity)
+  ) return undefined;
+  try {
+    const evidence = JSON.parse(row.resolution_evidence_json ?? "[]");
+    if (!Array.isArray(evidence)) return undefined;
+    return withProvenance(
+      { from: "unused", to: "unused", type: "calls" },
+      {
+        strategy: row.resolution_strategy,
+        confidence: row.resolution_confidence,
+        evidence,
+        resolutionVersion: row.resolution_version,
+        sourceLogicalIdentity: row.resolution_source_identity,
+        targetLogicalIdentity: row.resolution_target_identity,
+      },
+    ).resolution;
+  } catch {
+    return undefined;
+  }
+}
+
 export class AtlasStore {
   private readonly database: DatabaseSync;
 
@@ -130,10 +178,15 @@ export class AtlasStore {
       database.exec("PRAGMA journal_mode = WAL;");
       initializeAtlasSchema(database);
       this.database = database;
+      this.migrateWritableSchema();
     } catch (error) {
       database.close();
       throw error;
     }
+  }
+
+  migrateWritableSchema(): void {
+    migrateAtlasSchema(this.database);
   }
 
   findRepository(identity: RepositoryIdentity): AtlasRepository | undefined {
@@ -446,7 +499,8 @@ export class AtlasStore {
       .prepare(
         `SELECT from_symbol_id, to_symbol_id, type,
                 resolution_method, evidence_kind, confidence,
-                resolution_file, resolution_line
+                resolution_file, resolution_line,
+                ${this.edgeResolutionSelect("edges")}
          FROM edges WHERE repository_id = ?`,
       )
       .all(repoId) as Array<{
@@ -458,7 +512,7 @@ export class AtlasStore {
       confidence: number | null;
       resolution_file: string | null;
       resolution_line: number | null;
-    }>;
+    } & StoredResolution>;
 
     return {
       nodes: nodeRows.map((row) => ({
@@ -480,6 +534,7 @@ export class AtlasStore {
         ...(row.resolution_file && row.resolution_line !== null
           ? { resolutionSource: { file: row.resolution_file, line: row.resolution_line } }
           : {}),
+        ...(restoreResolution(row) ? { resolution: restoreResolution(row) } : {}),
       })),
     };
   }
@@ -802,14 +857,16 @@ export class AtlasStore {
       const insertEdge = this.database.prepare(
         `INSERT INTO generation_edges
          (repository_id, generation_id, owner_file, from_symbol_id, to_symbol_id, type,
-          resolution_method, evidence_kind, confidence, resolution_file, resolution_line)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          resolution_method, evidence_kind, confidence, resolution_file, resolution_line,
+          resolution_strategy, resolution_confidence, resolution_evidence_json,
+          resolution_version, resolution_source_identity, resolution_target_identity)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       const nodes = new Map(graph.nodes.map((node) => [node.id, node]));
       for (const edge of graph.edges) {
         const owner = nodes.get(edge.from)?.file;
         if (!owner) throw new Error(`Missing source node for edge: ${edge.from}`);
-        insertEdge.run(generation.repository_id, generationId, owner, edge.from, edge.to, edge.type, edge.resolutionMethod ?? null, edge.evidenceKind ?? null, edge.confidence ?? null, edge.resolutionSource?.file ?? null, edge.resolutionSource?.line ?? null);
+        insertEdge.run(generation.repository_id, generationId, owner, edge.from, edge.to, edge.type, edge.resolutionMethod ?? null, edge.evidenceKind ?? null, edge.confidence ?? null, edge.resolutionSource?.file ?? null, edge.resolutionSource?.line ?? null, ...resolutionColumns(edge));
       }
       if (resolutionByFile && this.hasTable("generation_graph_resolution_files")) {
         for (const [file, resolution] of resolutionByFile) {
@@ -859,13 +916,15 @@ export class AtlasStore {
       this.database.prepare(
         `INSERT INTO repository_index_state
          (repository_id, active_generation_id, active_schema_version, active_facts_version,
-          active_resolution_version, active_derived_version, active_provenance_metadata)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+          active_facts_schema_version, active_resolution_version, active_derived_version,
+          active_provenance_metadata)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(repository_id) DO UPDATE SET active_generation_id = excluded.active_generation_id,
            active_schema_version = excluded.active_schema_version, active_facts_version = excluded.active_facts_version,
+           active_facts_schema_version = excluded.active_facts_schema_version,
            active_resolution_version = excluded.active_resolution_version, active_derived_version = excluded.active_derived_version,
            active_provenance_metadata = excluded.active_provenance_metadata`,
-      ).run(generation.repository_id, generationId, versions.schemaVersion, versions.factsVersion, versions.resolutionVersion, versions.derivedVersion, JSON.stringify({ semanticEnabled: options.semanticEnabled ?? false }));
+      ).run(generation.repository_id, generationId, versions.schemaVersion, versions.factsVersion, versions.factsSchemaVersion ?? null, versions.resolutionVersion, versions.derivedVersion, JSON.stringify({ semanticEnabled: options.semanticEnabled ?? false }));
       this.database.exec("COMMIT;");
     } catch (error) {
       this.database.exec("ROLLBACK;");
@@ -1560,8 +1619,10 @@ export class AtlasStore {
       `INSERT INTO edges
        (repository_id, owner_file, from_symbol_id, to_symbol_id, type,
         resolution_method, evidence_kind, confidence, resolution_file,
-        resolution_line)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        resolution_line, resolution_strategy, resolution_confidence,
+        resolution_evidence_json, resolution_version, resolution_source_identity,
+        resolution_target_identity)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
   }
 
@@ -1599,6 +1660,7 @@ export class AtlasStore {
       edge.confidence ?? null,
       edge.resolutionSource?.file ?? null,
       edge.resolutionSource?.line ?? null,
+      ...resolutionColumns(edge),
     );
   }
 
@@ -1742,6 +1804,16 @@ export class AtlasStore {
     ).get(name));
   }
 
+  private hasColumn(table: string, column: string): boolean {
+    return (this.database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).some((item) => item.name === column);
+  }
+
+  private edgeResolutionSelect(table: "edges" | "generation_edges"): string {
+    return this.hasColumn(table, "resolution_strategy")
+      ? "resolution_strategy, resolution_confidence, resolution_evidence_json, resolution_version, resolution_source_identity, resolution_target_identity"
+      : "NULL AS resolution_strategy, NULL AS resolution_confidence, NULL AS resolution_evidence_json, NULL AS resolution_version, NULL AS resolution_source_identity, NULL AS resolution_target_identity";
+  }
+
   private getRepositoryIndexState(repositoryId: string): { activeGenerationId: string | undefined } | undefined {
     if (!this.hasTable("repository_index_state")) return undefined;
     const row = this.database.prepare(
@@ -1791,12 +1863,13 @@ export class AtlasStore {
     ).all(repoId, generationId) as Array<{ id: string; type: string; name: string; qualified_name: string | null; file_path: string; start_line: number | null; end_line: number | null }>;
     const edges = this.database.prepare(
       `SELECT from_symbol_id, to_symbol_id, type, resolution_method, evidence_kind,
-              confidence, resolution_file, resolution_line
+              confidence, resolution_file, resolution_line,
+              ${this.edgeResolutionSelect("generation_edges")}
        FROM generation_edges WHERE repository_id = ? AND generation_id = ?`,
-    ).all(repoId, generationId) as Array<{ from_symbol_id: string; to_symbol_id: string; type: string; resolution_method: string | null; evidence_kind: "EXTRACTED" | "INFERRED" | "AMBIGUOUS" | null; confidence: number | null; resolution_file: string | null; resolution_line: number | null }>;
+    ).all(repoId, generationId) as Array<{ from_symbol_id: string; to_symbol_id: string; type: string; resolution_method: string | null; evidence_kind: "EXTRACTED" | "INFERRED" | "AMBIGUOUS" | null; confidence: number | null; resolution_file: string | null; resolution_line: number | null } & StoredResolution>;
     return {
       nodes: nodes.map((row) => ({ id: row.id, type: row.type as GraphNodeType, name: row.name, qualifiedName: row.qualified_name ?? undefined, file: row.file_path, startLine: row.start_line ?? undefined, endLine: row.end_line ?? undefined })),
-      edges: edges.map((row) => ({ from: row.from_symbol_id, to: row.to_symbol_id, type: row.type as GraphEdgeType, ...(row.resolution_method ? { resolutionMethod: row.resolution_method as GraphEdge["resolutionMethod"] } : {}), ...(row.evidence_kind ? { evidenceKind: row.evidence_kind } : {}), ...(row.confidence !== null ? { confidence: row.confidence } : {}), ...(row.resolution_file && row.resolution_line !== null ? { resolutionSource: { file: row.resolution_file, line: row.resolution_line } } : {}) })),
+      edges: edges.map((row) => ({ from: row.from_symbol_id, to: row.to_symbol_id, type: row.type as GraphEdgeType, ...(row.resolution_method ? { resolutionMethod: row.resolution_method as GraphEdge["resolutionMethod"] } : {}), ...(row.evidence_kind ? { evidenceKind: row.evidence_kind } : {}), ...(row.confidence !== null ? { confidence: row.confidence } : {}), ...(row.resolution_file && row.resolution_line !== null ? { resolutionSource: { file: row.resolution_file, line: row.resolution_line } } : {}), ...(restoreResolution(row) ? { resolution: restoreResolution(row) } : {}) })),
     };
   }
 

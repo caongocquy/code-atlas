@@ -1,6 +1,23 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export const ATLAS_SCHEMA_VERSION = "1";
+export const ATLAS_SCHEMA_VERSION = "2";
+export const PREVIOUS_ATLAS_SCHEMA_VERSION = "1";
+
+export const ADD_PHASE14B_COLUMNS = [
+  ["generation_edges", "resolution_strategy TEXT"],
+  ["generation_edges", "resolution_confidence TEXT"],
+  ["generation_edges", "resolution_evidence_json TEXT"],
+  ["generation_edges", "resolution_version TEXT"],
+  ["generation_edges", "resolution_source_identity TEXT"],
+  ["generation_edges", "resolution_target_identity TEXT"],
+  ["edges", "resolution_strategy TEXT"],
+  ["edges", "resolution_confidence TEXT"],
+  ["edges", "resolution_evidence_json TEXT"],
+  ["edges", "resolution_version TEXT"],
+  ["edges", "resolution_source_identity TEXT"],
+  ["edges", "resolution_target_identity TEXT"],
+  ["repository_index_state", "active_facts_schema_version TEXT"],
+] as const;
 
 type SchemaRow = {
   version: string;
@@ -18,16 +35,14 @@ export function initializeAtlasSchema(database: DatabaseSync): void {
     .prepare("SELECT version FROM atlas_schema WHERE id = 1")
     .get() as SchemaRow | undefined;
 
-  if (row && row.version !== ATLAS_SCHEMA_VERSION) {
+  if (row && row.version !== ATLAS_SCHEMA_VERSION && row.version !== PREVIOUS_ATLAS_SCHEMA_VERSION) {
     throw new Error(
       `Unsupported AtlasStore schema version: ${row.version}; expected ${ATLAS_SCHEMA_VERSION}`,
     );
   }
 
   if (!row) {
-    database
-      .prepare("INSERT INTO atlas_schema (id, version) VALUES (1, ?)")
-      .run(ATLAS_SCHEMA_VERSION);
+    database.prepare("INSERT INTO atlas_schema (id, version) VALUES (1, ?)").run(ATLAS_SCHEMA_VERSION);
   }
 
   database.exec(`
@@ -94,6 +109,12 @@ export function initializeAtlasSchema(database: DatabaseSync): void {
       confidence REAL,
       resolution_file TEXT,
       resolution_line INTEGER,
+      resolution_strategy TEXT,
+      resolution_confidence TEXT,
+      resolution_evidence_json TEXT,
+      resolution_version TEXT,
+      resolution_source_identity TEXT,
+      resolution_target_identity TEXT,
 
       PRIMARY KEY (repository_id, owner_file, from_symbol_id, to_symbol_id, type),
       FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
@@ -208,6 +229,7 @@ export function initializeAtlasSchema(database: DatabaseSync): void {
       active_generation_id TEXT,
       active_schema_version TEXT NOT NULL,
       active_facts_version TEXT NOT NULL,
+      active_facts_schema_version TEXT,
       active_resolution_version TEXT NOT NULL,
       active_derived_version TEXT NOT NULL,
       active_provenance_metadata TEXT NOT NULL DEFAULT '{}',
@@ -272,6 +294,12 @@ export function initializeAtlasSchema(database: DatabaseSync): void {
       confidence REAL,
       resolution_file TEXT,
       resolution_line INTEGER,
+      resolution_strategy TEXT,
+      resolution_confidence TEXT,
+      resolution_evidence_json TEXT,
+      resolution_version TEXT,
+      resolution_source_identity TEXT,
+      resolution_target_identity TEXT,
       PRIMARY KEY (repository_id, generation_id, owner_file, from_symbol_id, to_symbol_id, type),
       FOREIGN KEY (generation_id) REFERENCES index_generations(id) ON DELETE CASCADE
     );
@@ -383,5 +411,30 @@ export function initializeAtlasSchema(database: DatabaseSync): void {
   }
   if (!edgeColumns.some((column) => column.name === "resolution_line")) {
     database.exec("ALTER TABLE edges ADD COLUMN resolution_line INTEGER;");
+  }
+}
+
+export function migrateAtlasSchema(database: DatabaseSync): void {
+  const row = database.prepare("SELECT version FROM atlas_schema WHERE id = 1").get() as SchemaRow | undefined;
+  if (!row) throw new Error("AtlasStore schema metadata is missing");
+  if (row.version === ATLAS_SCHEMA_VERSION) return;
+  if (row.version !== PREVIOUS_ATLAS_SCHEMA_VERSION) {
+    throw new Error(`Unsupported AtlasStore schema version: ${row.version}; expected ${ATLAS_SCHEMA_VERSION}`);
+  }
+
+  database.exec("BEGIN IMMEDIATE;");
+  try {
+    for (const [table, definition] of ADD_PHASE14B_COLUMNS) {
+      const column = definition.slice(0, definition.indexOf(" "));
+      const columns = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+      if (!columns.some((item) => item.name === column)) {
+        database.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
+      }
+    }
+    database.prepare("UPDATE atlas_schema SET version = ? WHERE id = 1").run(ATLAS_SCHEMA_VERSION);
+    database.exec("COMMIT;");
+  } catch (error) {
+    database.exec("ROLLBACK;");
+    throw error;
   }
 }

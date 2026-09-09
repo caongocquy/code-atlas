@@ -12,6 +12,7 @@ import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
 
 const versions = {
   schemaVersion: "2",
+  factsSchemaVersion: "1",
   factsVersion: "1",
   resolutionVersion: "1",
   derivedVersion: "1",
