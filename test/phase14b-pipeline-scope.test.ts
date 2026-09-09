@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { indexRepository, syncRepository } from "../src/core/indexing/index-pipeline.service.js";
+import { createCandidateGeneration } from "../src/core/indexing/index-manifest.js";
 import { getRepositoryIdentity } from "../src/core/repository/repository-identity.js";
 import { CURRENT_INDEX_VERSION_DOMAINS } from "../src/core/repository/index-version.js";
 import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
@@ -70,6 +71,53 @@ test("pipeline resolves only changed file and direct importer while retaining un
     const repeated = new AtlasStore(path.join(root, ".codeatlas", "atlas.db"));
     assert.deepEqual(semanticEdgeKeys(repeated, repositoryId), afterSemanticEdges);
     repeated.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("bounded sync drops legacy semantic edges without Phase14B provenance", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase14b-legacy-edge-"));
+  const dependency = path.join(root, "src", "dep.ts");
+
+  try {
+    await mkdir(path.join(root, "src"), { recursive: true });
+    await writeFile(path.join(root, "src", "consumer.ts"), 'import { dep } from "./dep.js"; export const consumer = dep;\n');
+    await writeFile(dependency, "export function dep() { return true; }\n");
+    await writeFile(path.join(root, "src", "unrelated.c"), "int stable() { return 1; }\nint use() { return stable(); }\n");
+
+    const first = await indexRepository(root, { skipGit: true });
+    assert.equal(first.kind, "published");
+    const repositoryId = getRepositoryIdentity(root).id;
+    const store = new AtlasStore(path.join(root, ".codeatlas", "atlas.db"));
+    const activeGenerationId = store.getActiveGenerationId(repositoryId);
+    const activeManifest = store.getGenerationManifest(repositoryId);
+    assert.ok(activeGenerationId);
+    assert.ok(activeManifest);
+    const candidate = createCandidateGeneration(repositoryId, activeGenerationId, activeManifest.versions, activeManifest.files);
+    store.beginCandidateGeneration(candidate);
+    store.writeCandidateManifest(candidate.manifest);
+    const graph = store.loadGraph(repositoryId);
+    const legacyEdge = graph.edges.find((edge) => edge.type === "calls" && graph.nodes.find((node) => node.id === edge.from)?.file === "src/unrelated.c");
+    assert.ok(legacyEdge);
+    store.writeCandidateGraph(candidate.id, {
+      nodes: graph.nodes,
+      edges: graph.edges.map((edge) => {
+        if (edge !== legacyEdge) return edge;
+        const { resolution: _resolution, ...withoutResolution } = edge;
+        return withoutResolution;
+      }),
+    }, new Map());
+    store.copyActiveGraphResolutionToCandidate(candidate.id);
+    store.publishCandidateGeneration(candidate.id);
+    store.close();
+
+    await writeFile(dependency, "export function dep() { return false; }\n");
+    const result = await syncRepository(root, { skipGit: true });
+    assert.equal(result.kind, "published");
+    const after = new AtlasStore(path.join(root, ".codeatlas", "atlas.db"));
+    assert.deepEqual(semanticEdgeKeys(after, repositoryId).filter((edge) => edge.includes("src/unrelated.c")), []);
+    after.close();
   } finally {
     await rm(root, { recursive: true, force: true });
   }

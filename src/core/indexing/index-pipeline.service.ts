@@ -206,19 +206,14 @@ function rebindUnchangedSemanticEdges(
 ): void {
   const byIdentity = candidateSymbols(repoId, units, graph);
   const previousNodes = new Map(previousGraph.nodes.map((node) => [node.id, node]));
-  const currentNodes = new Map(graph.nodes.map((node) => [`${node.file}:${node.type}:${node.qualifiedName ?? node.name}`, node.id]));
-  const rebindNode = (nodeId: string): string | undefined => {
-    const node = previousNodes.get(nodeId);
-    return node ? currentNodes.get(`${node.file}:${node.type}:${node.qualifiedName ?? node.name}`) : undefined;
-  };
   for (const edge of previousGraph.edges) {
     if (edge.type !== "calls" && edge.type !== "extends") continue;
     const previousFrom = previousNodes.get(edge.from);
     const previousTo = previousNodes.get(edge.to);
     if (resolvedPaths.has(previousFrom?.file ?? "") || resolvedPaths.has(previousTo?.file ?? "")) continue;
-    if (edge.resolution && edge.resolution.resolutionVersion !== resolutionVersion) continue;
-    const from = edge.resolution ? byIdentity.get(edge.resolution.sourceLogicalIdentity) : rebindNode(edge.from);
-    const to = edge.resolution ? byIdentity.get(edge.resolution.targetLogicalIdentity) : rebindNode(edge.to);
+    if (!edge.resolution || edge.resolution.resolutionVersion !== resolutionVersion) continue;
+    const from = byIdentity.get(edge.resolution.sourceLogicalIdentity);
+    const to = byIdentity.get(edge.resolution.targetLogicalIdentity);
     if (!from || !to || graph.edges.some((candidate) => candidate.from === from && candidate.to === to && candidate.type === edge.type)) continue;
     graph.edges.push({ ...edge, from, to });
   }
