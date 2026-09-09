@@ -115,10 +115,15 @@ function compatibleBinding(
   return binding?.contentHash === current.contentHash && binding.language === current.language;
 }
 
-function hasUncertainImporterEvidence(directImporters: Map<string, Set<string>>): boolean {
-  return [...directImporters.keys()].some((target) =>
-    target === "*" || target.startsWith("module:") || target.startsWith("unresolved:"),
-  );
+function unsafeTopologyReasons(directImporters: Map<string, Set<string>>): InvalidationReasonCode[] {
+  const reasons = new Set<InvalidationReasonCode>();
+  for (const target of directImporters.keys()) {
+    if (target === "*") reasons.add("export_ambiguous");
+    else if (target.startsWith("module:")) reasons.add("module_config_changed");
+    else if (target === "unresolved:provenance") reasons.add("dependency_provenance_incomplete");
+    else if (target.startsWith("unresolved:")) reasons.add("unresolved_import_ownership");
+  }
+  return [...reasons].sort();
 }
 
 export function planInvalidation(input: InvalidationInput): InvalidationPlan {
@@ -169,11 +174,11 @@ export function planInvalidation(input: InvalidationInput): InvalidationPlan {
     [...directChanges].flatMap((target) => [...(input.directImporters.get(target) ?? [])])
       .filter((file) => currentPathSet.has(file)),
   );
-  const hasRepositoryChange = directChanges.size > 0;
-  const dependencyImpact: DependencyImpact = hasRepositoryChange && hasUncertainImporterEvidence(input.directImporters)
+  const topologyReasons = unsafeTopologyReasons(input.directImporters);
+  const dependencyImpact: DependencyImpact = topologyReasons.length > 0
     ? "uncertain"
     : "bounded";
-  const fullGraphResolution = resolutionChanged || dependencyImpact === "uncertain";
+  const fullGraphResolution = resolutionChanged || topologyReasons.length > 0;
   const resolvePaths = fullGraphResolution
     ? repositoryFiles.filter((file) => currentPathSet.has(file))
     : sorted([
@@ -185,7 +190,7 @@ export function planInvalidation(input: InvalidationInput): InvalidationPlan {
   if (parsePaths.length > 0 && !factsChanged) reasons.push("source_changed");
   if (importersInvalidated.length > 0) reasons.push("direct_importer");
   if (resolutionChanged) reasons.push("resolution_version_changed");
-  if (dependencyImpact === "uncertain") reasons.push("unresolved_import_ownership");
+  reasons.push(...topologyReasons);
   if (renamedPaths.size > 0) reasons.push("path_renamed");
   if (removedPaths.length > renamedPaths.size) reasons.push("path_moved");
   if (factsChanged) reasons.push("facts_version_changed");

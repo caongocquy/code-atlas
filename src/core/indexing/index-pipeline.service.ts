@@ -344,6 +344,11 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       const target = previousNodes.get(edge.to)?.file;
       if (importer && target) addImporter(target, importer);
     }
+    if (previousGraph.edges.some((edge) =>
+      (edge.type === "calls" || edge.type === "extends") && edge.resolution === undefined,
+    )) {
+      directImporters.set("unresolved:provenance", new Set());
+    }
     const currentFileSet = new Set(currentFiles.keys());
     for (const unit of units) {
       for (const reference of unit.facts.imports) {

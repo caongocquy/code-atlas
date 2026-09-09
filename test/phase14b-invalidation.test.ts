@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   createResolutionScope,
   planInvalidation,
+  requiresRepositoryResolution,
   type InvalidationPlan,
 } from "../src/core/indexing/invalidation-planner.js";
 
@@ -81,5 +82,27 @@ test("every unsafe invalidation reason forces repository resolution", () => {
     assert.equal(scope.mode, "repository", planReason);
     assert.ok(scope.reasons.includes(scopeReason), planReason);
     assert.deepEqual(scope.paths, allResolutionCapablePaths);
+  }
+});
+
+test("unsafe topology markers in planner input force repository resolution", () => {
+  for (const [cause, target, reason] of [
+    ["module configuration", "module:workspace-alias", "module_config_changed"],
+    ["export ambiguity", "*", "export_ambiguous"],
+    ["incomplete provenance", "unresolved:provenance", "dependency_provenance_incomplete"],
+  ] as const) {
+    const plan = planInvalidation(fixtureInput({
+      currentFiles: new Map([
+        ["src/consumer.ts", { contentHash: "consumer-1", language: "typescript" as const }],
+        ["src/dep.ts", { contentHash: "dep-1", language: "typescript" as const }],
+        ["src/other.ts", { contentHash: "other-1", language: "typescript" as const }],
+      ]),
+      directImporters: new Map([[target, new Set(["src/consumer.ts"])]]),
+    }));
+
+    assert.equal(plan.fullGraphResolution, true, cause);
+    assert.equal(requiresRepositoryResolution(plan), true, cause);
+    assert.ok(plan.reasons.includes(reason), cause);
+    assert.deepEqual(plan.resolvePaths, allResolutionCapablePaths, cause);
   }
 });

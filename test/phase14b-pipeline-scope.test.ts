@@ -76,7 +76,7 @@ test("pipeline resolves only changed file and direct importer while retaining un
   }
 });
 
-test("bounded sync drops legacy semantic edges without Phase14B provenance", async () => {
+test("incomplete semantic provenance forces repository resolution on unchanged sync", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase14b-legacy-edge-"));
   const dependency = path.join(root, "src", "dep.ts");
 
@@ -114,17 +114,23 @@ test("bounded sync drops legacy semantic edges without Phase14B provenance", asy
 
     const unchanged = await syncRepository(root, { skipGit: true });
     assert.equal(unchanged.kind, "published");
+    assert.equal(unchanged.plan.fullGraphResolution, true);
     assert.equal(unchanged.counters.filesParsed, 0);
-    assert.equal(unchanged.counters.filesResolved, 0);
+    assert.equal(unchanged.counters.filesResolved, 3);
     const afterUnchanged = new AtlasStore(path.join(root, ".codeatlas", "atlas.db"));
-    assert.deepEqual(semanticEdgeKeys(afterUnchanged, repositoryId).filter((edge) => edge.includes("src/unrelated.c")), []);
+    const afterUnchangedGraph = afterUnchanged.loadGraph(repositoryId);
+    assert.ok(afterUnchangedGraph.edges.some((edge) =>
+      edge.type === "calls"
+      && edge.resolution?.resolutionVersion === CURRENT_INDEX_VERSION_DOMAINS.resolutionVersion
+      && afterUnchangedGraph.nodes.find((node) => node.id === edge.from)?.file === "src/unrelated.c",
+    ));
     afterUnchanged.close();
 
     await writeFile(dependency, "export function dep() { return false; }\n");
     const result = await syncRepository(root, { skipGit: true });
     assert.equal(result.kind, "published");
     const after = new AtlasStore(path.join(root, ".codeatlas", "atlas.db"));
-    assert.deepEqual(semanticEdgeKeys(after, repositoryId).filter((edge) => edge.includes("src/unrelated.c")), []);
+    assert.ok(semanticEdgeKeys(after, repositoryId).some((edge) => edge.includes("src/unrelated.c")));
     after.close();
   } finally {
     await rm(root, { recursive: true, force: true });
