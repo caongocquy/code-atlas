@@ -9,6 +9,7 @@ import { isSymbolIdentityKey, symbolIdentityKey, type ResolutionSiteIdentity, ty
 import type { ResolutionDecision } from "../../src/core/graph/resolver/resolver.js";
 import type { LanguageId } from "../../src/core/graph/parsers/types.js";
 import { compareEvidence, MAX_COMPACT_EVIDENCE, type CompactEvidence } from "../../src/core/graph/resolver/provenance.js";
+import type { SemanticEvidenceBatch } from "../../src/core/graph/resolver/types.js";
 import {
   factExtractorInput,
   parserFixtures,
@@ -97,7 +98,7 @@ function validateExpectedEdge(value: unknown, name: string): asserts value is No
     throw new Error(`malformed Phase14B edge expectation for ${name}`);
   }
   for (const evidence of edge.evidence) {
-    if (!evidence || typeof evidence !== "object" || typeof evidence.kind !== "string" || typeof evidence.sourceUnit !== "string" || !Number.isInteger(evidence.startLine) || !Number.isInteger(evidence.endLine)) {
+    if (!evidence || typeof evidence !== "object" || typeof evidence.kind !== "string" || typeof evidence.sourceUnit !== "string" || typeof evidence.evidenceId !== "string" || !Number.isInteger(evidence.startLine) || !Number.isInteger(evidence.endLine)) {
       throw new Error(`malformed Phase14B edge evidence expectation for ${name}`);
     }
   }
@@ -168,21 +169,23 @@ function siteFor(language: LanguageId, facts: ParsedFactsBlob, filePath: string)
   return semantic ? [{ sourceUnit: sourceUnitIdentity, localId: semantic.localId }] : [];
 }
 
-function sourceIdentityForSite(facts: ParsedFactsBlob, site: ResolutionSiteIdentity): SymbolIdentity | undefined {
+function sourceIdentityForSite(facts: ParsedFactsBlob, site: ResolutionSiteIdentity, evidence?: SemanticEvidenceBatch): SymbolIdentity | undefined {
   const localId = facts.callSites.find((item) => item.localId === site.localId)?.callerId
     ?? facts.inheritances.find((item) => item.localId === site.localId)?.subjectId
     ?? facts.implementations.find((item) => item.localId === site.localId)?.subjectId
     ?? facts.members.find((item) => item.localId === site.localId)?.ownerSymbolId
     ?? facts.references.find((item) => item.localId === site.localId)?.ownerId;
   const symbol = facts.symbols.find((item) => item.localId === localId);
-  return symbol ? {
+  if (symbol) return {
     repositoryId: site.sourceUnit.repositoryId,
     relativePath: site.sourceUnit.relativePath,
     language: site.sourceUnit.language,
     kind: symbol.kind,
     qualifiedName: symbol.declaredQualifiedName ?? symbol.name,
     discriminator: symbol.localId,
-  } : undefined;
+  };
+  const memberEvidence = evidence?.members.find((item) => item.evidenceId.endsWith(`member:${site.localId}`));
+  return memberEvidence?.ownerType.kind === "known" ? memberEvidence.ownerType.symbol : undefined;
 }
 
 function evidenceCount(batch: LanguageFixtureResult["resolverState"]["evidence"][number]): number {
@@ -290,8 +293,8 @@ export async function runPhase14bFixture(
     }))),
   );
   const normalizedEdges = result.decisions.flatMap((decision, index) => {
-    if (decision.status !== "resolved" || !decision.edgeKind || decision.edgeKind === "references") return [];
-    const source = sourceIdentityForSite(outcome.facts, sites[index]!);
+    if (decision.status !== "resolved" || !decision.edgeKind) return [];
+    const source = sourceIdentityForSite(outcome.facts, sites[index]!, result.resolverState.evidence[index]);
     if (!source) throw new Error(`resolved ${name} decision has no logical source identity`);
     return [{ type: decision.edgeKind, sourceLogicalIdentity: symbolIdentityKey(source), targetLogicalIdentity: symbolIdentityKey(decision.target), strategy: decision.strategy, confidence: decision.confidence, resolutionVersion: decision.resolutionVersion, evidence: compactEvidence(decision, result.resolverState.evidence) }];
   });

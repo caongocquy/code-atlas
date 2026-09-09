@@ -23,7 +23,7 @@ test("all target-language fixtures satisfy the applicable semantic floor", async
     for (const edge of result.normalizedEdges as Array<Record<string, unknown>>) {
       assert.equal(typeof edge.strategy, "string", language);
       assert.ok(edge.confidence === "exact" || edge.confidence === "strong", language);
-      assert.ok(Array.isArray(edge.evidence) && edge.evidence.length <= 8, language);
+      assert.ok(Array.isArray(edge.evidence) && edge.evidence.length > 0 && edge.evidence.length <= 8, language);
     }
   }
 });
@@ -47,6 +47,7 @@ test("conformance decisions and persisted edge projections are deterministic acr
     assert.ok(warm.counters.memoHits >= coldMemoHits, language);
     warmMemoHits += warm.counters.memoHits - coldMemoHits;
     assert.deepEqual(projection(warm), projection(cold), language);
+    assert.equal(parallelRuns[0]!.resolverState, parallelRuns[1]!.resolverState, language);
     for (const parallel of parallelRuns) {
       assert.ok(parallel.counters.memoHits > coldMemoHits, language);
       assert.deepEqual(projection(parallel), projection(cold), language);
