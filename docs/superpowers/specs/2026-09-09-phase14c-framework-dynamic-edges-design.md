@@ -20,7 +20,7 @@ ParsedFacts
 → Framework Adapter
 → FrameworkEvidence
 → Framework Resolution Gate
-→ accepted framework edges
+→ accepted FrameworkRelationship edges + FrameworkClassification records
 → diagnostics + coverage
 
 Framework semantics must NOT be embedded into the Phase 14B resolver core.
@@ -63,12 +63,16 @@ interface FrameworkSemanticAdapter {
 }
 
 Adapters must consume ParsedFacts + resolved language graph + relevant
-materialized framework/config facts.
+materialized framework/config facts. All inputs, including the facts and graph
+views, must be materialized candidate inputs exposed by the framework analysis
+context. Adapters must not independently read package, build, or framework config
+files through filesystem side channels during semantic analysis. Detection uses
+materialized metadata exposed by its detection context as well.
 
 Adapters MUST NOT:
 - parse source text again
 - use regex/source-text side channels
-- create graph edges directly
+- directly materialize entities, graph edges, or classifications
 - guess ambiguous targets
 
 If framework semantics need objective information missing from ParsedFacts,
@@ -77,7 +81,16 @@ Do not introduce hidden reparsing.
 
 ## 4. Framework evidence
 
-FrameworkEvidence is not yet an authoritative graph edge.
+FrameworkEvidence is an observation envelope, not an authoritative output.
+It carries an explicit output discriminator: relationship or classification.
+Relationship observations carry a source reference and optional unresolved target;
+classification observations carry a subject reference, classification kind, and
+observed value, without a target. Unresolved references/candidates remain evidence,
+never accepted outputs. Reference roles may address language entities (including
+files where appropriate) or FrameworkEntityRef, with explicit variant tags.
+Framework-native references carry supporting entity-definition observations from
+materialized facts/config, sufficient for the gate to validate scope, canonical key
+and provenance. A bare reference string cannot establish an authoritative entity.
 
 Define an explicit contract carrying at minimum:
 
@@ -86,9 +99,10 @@ Define an explicit contract carrying at minimum:
 - adapter id
 - adapter version
 - evidence kind
-- source logical identity
-- optional target logical identity
-- source/target ranges where applicable
+- source logical reference for relationships or subject logical reference for classifications
+- optional target logical reference for relationship observations only
+- source/target/subject ranges where applicable
+- output discriminator and relation kind or classification kind/value
 - origin = framework_inferred
 - confidence = exact | strong | weak
 - supporting evidence refs
@@ -107,29 +121,158 @@ equivalents of:
 - bean_relationship
 - widget_composition
 - navigation_binding
+- execution_boundary
 
 Names may be normalized to fit existing CodeAtlas conventions, but meaning
 must remain explicit.
+
+
+### 4.1 Framework entities and identity
+
+A framework-native entity is not a language symbol. Routes, layouts and endpoints
+represented as routes use a logical contract equivalent to:
+
+```ts
+interface FrameworkEntityRef {
+  framework: FrameworkId;
+  kind: FrameworkEntityKind;
+  logicalKey: string;
+}
+```
+
+FrameworkEntityKind explicitly distinguishes route, layout, and other supported
+framework-native entity kinds requiring a non-symbol identity. A language handler
+remains a language entity; its route/endpoint is a distinct framework entity.
+Adding a kind does not expand V1 framework scope.
+
+Identity is repository-scoped. The tuple (framework, kind, logicalKey) must use an
+unambiguous canonical serialization, not delimiter concatenation that can collide.
+logicalKey includes the materialized application/router scope, entity semantics,
+and canonical route/layout key. Scope is derived from repository-relative project
+identity and explicit config facts, never checkout absolute paths, generation IDs,
+timestamps, discovery order, or adapter version. Same inputs yield the same identity
+across clean, warm and incremental runs. Monorepo applications do not share route
+identities merely because their displayed paths match.
+
+Route canonicalization is framework-specific and versioned. Normalize filesystem
+separators in convention paths, then derive route segments from supported
+conventions. Keep display/source spelling and ranges in evidence. Preserve case,
+parameter names, parameter constraints, catch-all/optional segments and matching
+conditions unless a supported framework rule proves equivalence. Do not blindly
+decode percent escapes, lowercase paths, collapse slashes, remove trailing slashes,
+or equate framework parameter syntaxes. Apply base prefixes and supported routing
+config only from materialized candidate facts. Incomplete matching config is
+unknown/unsupported rather than a guessed canonical route.
+
+Examples within an explicit application/router scope:
+- Next `app/users/page.tsx` yields route `/users`; route groups contribute no URL
+  segment, while layout/slot ownership remains separately scoped. A layout uses its
+  canonical convention owner/slot identity, not only its URL, so nested layouts
+  sharing a route path do not collapse.
+- Nest controller prefix plus handler mapping yields endpoint `GET /users/:id`.
+  HTTP method is canonical uppercase and part of the endpoint key.
+- Spring mapping yields endpoint `GET /users/{id}`, retaining parameter syntax
+  and supported matching constraints. It is not equated with the Nest key.
+- Flutter static named-route entry yields `/settings` in its route-table scope.
+  Named-route strings retain exact matching semantics; do not apply web URL
+  normalization to them.
+
+Distinct methods or explicit matching conditions remain distinct. A missing method
+must not default to GET; an explicitly supported all-method mapping is represented
+as such. Potentially overlapping matcher identities must preserve ambiguity when
+the facts cannot establish a unique destination.
+
+Repeated evidence for the same proven entity is deduplicated and provenance merged
+in canonical bounded order. Incompatible declarations claiming the same key, or
+unresolved routing overlaps, produce stable collision/ambiguity diagnostics.
+Do not use first/last wins, generated suffixes, or guessed edges to disambiguate.
+Hash-backed storage must compare canonical tuples and never merge unequal tuples
+because their hashes collide.
+
+Add/change/delete/rename operates within candidate materialization. A source rename
+preserving semantic scope/key retains entity identity and updates evidence ranges;
+a route or scope rename changing the key removes the old identity and adds the new
+one. No speculative rename alias is created. Deletion removes entities with no surviving support,
+incident relationships and attached classifications from the new candidate, while
+entities with surviving valid support remain. Recompute the proven dependent
+neighborhood, broadening framework resolution when necessary.
+
+Entities, bounded framework provenance, accepted relationships and classifications
+are persisted together in the candidate and published atomically. No dangling
+accepted endpoints/subjects or mixed-generation records are allowed. Failed
+publication preserves the prior generation; reused records must be valid in the
+new candidate. Entity provenance identifies framework, adapter/version, strategy,
+categorical confidence and compact source/config evidence references. These records
+follow the same read-only guarantees as the rest of framework materialization.
+
+### 4.2 Accepted output contracts
+
+Accepted outputs form an explicit discriminated union equivalent to:
+
+```ts
+type FrameworkAcceptedOutput =
+  | FrameworkRelationship
+  | FrameworkClassification;
+
+interface FrameworkRelationship {
+  outputKind: "relationship";
+  source: FrameworkSubjectRef;
+  target: FrameworkSubjectRef;
+  relationKind: FrameworkRelationKind;
+  provenance: FrameworkProvenance;
+}
+
+interface FrameworkClassification {
+  outputKind: "classification";
+  subject: FrameworkSubjectRef;
+  classificationKind: FrameworkClassificationKind;
+  classificationValue: string;
+  provenance: FrameworkProvenance;
+}
+```
+
+FrameworkSubjectRef is a tagged union of an existing language entity reference
+(symbol or file/module as applicable) and FrameworkEntityRef. The named kind
+types denote the explicit supported semantic vocabularies, not arbitrary user rules.
+FrameworkProvenance is the bounded contract in section 6; accepted confidence is
+exact or strong only. Classification values must belong to the supported vocabulary
+for their kind, e.g. execution_boundary has client/server values.
+
+Relationships materialize as typed graph relationships only after both endpoints
+resolve uniquely. Classifications attach to their uniquely resolved subject and
+require no artificial target. They must never materialize as self-edges or fake
+virtual targets. Evidence may remain unresolved, but an accepted output cannot
+contain unresolved references. Both paths preserve origin, confidence, strategy,
+evidence, diagnostics, coverage, deterministic ordering, and the independent
+frameworkResolutionVersion semantics. Entity/classification persistence layout
+changes use schemaVersion where required, without repurposing facts or language
+resolution versions.
 
 ## 5. Resolution gate
 
 FrameworkEvidence
 → FrameworkResolutionGate
 → resolved | ambiguous | unknown | unsupported | budget_exhausted
-→ authoritative graph only for accepted exact/strong results
+→ accepted exact/strong FrameworkRelationship or FrameworkClassification only
 
 Rules:
 
-- exact/strong may enter authoritative graph only when target identity is
-  unique under the framework semantics
+- relationships require uniquely identified source and target under framework
+  semantics before materializing as authoritative graph edges
+- classifications require a uniquely identified subject and a uniquely supported
+  classification value; they materialize as records, not graph edges
 - weak evidence is diagnostic only
 - multiple plausible candidates => ambiguous, no authoritative edge
-- no supported target => unknown, no guessed edge
+- missing relationship endpoint or classification subject/value => unknown,
+  no guessed output
 - unsupported construct => unsupported, no guessed edge
 - budget exhausted => no guessed edge
 - framework adapter infrastructure failure is not semantic uncertainty
 
-Preserve CodeAtlas unique-or-drop precision.
+All ambiguous, unknown, unsupported, weak, or budget-exhausted observations are
+diagnostic only for both paths: no guessed edges or classification records.
+Conflicting exclusive classification values remain ambiguous; ordering must not
+select a winner. Preserve CodeAtlas unique-or-drop precision.
 
 ## 6. Provenance taxonomy
 
@@ -147,7 +290,8 @@ Normalize intelligence provenance for future 14D/15 use:
 - derived
   graph/change/reliability computation
 
-Framework accepted edges must persist bounded provenance with at least:
+Framework entities and accepted relationships/classifications must persist bounded
+provenance with origin = framework_inferred and at least:
 
 - framework
 - adapter id/version
@@ -158,7 +302,7 @@ Framework accepted edges must persist bounded provenance with at least:
 Do not persist full inference traces or transient candidate queues.
 
 The public/query layer must be able to explain:
-- where the relationship came from
+- where the entity, relationship, or classification came from
 - which framework rule/strategy produced it
 - whether it was exact or strong
 - which file/range evidence supports it
@@ -191,7 +335,7 @@ Semantics:
   Phase 14B language resolver semantics
 
 - frameworkResolutionVersion:
-  framework adapters/framework edge semantics
+  framework adapters, entity identity/canonicalization, relationship and classification semantics
 
 - derivedVersion:
   projections/analytics only
@@ -210,7 +354,8 @@ active generation N
 candidate N+1:
   ParsedFacts
   language graph
-  framework graph
+  framework entities + relationship graph
+  framework classifications
   framework diagnostics
   framework coverage
 
@@ -308,10 +453,13 @@ Dimensions should include:
 - capability
 - file
 - strategy
-- edge kind
+- output kind (relationship or classification)
+- edge kind for relationships; classification kind for classifications
 
-The absence of a framework relationship is authoritative only when the
-applicable capability has sufficient coverage.
+The absence of a framework relationship or classification is authoritative only
+when the applicable capability has sufficient coverage. Both paths emit all listed
+primitives; classifications do not inflate edge counts. Entity collisions contribute
+ambiguity diagnostics/coverage to the affected observations.
 
 ## 12. Stable diagnostics
 
@@ -326,7 +474,10 @@ Include equivalents of:
 - framework_config_incomplete
 - framework_adapter_failed
 
-Diagnostics do not create graph edges.
+Diagnostics do not create graph edges or classification records. Stable reason
+codes must also distinguish entity identity collision, unresolved/ambiguous subjects,
+and conflicting classification values; target-specific codes apply to relationship
+targets, not invented classification targets.
 
 ## 13. React / Next.js semantic floor
 
@@ -357,8 +508,14 @@ Potential graph relations may include equivalents of:
 - owns_route
 - owns_layout
 - handles_route
-- client_boundary
-- server_boundary
+
+Execution boundaries are classifications, not relations:
+- "use client" → subject classification `kind: execution_boundary`, `value: client`
+- "use server" → subject classification `kind: execution_boundary`, `value: server`
+
+The subject is the file/module or callable identity justified by materialized
+facts and the directive's scope. Do not invent a target or self-edge. Unsupported
+scope or conflicting exclusive boundary values preserve uncertainty.
 
 Do not infer in V1:
 - React runtime state propagation
@@ -486,7 +643,7 @@ weak
 - plausible but non-authoritative; diagnostic only
 
 No numeric threshold conversion.
-No weak authoritative edges.
+No weak authoritative edges or classifications.
 
 Examples:
 - Next app/users/page.tsx -> /users: exact
@@ -502,7 +659,8 @@ Same generation/config/versions must produce identical normalized:
 - framework detection
 - evidence ids
 - resolution decisions
-- accepted edges
+- framework entity identities
+- accepted relationships and classifications
 - provenance
 - diagnostics reason codes
 - coverage
@@ -544,6 +702,23 @@ Cross-framework isolation tests:
 - multi-framework monorepo scopes adapters correctly
 - one framework adapter must not contaminate another framework's files
 
+Additional entity/classification conformance requirements:
+- stable FrameworkEntityRef tuples and route canonicalization for all four examples
+- distinct application/router scopes, methods, matching constraints and layout slots
+- duplicate evidence deduplication versus incompatible key collisions and overlaps
+- ambiguity preserved without guessed authoritative relationships/classifications
+- add/change/delete/rename, including stable-key renames and changed-key removal
+- clean rebuild == incremental entity identity, provenance and query visibility
+- generation publication/rollback with no dangling entity references
+- inspectable bounded entity provenance and explicitly typed query results
+- classification determinism across cold/warm, repeated and incremental runs
+- execution boundaries produce no self-edge or artificial virtual target
+- conflicting classification values remain ambiguous with diagnostics/coverage
+- classifications remain inspectable by future 14D/15 consumers
+- framework-only version changes rebuild entities/classifications without unnecessary
+  compatible facts parsing or language resolution
+- analysis consumes materialized candidate inputs without filesystem config reads
+
 ## 20. Evaluation priorities
 
 Phase 14C optimizes precision before recall.
@@ -569,7 +744,13 @@ Do not add mandatory embeddings or LLM evaluation/runtime dependencies.
 Do not require new user-facing commands solely for Phase 14C.
 
 Existing graph/intelligence/query consumers should see accepted framework edges
-through the common core APIs.
+through the common core APIs. Framework entities are explicitly typed graph
+entities, distinct from language symbols; relationships may connect these typed
+entities. Classifications are inspectable subject metadata through the same core
+query surface, including provenance, diagnostics and coverage. Symbol-only consumers
+must preserve their symbol contract rather than coercing framework entities into
+symbols. Graph traversal follows relationships, never fabricated classification
+edges. Future 14D/15 consumers can inspect both output variants without re-inference.
 
 Framework provenance must remain inspectable by future:
 - query/explore
@@ -633,7 +814,9 @@ No package/lockfile changes unless technically required and explicitly justified
 The spec must state exact closure expectations:
 
 - all four framework families have defined capability floors
-- accepted edges are exact/strong only
+- accepted relationships and classifications are exact/strong only
+- framework entity identity is stable, canonical, collision-safe and query-visible
+- classifications are inspectable without artificial targets or self-edges
 - provenance is persisted and inspectable
 - ambiguity/unknown/unsupported/budget are preserved
 - framework layer does not source-reparse
@@ -648,10 +831,10 @@ The spec must state exact closure expectations:
 ## Contract clarifications
 
 - `FrameworkSemanticAdapter` is a design contract, not production code. Its context/view types denote read-only candidate facts, resolved language graph, and materialized configuration inputs; adapters have no edge-write authority.
-- An optional target on evidence permits unresolved observations. An accepted relationship must have a uniquely identified target; absent targets never become authoritative edges.
+- An optional target on relationship evidence permits unresolved observations. Accepted relationships require unique source and target. Classifications require a unique subject and supported value, never a target.
 - `framework_adapter_failed` reports an infrastructure failure of the candidate attempt. It is not a sixth semantic resolution outcome and cannot authorize publishing a partially updated generation.
 - `schemaVersion` governs persistence layout; `factsSchemaVersion` governs the serialized facts shape. Intentionally adding objective facts changes the applicable facts contract/version domains. Framework strategy changes alone change `frameworkResolutionVersion`, without changing compatible facts or language resolver versions.
 - Reuse is based on compatible, unchanged dependencies within the candidate inputs. A new candidate generation alone does not require reanalyzing every framework file. Reused materialization must still be valid for the complete candidate that is atomically published.
 - `configured` and `observed` describe detection evidence, not coverage levels. Coverage primitives remain scoped to applicable constructs and capability dimensions; missing, incomplete, or unsupported evidence cannot be presented as an authoritative absence.
 - The Next.js capability example illustrates reporting shape, not a promise of V1 middleware resolution. Uncertain middleware matching remains outside authoritative V1 inference.
-- Framework route, layout, boundary, composition, and injection relationships retain their explicit meaning. They must not be relabeled as ordinary language call edges merely to fit an existing consumer.
+- Framework route, layout, composition, and injection relationships retain their explicit meaning. They must not be relabeled as ordinary language call edges merely to fit an existing consumer.
