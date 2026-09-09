@@ -3,7 +3,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 
-import { initializeAtlasSchema, migrateAtlasSchema, ATLAS_SCHEMA_VERSION } from "./atlas.schema.js";
+import { initializeAtlasSchema, migrateAtlasSchema, validateAtlasSchemaForReadOnly, ATLAS_SCHEMA_VERSION } from "./atlas.schema.js";
 import { decodeFacts, encodeFacts } from "../../core/facts/facts-codec.js";
 import { factBlobKey } from "../../core/facts/facts-identity.js";
 import type { FactBlobKey, FileFactBinding, IndexVersionDomains, ParsedFactsBlob, ParserIdentity } from "../../core/facts/facts.types.js";
@@ -171,6 +171,7 @@ export class AtlasStore {
 
     try {
       if (options.readOnly) {
+        validateAtlasSchemaForReadOnly(database);
         this.database = database;
         return;
       }

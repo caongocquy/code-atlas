@@ -163,3 +163,17 @@ test("persisted evidence is sorted and bounded", async () => withFixture(() => {
   assert.deepEqual(loaded, [...loaded].sort((a, b) => a.sourceUnit.localeCompare(b.sourceUnit) || a.startLine - b.startLine || a.endLine - b.endLine || a.kind.localeCompare(b.kind)));
   store.close();
 }));
+
+test("read-only construction rejects unknown schema versions without writing", async () => withFixture(async () => {
+  const database = new DatabaseSync(databasePath);
+  database.exec("CREATE TABLE atlas_schema (id INTEGER PRIMARY KEY, version TEXT NOT NULL);");
+  database.prepare("INSERT INTO atlas_schema (id, version) VALUES (1, '999')").run();
+  database.close();
+  const before = await readFile(databasePath);
+
+  assert.throws(
+    () => new AtlasStore(databasePath, { readOnly: true }),
+    /Unsupported AtlasStore schema version: 999; expected 2/,
+  );
+  assert.deepEqual(await readFile(databasePath), before);
+}));

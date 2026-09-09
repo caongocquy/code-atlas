@@ -414,6 +414,18 @@ export function initializeAtlasSchema(database: DatabaseSync): void {
   }
 }
 
+export function validateAtlasSchemaForReadOnly(database: DatabaseSync): void {
+  const table = database
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'atlas_schema'")
+    .get();
+  if (!table) return;
+
+  const row = database.prepare("SELECT version FROM atlas_schema WHERE id = 1").get() as SchemaRow | undefined;
+  if (row && row.version !== ATLAS_SCHEMA_VERSION && row.version !== PREVIOUS_ATLAS_SCHEMA_VERSION) {
+    throw new Error(`Unsupported AtlasStore schema version: ${row.version}; expected ${ATLAS_SCHEMA_VERSION}`);
+  }
+}
+
 export function migrateAtlasSchema(database: DatabaseSync): void {
   const row = database.prepare("SELECT version FROM atlas_schema WHERE id = 1").get() as SchemaRow | undefined;
   if (!row) throw new Error("AtlasStore schema metadata is missing");
