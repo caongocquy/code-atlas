@@ -13,6 +13,6 @@
     "coldWarmFixture": "equivalent"
   },
   "normalizedEdges": [],
-  "decisions": [{"status":"unknown","language":"rust","sourceUnit":{"repositoryId":"phase14b-fixtures","relativePath":"phase14b/conformance/main.rs","language":"rust"},"edgeKind":"calls","reason":"unknown","attemptedStrategies":["lexical-local","imports-exports","explicit-type","constructor","assignment","parameter","return","alias","inheritance","receiver-member","chained-call","bounded-interprocedural"],"evidenceIds":[],"resolutionVersion":"14b-2"}],
-  "diagnostics": [{"kind":"unknown","language":"rust","file":"phase14b/conformance/main.rs","edgeKind":"calls","count":1,"reason":"unknown"}], "mayBeIncomplete": true
+  "decisions": [{"status":"resolved","language":"rust","sourceUnit":{"repositoryId":"phase14b-fixtures","relativePath":"phase14b/conformance/main.rs","language":"rust"},"edgeKind":"references","strategy":"receiver-member","confidence":"strong","targetLogicalIdentity":"[\"phase14b-fixtures\",\"phase14b/conformance/main.rs\",\"rust\",\"method\",\"Thing::get\",\"symbol:7\"]","attemptedStrategies":["lexical-local","imports-exports","explicit-type","constructor","assignment","parameter","return","alias","inheritance","receiver-member","chained-call","bounded-interprocedural"],"evidenceIds":["phase14b/conformance/main.rs:member:member:8"],"resolutionVersion":"14b-2"}],
+  "diagnostics": [{"kind":"resolved","language":"rust","file":"phase14b/conformance/main.rs","strategy":"receiver-member","count":1},{"kind":"unknown","language":"rust","file":"phase14b/conformance/main.rs","count":1,"reason":"Rust member dispatch is not uniquely observed for get"}], "mayBeIncomplete": true
 }

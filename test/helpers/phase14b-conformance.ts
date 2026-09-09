@@ -93,7 +93,7 @@ export async function loadPhase14bExpectedFixture(name: string): Promise<Phase14
 function validateExpectedEdge(value: unknown, name: string): asserts value is NormalizedEdge {
   if (!value || typeof value !== "object") throw new Error(`malformed Phase14B edge expectation for ${name}`);
   const edge = value as Partial<NormalizedEdge>;
-  if (!["calls", "references", "extends", "implements"].includes(edge.type as string) || typeof edge.sourceLogicalIdentity !== "string" || !isSymbolIdentityKey(edge.sourceLogicalIdentity) || typeof edge.targetLogicalIdentity !== "string" || !isSymbolIdentityKey(edge.targetLogicalIdentity) || typeof edge.strategy !== "string" || (edge.confidence !== "exact" && edge.confidence !== "strong") || typeof edge.resolutionVersion !== "string" || !Array.isArray(edge.evidence) || edge.evidence.length > MAX_COMPACT_EVIDENCE) {
+  if (!["calls", "references", "extends", "implements"].includes(edge.type as string) || typeof edge.sourceLogicalIdentity !== "string" || !isSymbolIdentityKey(edge.sourceLogicalIdentity) || typeof edge.targetLogicalIdentity !== "string" || !isSymbolIdentityKey(edge.targetLogicalIdentity) || typeof edge.strategy !== "string" || (edge.confidence !== "exact" && edge.confidence !== "strong") || typeof edge.resolutionVersion !== "string" || !Array.isArray(edge.evidence) || edge.evidence.length === 0 || edge.evidence.length > MAX_COMPACT_EVIDENCE) {
     throw new Error(`malformed Phase14B edge expectation for ${name}`);
   }
   for (const evidence of edge.evidence) {
@@ -112,7 +112,7 @@ function conformanceSource(language: LanguageId): string {
     case "python":
       return "class Service:\n    total: int = 0\n    def read(self) -> int:\n        return self.total\n\ndef use(item: Service) -> Service:\n    local = Service()\n    local.read()\n    return item\n";
     case "rust":
-      return "fn target() -> i32 { 1 }\nfn main() { target(); }\n";
+      return "struct Thing;\nimpl Thing { fn get(&self) {} }\nfn main() { let item = Thing; item.get(); }\n";
     case "swift":
       return "class Widget { func run() {} }\nfunc use() { let widget = Widget(); widget.run() }\n";
     case "dart":
@@ -155,6 +155,10 @@ function siteFor(language: LanguageId, facts: ParsedFactsBlob, filePath: string)
     const extension = facts.implementations.find((item) => item.relationKind === "extension");
     const overload = facts.callSites.find((item) => item.calleeText.includes(".run"));
     return [inheritance && { sourceUnit: sourceUnitIdentity, localId: inheritance.localId }, extension && { sourceUnit: sourceUnitIdentity, localId: extension.localId }, overload && { sourceUnit: sourceUnitIdentity, localId: overload.localId }].filter((item): item is ResolutionSiteIdentity => Boolean(item));
+  }
+  if (language === "rust") {
+    const member = facts.members.find((item) => item.ownerSymbolId);
+    return member ? [{ sourceUnit: sourceUnitIdentity, localId: member.localId }] : [];
   }
   const semantic = language === "java"
     ? facts.members.find((item) => item.memberName === "value") ?? facts.members[0]
@@ -291,6 +295,7 @@ export async function runPhase14bFixture(
     if (!source) throw new Error(`resolved ${name} decision has no logical source identity`);
     return [{ type: decision.edgeKind, sourceLogicalIdentity: symbolIdentityKey(source), targetLogicalIdentity: symbolIdentityKey(decision.target), strategy: decision.strategy, confidence: decision.confidence, resolutionVersion: decision.resolutionVersion, evidence: compactEvidence(decision, result.resolverState.evidence) }];
   });
+  if (normalizedEdges.some((edge) => edge.evidence.length === 0)) throw new Error(`accepted Phase14B edge has no declared evidence for ${name}`);
   const counters: Record<string, number> = {
     filesParsed: result.normalizedFacts.length,
     symbols: result.normalizedFacts.reduce((count, facts) => count + facts.symbols.length, 0),

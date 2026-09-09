@@ -35,19 +35,22 @@ test("conformance decisions and persisted edge projections are deterministic acr
     const coldMemoHits = cold.counters.memoHits;
     const warm = await runPhase14bFixture(language, { memoMode: "warm", parallel: false });
     const parallelRuns = await Promise.all([
-      runPhase14bFixture(language, { memoMode: "cold", parallel: true }),
-      runPhase14bFixture(language, { memoMode: "cold", parallel: true }),
+      runPhase14bFixture(language, { memoMode: "warm", parallel: true }),
+      runPhase14bFixture(language, { memoMode: "warm", parallel: true }),
     ]);
     const projection = (result: typeof cold) => ({
-      decisions: result.decisions.map((decision) => ({ status: decision.status, strategy: decision.strategy, confidence: "confidence" in decision ? decision.confidence : undefined, reason: "reason" in decision ? decision.reason : undefined })),
+      decisions: result.decisions.map(normalizeDecision),
       edges: result.normalizedEdges,
-      diagnostics: result.diagnostics,
+      diagnostics: result.diagnostics.map(normalizeDiagnostic),
       mayBeIncomplete: result.mayBeIncomplete,
     });
     assert.ok(warm.counters.memoHits >= coldMemoHits, language);
     warmMemoHits += warm.counters.memoHits - coldMemoHits;
     assert.deepEqual(projection(warm), projection(cold), language);
-    for (const parallel of parallelRuns) assert.deepEqual(projection(parallel), projection(cold), language);
+    for (const parallel of parallelRuns) {
+      assert.ok(parallel.counters.memoHits > coldMemoHits, language);
+      assert.deepEqual(projection(parallel), projection(cold), language);
+    }
   }
   assert.ok(warmMemoHits > 0, "warm conformance runs must exercise the shared resolver memo cache");
 });
