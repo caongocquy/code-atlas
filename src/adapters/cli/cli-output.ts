@@ -132,7 +132,7 @@ export function formatIndexResult(result: IndexPipelineResult): string {
     `${cliTheme.success(cliIcons.success)} ${cliTheme.success(title)}`,
     "",
     `Repository     ${result.repoPath}`,
-    `Files          ${result.graph.files}`,
+    `Indexed files  ${result.graph.files}`,
     `Symbols        ${result.graph.nodes}`,
     `Relationships  ${result.graph.edges}`,
     `Graph          ${capabilityStatus(result.graph.status)}`,
@@ -146,6 +146,7 @@ export function formatIndexResult(result: IndexPipelineResult): string {
       result.changes.changedFiles.length,
       result.changes.deletedFiles.length,
     )}`);
+    lines.push(`Unchanged      ${result.graph.unchangedFiles}`);
   }
 
   lines.push(`Duration       ${formatDuration(result.totalMs)}`);
@@ -200,7 +201,7 @@ export function formatInitResult(
   status?: RepositoryStatus,
   indexed = false,
   guidanceChanged = false,
-  indexResult?: { totalMs: number },
+  indexResult?: Pick<IndexPipelineResult, "totalMs" | "graph">,
 ): string {
   const graph = status?.graph;
   const lexical = status?.capabilities.lexical;
@@ -210,11 +211,12 @@ export function formatInitResult(
     `Repository   ${result.repoPath}`,
     `Git          ${result.gitRepository ? "detected" : "not detected"}`,
     "State        .codeatlas/",
-    `Index        ${indexed ? "built" : "skipped (--no-index)"}`,
+    `Index        ${indexed ? "ready" : "skipped (--no-index)"}`,
     ...(status ? [
-      `Files        ${status.repository.sourceFiles}`,
+      `Source files ${status.repository.sourceFiles}`,
+      ...(indexed ? [`Indexed files ${indexResult?.graph.files ?? graph?.indexedFiles ?? 0}`] : []),
       `Symbols      ${graph?.nodes ?? 0}`,
-      `Relations    ${graph?.edges ?? 0}`,
+      `Relationships ${graph?.edges ?? 0}`,
       `Graph        ${capabilityStatus(graph?.status ?? "not_indexed")}`,
       `Lexical      ${capabilityStatus(lexical?.state ?? "not_indexed")}`,
       `Guidance     ${guidanceChanged ? "updated" : "current"}`,
@@ -280,7 +282,7 @@ export function formatHookStatus(status: HookStatus): string {
 }
 
 function capabilityStatus(status: string): string {
-  return status === "indexed" || status === "current" ? "✓ ready" : `○ ${status}`;
+  return status === "ready" || status === "indexed" || status === "current" ? "✓ ready" : `○ ${status}`;
 }
 
 function formatCapability(state: string): string {

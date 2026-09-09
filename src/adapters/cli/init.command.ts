@@ -2,7 +2,7 @@ import path from "node:path";
 
 import { createCliCommandReporter } from "./cli-command-reporter.js";
 import { formatInitResult, formatIntegrationChange } from "./cli-output.js";
-import { indexRepository, syncRepository, type IndexPipelineResult } from "../../core/indexing/index-pipeline.service.js";
+import { indexRepository, type IndexPipelineResult } from "../../core/indexing/index-pipeline.service.js";
 import type { IndexRunOutcome } from "../../core/indexing/indexing.types.js";
 import { initializeRepository } from "../../core/repository/repository-init.service.js";
 import { getRepositoryStatus } from "../../core/repository/repository-status.service.js";
@@ -57,34 +57,6 @@ export async function runInitCommand(
   let guidanceChanged = !noGuidance
     ? await installGuidance(targetPath, args.includes("--strict"))
     : false;
-  if (guidanceChanged && indexResult) {
-    const outcome = await reporter.run(
-      "Refreshing index after guidance update",
-      () => syncRepository(targetPath, { progress: reporter.progress }),
-    );
-    if (outcome.kind === "failed") {
-      indexError = outcome.failure.message;
-      process.exitCode = 1;
-      indexResult = undefined;
-    } else {
-      indexResult = outcome as IndexPipelineResult;
-    }
-    const guidanceRefreshed = await installGuidance(targetPath, args.includes("--strict"));
-    guidanceChanged = guidanceChanged || guidanceRefreshed;
-    if (guidanceRefreshed) {
-      const refreshed = await reporter.run(
-        "Refreshing index after guidance update",
-        () => syncRepository(targetPath, { progress: reporter.progress }),
-      );
-      if (refreshed.kind === "failed") {
-        indexError = refreshed.failure.message;
-        process.exitCode = 1;
-        indexResult = undefined;
-      } else {
-        indexResult = refreshed as IndexPipelineResult;
-      }
-    }
-  }
   const status = await getRepositoryStatus(targetPath);
   const integrations = [];
 

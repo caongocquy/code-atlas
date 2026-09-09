@@ -70,7 +70,7 @@ export async function runProgressTasks(tasks: ListrTask[]): Promise<void> {
     fallbackRenderer: "simple",
     rendererOptions: {
       formatOutput: "truncate",
-      clearOutput: false,
+      clearOutput: true,
       collapseSkips: true,
     },
     fallbackRendererOptions: {},

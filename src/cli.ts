@@ -13,12 +13,20 @@ import { runInitCommand } from "./adapters/cli/init.command.js";
 import { runMcpServer } from "./adapters/mcp/mcp-server.js";
 import { createCliCommandReporter } from "./adapters/cli/cli-command-reporter.js";
 import { formatCommandFailure } from "./adapters/cli/cli-output.js";
-import { createIntegrationRegistry } from "./infrastructure/integration/default-integrations.js";
+import { formatCommandHelp, formatRootHelp, isKnownCommand } from "./adapters/cli/cli-help.js";
 import path from "node:path";
 
 const [command, ...args] = process.argv.slice(2);
 
 async function main(): Promise<void> {
+  if (args.includes("--help") && command && command !== "--help" && command !== "help" && isKnownCommand(command)) {
+    process.stdout.write(`${formatCommandHelp(command)}\n`);
+    return;
+  }
+  if (command === "help" && args[0]) {
+    process.stdout.write(`${formatCommandHelp(args[0])}\n`);
+    return;
+  }
   switch (command) {
     case "mcp":
       await runMcpServer();
@@ -71,38 +79,11 @@ async function main(): Promise<void> {
     case "help":
     case "--help":
     case undefined:
-      process.stdout.write([
-        "Usage: code-atlas <command>",
-        "",
-        `  init [path] [--agent ${integrationIds()}|all] [--strict] [--no-guidance]`,
-        "  index [path] [--skip-git]",
-        "  sync [path] [--skip-git] [--quiet]",
-        "  status [path]",
-        "  inspect-change [path] [--staged|--commit <ref>|--base <ref> --head <ref>] [--json]",
-        "  affected-tests [path] [--staged|--commit <ref>|--base <ref> --head <ref>] [--json]",
-        "  explain-incomplete [path] [--change|--tests] [--staged|--commit <ref>|--base <ref> --head <ref>] [--json]",
-        "  graph-delta [path] [--staged|--commit <ref>|--base <ref> --head <ref>] [--max-edges <n>] [--json]",
-        "  architecture-drift [path] [--staged|--commit <ref>|--base <ref> --head <ref>] [--max-edges <n>] [--config <path>] [--json]",
-        "  gate [path] [--staged|--commit <ref>|--base <ref> --head <ref>] [--max-depth <n>] [--max-tests <n>] [--max-edges <n>] [--json]",
-        "  connect [agent] [--all] [--strict] [--no-guidance]",
-        "  disconnect [agent] [--all]",
-        "  integrations",
-        `  integration list|status|install|uninstall <${integrationIds()}> [--scope user|project] [--strict] [--no-guidance] [--json]`,
-        "  integration config --format json",
-        "  (without an agent, connect/disconnect open a TTY selector; --all uses detected/managed integrations)",
-        "  hook install|uninstall|status [--post-commit] [--post-checkout]",
-        "  mcp",
-        "  serve [path]",
-        "",
-      ].join("\n"));
+      process.stdout.write(`${formatRootHelp()}\n`);
       return;
     default:
       throw new Error("Unknown command. Run `code-atlas --help`.");
   }
-}
-
-function integrationIds(): string {
-  return createIntegrationRegistry().list().map(({ descriptor }) => descriptor.id).join("|");
 }
 
 main().catch((error) => {
