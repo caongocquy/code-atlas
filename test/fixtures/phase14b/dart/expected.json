@@ -3,5 +3,8 @@
   "grammar": "@driftlog/tree-sitter-dart@1.0.4",
   "imports": ["package:flutter/material.dart", "dart:math"],
   "ownership": ["Base", "LoggableOne", "LoggableTwo", "Runnable", "Worker"],
-  "uncertain": ["mixin-selection", "dynamic-member", "framework-semantics"]
+  "uncertain": ["mixin-selection", "dynamic-member", "framework-semantics"],
+  "normalizedEdges": [],
+  "decisions": [{"status":"resolved","language":"dart","sourceUnit":{"repositoryId":"phase14b-fixtures","relativePath":"phase14b/conformance/main.dart","language":"dart"},"edgeKind":"references","strategy":"receiver-member","confidence":"strong","targetLogicalIdentity":"[\"phase14b-fixtures\",\"phase14b/conformance/main.dart\",\"dart\",\"method\",\"Worker.run\",\"symbol:7\"]","attemptedStrategies":["lexical-local","imports-exports","explicit-type","constructor","assignment","parameter","return","alias","inheritance","receiver-member","chained-call","bounded-interprocedural"],"evidenceIds":["phase14b/conformance/main.dart:member:member:23","phase14b/conformance/main.dart:member:member:8"],"resolutionVersion":"14b-2"}],
+  "diagnostics": [{"kind":"resolved","language":"dart","file":"phase14b/conformance/main.dart","strategy":"receiver-member","count":1}], "mayBeIncomplete": false
 }

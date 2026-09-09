@@ -1,0 +1,7 @@
+{
+  "language": "typescript",
+  "requiredFacts": ["bindings", "calls", "members"],
+  "normalizedEdges": [],
+  "decisions": [{"status":"resolved","language":"typescript","sourceUnit":{"repositoryId":"phase14b-fixtures","relativePath":"phase14b/conformance/main.ts","language":"typescript"},"edgeKind":"references","strategy":"receiver-member","confidence":"strong","targetLogicalIdentity":"[\"phase14b-fixtures\",\"phase14b/conformance/main.ts\",\"typescript\",\"method\",\"refresh\",\"symbol:5\"]","attemptedStrategies":["lexical-local","imports-exports","explicit-type","constructor","assignment","parameter","return","alias","inheritance","receiver-member","chained-call","bounded-interprocedural"],"evidenceIds":["phase14b/conformance/main.ts:member:member:14"],"resolutionVersion":"14b-2"}],
+  "diagnostics": [{"kind":"resolved","language":"typescript","file":"phase14b/conformance/main.ts","strategy":"receiver-member","count":1}], "mayBeIncomplete": false
+}

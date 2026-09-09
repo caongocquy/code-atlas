@@ -3,5 +3,8 @@
   "grammar": "tree-sitter-cpp@0.23.4",
   "requiredFacts": ["namespaces", "classes", "structs", "methods", "constructors", "inheritance", "direct-members", "aliases"],
   "unsupported": ["templates", "overload-resolution", "ADL", "SFINAE", "concepts", "preprocessor-dependent-semantics"],
-  "resolverCases": { "template": "unsupported", "repeatedExtraction": "deterministic", "coldWarmFixture": "equivalent" }
+  "resolverCases": { "template": "unsupported", "repeatedExtraction": "deterministic", "coldWarmFixture": "equivalent" },
+  "normalizedEdges": [{"type":"calls","sourceLogicalIdentity":"[\"phase14b-fixtures\",\"phase14b/conformance/main.cpp\",\"cpp\",\"function\",\"main\",\"symbol:8\"]","targetLogicalIdentity":"[\"phase14b-fixtures\",\"phase14b/conformance/main.cpp\",\"cpp\",\"function\",\"add\",\"symbol:2\"]","strategy":"lexical-local","confidence":"strong","resolutionVersion":"14b-2","evidence":[{"kind":"binding","sourceUnit":"phase14b-fixtures:phase14b/conformance/main.cpp:cpp","startLine":1,"endLine":1,"evidenceId":"phase14b/conformance/main.cpp:binding:symbol:2"}]}],
+  "decisions": [{"status":"resolved","language":"cpp","sourceUnit":{"repositoryId":"phase14b-fixtures","relativePath":"phase14b/conformance/main.cpp","language":"cpp"},"edgeKind":"calls","strategy":"lexical-local","confidence":"strong","targetLogicalIdentity":"[\"phase14b-fixtures\",\"phase14b/conformance/main.cpp\",\"cpp\",\"function\",\"add\",\"symbol:2\"]","attemptedStrategies":["lexical-local","imports-exports","explicit-type","constructor","assignment","parameter","return","alias","inheritance","receiver-member","chained-call","bounded-interprocedural"],"evidenceIds":["phase14b/conformance/main.cpp:binding:symbol:2"],"resolutionVersion":"14b-2"}],
+  "diagnostics": [{"kind":"resolved","language":"cpp","file":"phase14b/conformance/main.cpp","strategy":"lexical-local","edgeKind":"calls","count":1}], "mayBeIncomplete": false
 }

@@ -3,5 +3,8 @@
   "grammar": "tree-sitter-c@0.24.1",
   "requiredFacts": ["functions", "direct-calls", "variables", "typedefs", "structs", "includes", "aliases", "exact-function-pointers"],
   "uncertainty": { "functionPointerAmbiguity": "ambiguous", "partialParse": "unsupported" },
-  "resolverCases": { "directCall": "resolved", "zeroCandidateBudget": "budget_exhausted", "repeatedExtraction": "deterministic", "coldWarmFixture": "equivalent" }
+  "resolverCases": { "directCall": "resolved", "zeroCandidateBudget": "budget_exhausted", "repeatedExtraction": "deterministic", "coldWarmFixture": "equivalent" },
+  "normalizedEdges": [{"type":"calls","sourceLogicalIdentity":"[\"phase14b-fixtures\",\"phase14b/conformance/main.c\",\"c\",\"function\",\"main\",\"symbol:8\"]","targetLogicalIdentity":"[\"phase14b-fixtures\",\"phase14b/conformance/main.c\",\"c\",\"function\",\"add\",\"symbol:2\"]","strategy":"lexical-local","confidence":"strong","resolutionVersion":"14b-2","evidence":[{"kind":"binding","sourceUnit":"phase14b-fixtures:phase14b/conformance/main.c:c","startLine":1,"endLine":1,"evidenceId":"phase14b/conformance/main.c:binding:symbol:2"}]}],
+  "decisions": [{"status":"resolved","language":"c","sourceUnit":{"repositoryId":"phase14b-fixtures","relativePath":"phase14b/conformance/main.c","language":"c"},"edgeKind":"calls","strategy":"lexical-local","confidence":"strong","targetLogicalIdentity":"[\"phase14b-fixtures\",\"phase14b/conformance/main.c\",\"c\",\"function\",\"add\",\"symbol:2\"]","attemptedStrategies":["lexical-local","imports-exports","explicit-type","constructor","assignment","parameter","return","alias","inheritance","receiver-member","chained-call","bounded-interprocedural"],"evidenceIds":["phase14b/conformance/main.c:binding:symbol:2"],"resolutionVersion":"14b-2"}],
+  "diagnostics": [{"kind":"resolved","language":"c","file":"phase14b/conformance/main.c","strategy":"lexical-local","edgeKind":"calls","count":1}], "mayBeIncomplete": false
 }

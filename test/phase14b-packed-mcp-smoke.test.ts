@@ -9,3 +9,7 @@ test("packed CLI initializes MCP over stdio", async () => {
   assert.equal(typeof response.protocolVersion, "string");
   assert.equal(response.serverName, "code-atlas");
 });
+
+test("packed MCP helper rejects a child that cannot initialize", async () => {
+  await assert.rejects(() => runPackedMcpInitialize(process.execPath), /MCP|process|JSON|initialize/i);
+});

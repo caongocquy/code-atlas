@@ -1,14 +1,14 @@
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
 
 import type { ResolverDiagnostic } from "../../src/core/diagnostics/coverage-diagnostics.types.js";
 import { getLanguageFactExtractor } from "../../src/core/facts/language-fact-extractor.js";
 import type { ParsedFactsBlob } from "../../src/core/facts/facts.types.js";
 import { getSemanticAdapter } from "../../src/core/graph/resolver/adapter-registry.js";
-import { symbolIdentityKey, type ResolutionSiteIdentity, type SymbolIdentity } from "../../src/core/graph/resolver/identities.js";
+import { isSymbolIdentityKey, symbolIdentityKey, type ResolutionSiteIdentity, type SymbolIdentity } from "../../src/core/graph/resolver/identities.js";
 import type { ResolutionDecision } from "../../src/core/graph/resolver/resolver.js";
 import type { LanguageId } from "../../src/core/graph/parsers/types.js";
+import { compareEvidence, MAX_COMPACT_EVIDENCE, type CompactEvidence } from "../../src/core/graph/resolver/provenance.js";
 import {
   factExtractorInput,
   parserFixtures,
@@ -20,8 +20,10 @@ import {
 } from "./phase14b-language-fixtures.js";
 
 export type Phase14bExpectedFixture = {
-  normalizedEdges: readonly unknown[];
-  decisions: readonly unknown[];
+  normalizedEdges: readonly NormalizedEdge[];
+  decisions: readonly Record<string, unknown>[];
+  diagnostics: readonly Record<string, unknown>[];
+  mayBeIncomplete: boolean;
 };
 
 export type FixtureResult = LanguageFixtureResult & {
@@ -46,29 +48,15 @@ type FixtureMetadata = {
   unsupported?: readonly string[];
 };
 
-type ConformanceExpectation = {
-  statuses: readonly ResolutionDecision["status"][];
-  edgeKinds: readonly string[];
+export type NormalizedEdge = {
+  type: string;
+  sourceLogicalIdentity: string;
+  targetLogicalIdentity: string;
+  strategy: string;
+  confidence: "exact" | "strong";
+  resolutionVersion: string;
+  evidence: readonly CompactEvidence[];
 };
-
-const expectedByLanguage: Readonly<Record<LanguageId, ConformanceExpectation>> = {
-  typescript: { statuses: ["resolved"], edgeKinds: [] },
-  tsx: { statuses: ["resolved"], edgeKinds: [] },
-  javascript: { statuses: ["resolved"], edgeKinds: [] },
-  python: { statuses: ["resolved"], edgeKinds: [] },
-  java: { statuses: ["resolved"], edgeKinds: [] },
-  kotlin: { statuses: ["unknown", "unknown", "ambiguous"], edgeKinds: [] },
-  go: { statuses: ["resolved", "ambiguous"], edgeKinds: ["calls"] },
-  rust: { statuses: ["unknown"], edgeKinds: [] },
-  swift: { statuses: ["resolved"], edgeKinds: [] },
-  dart: { statuses: ["resolved"], edgeKinds: [] },
-  c: { statuses: ["resolved"], edgeKinds: ["calls"] },
-  cpp: { statuses: ["resolved"], edgeKinds: ["calls"] },
-};
-
-function metadataName(name: string): string {
-  return name === "typescript" || name === "tsx" || name === "javascript" ? "ecmascript" : name;
-}
 
 function assertFixtureMetadata(name: string, metadata: FixtureMetadata): void {
   const language = metadata.language;
@@ -81,15 +69,38 @@ function assertFixtureMetadata(name: string, metadata: FixtureMetadata): void {
 
 export async function loadPhase14bExpectedFixture(name: string): Promise<Phase14bExpectedFixture> {
   if (!(targetLanguages as readonly string[]).includes(name)) throw new Error(`unknown Phase14B conformance fixture: ${name}`);
-  const metadataUrl = new URL(`../fixtures/phase14b/${metadataName(name)}/expected.json`, import.meta.url);
-  const metadata = JSON.parse(await readFile(metadataUrl, "utf8")) as FixtureMetadata;
+  const metadataUrl = new URL(`../fixtures/phase14b/${name}/expected.json`, import.meta.url);
+  const metadata = JSON.parse(await readFile(metadataUrl, "utf8")) as FixtureMetadata & Partial<Phase14bExpectedFixture>;
   assertFixtureMetadata(name, metadata);
-  const expectation = expectedByLanguage[name as LanguageId];
-  if (!expectation) throw new Error(`missing conformance expectation for ${name}`);
-  return {
-    normalizedEdges: expectation.edgeKinds.map((type) => ({ type })),
-    decisions: expectation.statuses.map((status) => ({ status })),
-  };
+  if (!Array.isArray(metadata.normalizedEdges) || !Array.isArray(metadata.decisions) || !Array.isArray(metadata.diagnostics) || typeof metadata.mayBeIncomplete !== "boolean") {
+    throw new Error(`malformed Phase14B conformance expectation for ${name}`);
+  }
+  for (const edge of metadata.normalizedEdges) validateExpectedEdge(edge, name);
+  for (const decision of metadata.decisions) {
+    const status = decision && typeof decision === "object" ? decision.status : undefined;
+    if (!decision || typeof decision !== "object" || !["resolved", "ambiguous", "unknown", "unsupported", "budget_exhausted"].includes(status as string) || decision.language !== name || typeof decision.edgeKind !== "string" || typeof decision.resolutionVersion !== "string" || (status === "resolved" && (typeof decision.strategy !== "string" || (decision.confidence !== "exact" && decision.confidence !== "strong") || typeof decision.targetLogicalIdentity !== "string" || !isSymbolIdentityKey(decision.targetLogicalIdentity))) || (status !== "resolved" && typeof decision.reason !== "string")) {
+      throw new Error(`malformed Phase14B decision expectation for ${name}`);
+    }
+  }
+  for (const diagnostic of metadata.diagnostics) {
+    if (!diagnostic || typeof diagnostic !== "object" || !["resolved", "ambiguous", "unknown", "unsupported", "budgetExhausted", "weakEvidenceDropped", "candidateOverflow"].includes(diagnostic.kind as string) || diagnostic.language !== name || typeof diagnostic.file !== "string" || !Number.isInteger(diagnostic.count) || diagnostic.count < 1) {
+      throw new Error(`malformed Phase14B diagnostic expectation for ${name}`);
+    }
+  }
+  return { normalizedEdges: metadata.normalizedEdges, decisions: metadata.decisions, diagnostics: metadata.diagnostics, mayBeIncomplete: metadata.mayBeIncomplete };
+}
+
+function validateExpectedEdge(value: unknown, name: string): asserts value is NormalizedEdge {
+  if (!value || typeof value !== "object") throw new Error(`malformed Phase14B edge expectation for ${name}`);
+  const edge = value as Partial<NormalizedEdge>;
+  if (!["calls", "references", "extends", "implements"].includes(edge.type as string) || typeof edge.sourceLogicalIdentity !== "string" || !isSymbolIdentityKey(edge.sourceLogicalIdentity) || typeof edge.targetLogicalIdentity !== "string" || !isSymbolIdentityKey(edge.targetLogicalIdentity) || typeof edge.strategy !== "string" || (edge.confidence !== "exact" && edge.confidence !== "strong") || typeof edge.resolutionVersion !== "string" || !Array.isArray(edge.evidence) || edge.evidence.length > MAX_COMPACT_EVIDENCE) {
+    throw new Error(`malformed Phase14B edge expectation for ${name}`);
+  }
+  for (const evidence of edge.evidence) {
+    if (!evidence || typeof evidence !== "object" || typeof evidence.kind !== "string" || typeof evidence.sourceUnit !== "string" || !Number.isInteger(evidence.startLine) || !Number.isInteger(evidence.endLine)) {
+      throw new Error(`malformed Phase14B edge evidence expectation for ${name}`);
+    }
+  }
 }
 
 function conformanceSource(language: LanguageId): string {
@@ -180,8 +191,21 @@ function diagnosticKind(code: string): ResolverDiagnostic["kind"] {
   return "unknown";
 }
 
-function normalizeDecision(decision: ResolutionDecision): Record<string, unknown> {
-  return { status: decision.status };
+export function normalizeDecision(decision: ResolutionDecision): Record<string, unknown> {
+  return Object.fromEntries(Object.entries({
+    status: decision.status,
+    language: decision.language,
+    sourceUnit: decision.sourceUnit,
+    edgeKind: decision.edgeKind,
+    strategy: "strategy" in decision ? decision.strategy : undefined,
+    confidence: "confidence" in decision ? decision.confidence : undefined,
+    targetLogicalIdentity: "target" in decision ? symbolIdentityKey(decision.target) : undefined,
+    candidateLogicalIdentities: "candidates" in decision ? decision.candidates.map((candidate) => symbolIdentityKey(candidate)) : undefined,
+    reason: "reason" in decision ? decision.reason : undefined,
+    attemptedStrategies: decision.attemptedStrategies,
+    evidenceIds: decision.evidenceIds,
+    resolutionVersion: decision.resolutionVersion,
+  }).filter(([, value]) => value !== undefined));
 }
 
 function resolverDiagnostic(decision: ResolutionDecision, file: string): ResolverDiagnostic {
@@ -203,6 +227,38 @@ function resolverDiagnostic(decision: ResolutionDecision, file: string): Resolve
   };
 }
 
+export function normalizeDiagnostic(diagnostic: ResolverDiagnostic): Record<string, unknown> {
+  return Object.fromEntries(Object.entries({
+    kind: diagnostic.kind,
+    language: diagnostic.language,
+    file: diagnostic.file,
+    strategy: diagnostic.strategy,
+    edgeKind: diagnostic.edgeKind,
+    count: diagnostic.count,
+    reason: diagnostic.reason,
+  }).filter(([, value]) => value !== undefined));
+}
+
+function compactEvidence(
+  decision: ResolutionDecision,
+  evidence: LanguageFixtureResult["resolverState"]["evidence"],
+): readonly CompactEvidence[] {
+  const ids = new Set(decision.evidenceIds);
+  return evidence.flatMap((batch) => Object.values(batch).flatMap((items) => Array.isArray(items) ? items : []))
+    .filter((item): item is { kind: string; evidenceId: string; sourceUnit: { repositoryId: string; relativePath: string; language: string }; range: { startLine: number; endLine: number } } => Boolean(item && typeof item === "object" && "evidenceId" in item && ids.has(item.evidenceId as never)))
+    .map((item) => ({
+      kind: item.kind,
+      sourceUnit: `${item.sourceUnit.repositoryId}:${item.sourceUnit.relativePath}:${item.sourceUnit.language}`,
+      startLine: item.range.startLine,
+      endLine: item.range.endLine,
+      evidenceId: item.evidenceId,
+    }))
+    .sort(compareEvidence)
+    .slice(0, MAX_COMPACT_EVIDENCE);
+}
+
+const warmResolverStates = new Map<string, LanguageFixtureResult["resolverState"]>();
+
 export async function runPhase14bFixture(
   name: string,
   options: { memoMode?: "cold" | "warm"; parallel?: boolean } = {},
@@ -217,10 +273,10 @@ export async function runPhase14bFixture(
   const outcome = extractor.extract(factExtractorInput(item));
   if (outcome.kind !== "facts") throw new Error(`fact extraction failed for ${item.filePath}: ${outcome.kind}`);
   const sites = siteFor(language, outcome.facts, item.filePath);
-  const fixture: LanguageFixtureDefinition = { name: `conformance-${name}`, cases: [item], sites, expectedDecisionStatuses: expectedByLanguage[language].statuses };
-  const result = await runFixtureThroughResolver(fixture, [outcome.facts], adapter, options.memoMode, options.parallel);
   const expected = await loadPhase14bExpectedFixture(name);
-  if (result.decisions.length !== expected.decisions.length) throw new Error(`fixture ${name} produced ${result.decisions.length} decisions; expected ${expected.decisions.length}`);
+  const fixture: LanguageFixtureDefinition = { name: `conformance-${name}`, cases: [item], sites, expectedDecisionStatuses: expected.decisions.map((decision) => decision.status as ResolutionDecision["status"]) };
+  const resolverState = options.memoMode === "warm" ? warmResolverStates.get(name) : undefined;
+  const result = await runFixtureThroughResolver(fixture, [outcome.facts], adapter, options.memoMode, options.parallel, resolverState);
   for (const decision of result.decisions) {
     if (decision.status === "resolved" && (!decision.strategy || !decision.confidence || !decision.target)) throw new Error(`resolved ${name} decision lacks complete provenance fields`);
   }
@@ -233,8 +289,7 @@ export async function runPhase14bFixture(
     if (decision.status !== "resolved" || !decision.edgeKind || decision.edgeKind === "references") return [];
     const source = sourceIdentityForSite(outcome.facts, sites[index]!);
     if (!source) throw new Error(`resolved ${name} decision has no logical source identity`);
-    const evidenceKinds = result.resolverState.evidence.flatMap((batch) => Object.keys(batch).filter((key) => key !== "diagnostics")).slice(0, 8);
-    return [{ type: decision.edgeKind, sourceLogicalIdentity: symbolIdentityKey(source), targetLogicalIdentity: symbolIdentityKey(decision.target), strategy: decision.strategy, confidence: decision.confidence, evidenceKinds }];
+    return [{ type: decision.edgeKind, sourceLogicalIdentity: symbolIdentityKey(source), targetLogicalIdentity: symbolIdentityKey(decision.target), strategy: decision.strategy, confidence: decision.confidence, resolutionVersion: decision.resolutionVersion, evidence: compactEvidence(decision, result.resolverState.evidence) }];
   });
   const counters: Record<string, number> = {
     filesParsed: result.normalizedFacts.length,
@@ -245,17 +300,22 @@ export async function runPhase14bFixture(
     diagnostics: diagnostics.length,
     memoHits: result.resolverState.memoHitCount,
   };
+  if (options.memoMode !== "warm") warmResolverStates.set(name, result.resolverState);
+  const normalizedDecisions = result.decisions.map(normalizeDecision);
+  const normalizedDiagnostics = diagnostics.map(normalizeDiagnostic);
+  const mayBeIncomplete = diagnostics.some((diagnostic) => diagnostic.kind !== "resolved") || result.normalizedFacts.some((facts) => facts.parseStatus !== "complete" || facts.parserDiagnostics.length > 0);
+  if (JSON.stringify(normalizedDecisions) !== JSON.stringify(expected.decisions) || JSON.stringify(normalizedEdges) !== JSON.stringify(expected.normalizedEdges) || JSON.stringify(normalizedDiagnostics) !== JSON.stringify(expected.diagnostics)) {
+    throw new Error(`Phase14B expected oracle mismatch for ${name}: ${JSON.stringify({ decisions: normalizedDecisions, normalizedEdges, diagnostics: normalizedDiagnostics, mayBeIncomplete })}`);
+  }
+  if (mayBeIncomplete !== expected.mayBeIncomplete) throw new Error(`Phase14B incompleteness oracle mismatch for ${name}`);
   return {
     ...result,
     decisions: result.decisions,
     normalizedEdges,
     diagnostics,
     counters,
-    mayBeIncomplete: diagnostics.some((diagnostic) => diagnostic.kind !== "resolved") || result.normalizedFacts.some((facts) => facts.parseStatus !== "complete" || facts.parserDiagnostics.length > 0),
-    expected: {
-      normalizedEdges: expected.normalizedEdges,
-      decisions: result.decisions.map(normalizeDecision),
-    },
+    mayBeIncomplete,
+    expected,
   };
 }
 
@@ -277,17 +337,45 @@ export async function runPackedMcpInitialize(cliPath: string): Promise<{ protoco
   if (!cliPath) throw new Error("packed CLI path is required");
   const child = spawn(process.execPath, [cliPath, "mcp"], { stdio: ["pipe", "pipe", "inherit"] });
   if (!child.stdin || !child.stdout) throw new Error("MCP child process streams are unavailable");
+  let processError: Error | undefined;
+  let failure: Error | undefined;
+  let responseValue: { protocolVersion: string; serverName: string } | undefined;
+  child.once("error", (error) => { processError = error; });
   try {
     child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "phase14b-smoke", version: "1" } } })}\n`);
+    child.stdin.end();
     const response = await readJsonLine(child.stdout);
+    if (response.jsonrpc !== "2.0" || response.id !== 1) throw new Error("MCP initialize response has invalid JSON-RPC envelope");
+    if ("error" in response) throw new Error(`MCP initialize returned an error: ${JSON.stringify(response.error)}`);
     const result = response.result;
     if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("MCP initialize response has no result object");
     const protocolVersion = (result as Record<string, unknown>).protocolVersion;
     const serverInfo = (result as Record<string, unknown>).serverInfo;
     const serverName = serverInfo && typeof serverInfo === "object" && !Array.isArray(serverInfo) ? (serverInfo as Record<string, unknown>).name : undefined;
     if (typeof protocolVersion !== "string" || typeof serverName !== "string") throw new Error("MCP initialize response is missing protocolVersion/serverInfo.name");
-    return { protocolVersion, serverName };
+    responseValue = { protocolVersion, serverName };
+  } catch (error) {
+    failure = error instanceof Error ? error : new Error(String(error));
   } finally {
-    child.kill();
+    if (!child.killed && child.exitCode === null) child.kill();
+    const outcome = await waitForChildClose(child, 2_000);
+    if (!failure && processError) failure = processError;
+    if (!failure && outcome.code !== null && outcome.code !== 0) failure = new Error(`MCP child exited with code ${outcome.code}`);
+    if (!failure && outcome.error) failure = outcome.error;
   }
+  if (failure) throw failure;
+  if (!responseValue) throw new Error("MCP initialize did not produce a response");
+  return responseValue;
+}
+
+function waitForChildClose(child: ReturnType<typeof spawn>, timeoutMs: number): Promise<{ code: number | null; signal: NodeJS.Signals | null; error?: Error }> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      if (!child.killed) child.kill();
+      resolve({ code: null, signal: "SIGTERM", error: new Error(`MCP child did not close within ${timeoutMs}ms`) });
+    }, timeoutMs);
+    child.once("error", (error) => { clearTimeout(timer); resolve({ code: child.exitCode, signal: child.signalCode, error }); });
+    child.once("close", (code, signal) => { clearTimeout(timer); resolve({ code, signal }); });
+  });
 }
