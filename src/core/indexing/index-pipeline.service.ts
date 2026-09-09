@@ -35,7 +35,7 @@ import { buildCandidateSymbolBindings, rebindCandidateEdges } from "../graph/bui
 import { detectRepositoryChanges } from "./change-detector.js";
 import { createCandidateGeneration } from "./index-manifest.js";
 import { planInvalidation, requiresRepositoryResolution, type UnsafeTopologyReason } from "./invalidation-planner.js";
-import { extractStableFacts, SourceRaceError, type SourceReader } from "./filesystem-change-detector.js";
+import { extractStableFacts, isModuleConfigPath, SourceRaceError, type SourceReader } from "./filesystem-change-detector.js";
 import { createIndexWorkCounters, freezeIndexWorkCounters, recordIndexWork } from "./index-work-counters.js";
 import { createCandidateResolutionInput } from "./resolution-scope.js";
 import { createResolutionScope } from "./invalidation-planner.js";
@@ -472,7 +472,14 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
     }
     if (semanticCandidate) store.writeCandidateSemanticVectors(generation.id, semanticCandidate.points);
     const previousSemanticStates = semanticPreserved ? store.getFileCapabilityStates(repoId, "semantic") : undefined;
-    const fileStates = units.flatMap((unit) => {
+    const configFileStates = [...changes.fileHashes.entries()]
+      .filter(([file]) => isModuleConfigPath(file))
+      .map(([file, fileHash]) => ({
+        file,
+        capability: "graph" as const,
+        input: { fileHash, version: GRAPH_INDEX_VERSION, state: "ready" as const, generation: generation.id, itemCount: 0 },
+      }));
+    const fileStates = [...configFileStates, ...units.flatMap((unit) => {
       const graphCount = graph.graph.nodes.filter((node) => node.file === unit.relativePath).length;
       const lexicalCount = lexical.find((update) => update.file === unit.relativePath)?.documents.length ?? 0;
       const semanticCount = semanticCandidate?.points.filter((point) => point.payload.file === unit.relativePath).length ?? 0;
@@ -483,8 +490,12 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
         ...(semanticCandidate ? [{ file: unit.relativePath, capability: "semantic" as const, input: { fileHash: unit.facts.contentHash, version: VECTOR_INDEX_VERSION, state: "ready" as const, generation: generation.id, providerIdentity: semanticCandidate.providerIdentity, itemCount: semanticCount } }] : []),
         ...(preservedSemantic ? [{ file: unit.relativePath, capability: "semantic" as const, input: { fileHash: preservedSemantic.fileHash, version: preservedSemantic.version, state: preservedSemantic.state, generation: generation.id, providerIdentity: preservedSemantic.providerIdentity, itemCount: preservedSemantic.itemCount, lastError: preservedSemantic.lastError } }] : []),
       ];
-    });
-    store.publishCandidateGeneration(generation.id, { requireGraph: true, requireLexical: true, semanticEnabled: semanticCandidate !== undefined || semanticPreserved, graphStaged: true, lexicalStaged: true, semanticStaged: semanticCandidate !== undefined || semanticPreserved, deletedFiles: plan.removedPaths, fileStates, versions: { graph: GRAPH_INDEX_VERSION, lexical: LEXICAL_INDEX_VERSION, ...(semanticCandidate ? { semantic: VECTOR_INDEX_VERSION } : {}) } });
+    })];
+    const deletedFiles = [...new Set([
+      ...plan.removedPaths,
+      ...changes.deletedFiles.filter(isModuleConfigPath),
+    ])];
+    store.publishCandidateGeneration(generation.id, { requireGraph: true, requireLexical: true, semanticEnabled: semanticCandidate !== undefined || semanticPreserved, graphStaged: true, lexicalStaged: true, semanticStaged: semanticCandidate !== undefined || semanticPreserved, deletedFiles, fileStates, versions: { graph: GRAPH_INDEX_VERSION, lexical: LEXICAL_INDEX_VERSION, ...(semanticCandidate ? { semantic: VECTOR_INDEX_VERSION } : {}) } });
 
     const totalMs = performance.now() - startedAt;
     const graphCurrent = operation === "sync" && plan.parsePaths.length === 0 && plan.removedPaths.length === 0;

@@ -73,6 +73,29 @@ test("a changed module configuration file forces repository resolution", async (
   }
 });
 
+test("filesystem mode detects changed module configuration files", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase14b-filesystem-config-"));
+  try {
+    await writeFile(path.join(root, "source.ts"), "export function source() { return 1; }\n");
+    for (const file of ["package.json", "tsconfig.json", "jsconfig.json"]) {
+      await writeFile(path.join(root, file), "{}\n");
+    }
+    await indexRepository(root, { skipGit: true });
+
+    for (const file of ["package.json", "tsconfig.json", "jsconfig.json"]) {
+      await writeFile(path.join(root, file), `{"changed":"${file}"}\n`);
+      const result = await syncRepository(root, { skipGit: true });
+      assert.equal(result.kind, "published");
+      assert.equal(result.plan.fullGraphResolution, true, file);
+      assert.ok(result.plan.reasons.includes("module_config_changed"), file);
+      assert.equal(result.counters.filesParsed, 0, file);
+      assert.equal(result.counters.filesResolved, 1, file);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("ambiguous star exports force repository resolution from current facts", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase14b-export-ambiguity-"));
   try {

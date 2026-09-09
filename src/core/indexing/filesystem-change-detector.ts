@@ -32,8 +32,20 @@ type FileStates = Map<IndexCapability, Map<string, AtlasFileCapabilityState>>;
 
 const MODULE_CONFIG_FILENAMES = new Set(["package.json", "tsconfig.json", "jsconfig.json"]);
 
-function isModuleConfigPath(relativePath: string): boolean {
+export function isModuleConfigPath(relativePath: string): boolean {
   return MODULE_CONFIG_FILENAMES.has(path.posix.basename(relativePath));
+}
+
+async function moduleConfigPaths(repoPath: string, persistedFiles: ReadonlySet<string>): Promise<string[]> {
+  const paths = new Set([...persistedFiles].filter(isModuleConfigPath));
+  for (const file of MODULE_CONFIG_FILENAMES) {
+    try {
+      if ((await fs.stat(path.join(repoPath, file))).isFile()) paths.add(file);
+    } catch {
+      // Missing config files are handled through the persisted path set.
+    }
+  }
+  return [...paths].sort();
 }
 
 export type SourceRead = { source: string; contentHash: string };
@@ -125,6 +137,7 @@ export async function detectFilesystemChanges(
     options.store.getGenerationManifest(options.repoId)?.files.map((file) => [file.relativePath, file]) ?? [],
   );
   const candidateHint = options.candidateFiles;
+  const configPaths = await moduleConfigPaths(repoPath, persistedFiles);
   // The unified pipeline needs hashes for every current file to materialize
   // generation bindings and distinguish fact reuse from a parser miss.
   const shouldHashAll = true;
@@ -153,6 +166,15 @@ export async function detectFilesystemChanges(
     await options.progress.run("Hashing files", hashes, "graph");
   } else {
     await hashes({ setProgress() {} });
+  }
+
+  for (const relativeFile of configPaths) {
+    try {
+      fileHashes.set(relativeFile, createFileHash(await fs.readFile(path.join(repoPath, relativeFile), "utf8")));
+      currentFiles.add(relativeFile);
+    } catch {
+      // A removed config is reported from persistedFiles below.
+    }
   }
 
   const candidateFiles = new Set<string>();
@@ -186,6 +208,17 @@ export async function detectFilesystemChanges(
   const deletedFiles = Array.from(persistedFiles)
     .filter((file) => !currentFiles.has(file))
     .sort();
+  for (const relativeFile of configPaths) {
+    const hash = fileHashes.get(relativeFile);
+    const state = states.get("graph")?.get(relativeFile);
+    const needsIndex = hash !== undefined && stateNeedsIndex(state, undefined, "graph", options.versions.graph, hash);
+    if (needsIndex) candidateFiles.add(relativeFile);
+    if (!persistedFiles.has(relativeFile)) addedFiles.push(relativeFile);
+    else if (needsIndex) changedFiles.push(relativeFile);
+  }
+  const moduleConfigChanged = configPaths.some((file) =>
+    (fileHashes.has(file) && candidateFiles.has(file)) || deletedFiles.includes(file),
+  );
 
   return {
     changeDetection: options.changeDetection ?? "filesystem",
@@ -196,6 +229,6 @@ export async function detectFilesystemChanges(
     addedFiles: addedFiles.sort(),
     changedFiles: changedFiles.sort(),
     deletedFiles,
-    ...(candidateHint && [...candidateHint].some(isModuleConfigPath) ? { moduleConfigChanged: true } : {}),
+    ...(moduleConfigChanged ? { moduleConfigChanged: true } : {}),
   };
 }
