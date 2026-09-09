@@ -96,6 +96,37 @@ test("filesystem mode detects changed module configuration files", async () => {
   }
 });
 
+test("filesystem mode detects nested module configuration files", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase14b-nested-filesystem-config-"));
+  const workspace = path.join(root, "workspace", "packages", "app");
+  try {
+    await mkdir(workspace, { recursive: true });
+    await writeFile(path.join(root, "source.ts"), "export function source() { return 1; }\n");
+    for (const file of ["package.json", "tsconfig.json", "jsconfig.json"]) {
+      await writeFile(path.join(workspace, file), "{}\n");
+    }
+    await indexRepository(root, { skipGit: true });
+
+    for (const file of ["package.json", "tsconfig.json", "jsconfig.json"]) {
+      await writeFile(path.join(workspace, file), `{"changed":"${file}"}\n`);
+      const result = await syncRepository(root, { skipGit: true });
+      assert.equal(result.kind, "published");
+      assert.equal(result.plan.fullGraphResolution, true, file);
+      assert.ok(result.plan.reasons.includes("module_config_changed"), file);
+      assert.equal(result.counters.filesParsed, 0, file);
+      assert.equal(result.counters.filesResolved, 1, file);
+    }
+
+    await rm(path.join(workspace, "jsconfig.json"));
+    const removed = await syncRepository(root, { skipGit: true });
+    assert.equal(removed.kind, "published");
+    assert.equal(removed.plan.fullGraphResolution, true);
+    assert.ok(removed.plan.reasons.includes("module_config_changed"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("ambiguous star exports force repository resolution from current facts", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase14b-export-ambiguity-"));
   try {

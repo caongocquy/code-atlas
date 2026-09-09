@@ -31,20 +31,40 @@ export type ChangeDetectorOptions = {
 type FileStates = Map<IndexCapability, Map<string, AtlasFileCapabilityState>>;
 
 const MODULE_CONFIG_FILENAMES = new Set(["package.json", "tsconfig.json", "jsconfig.json"]);
+const CONFIG_SCAN_IGNORED_DIRECTORIES = new Set([
+  ".git", ".codeatlas", ".code-rag", "node_modules", "dist", "build", ".next", ".turbo",
+  "coverage", ".dart_tool", "Pods", "DerivedData", ".gradle", ".venv", "venv", "vendor",
+  ".opencode", ".codex", ".claude", ".omo", ".agents", ".local", ".playwright-mcp",
+  ".jarvis-chat-session",
+]);
 
 export function isModuleConfigPath(relativePath: string): boolean {
   return MODULE_CONFIG_FILENAMES.has(path.posix.basename(relativePath));
 }
 
-async function moduleConfigPaths(repoPath: string, persistedFiles: ReadonlySet<string>): Promise<string[]> {
-  const paths = new Set([...persistedFiles].filter(isModuleConfigPath));
-  for (const file of MODULE_CONFIG_FILENAMES) {
-    try {
-      if ((await fs.stat(path.join(repoPath, file))).isFile()) paths.add(file);
-    } catch {
-      // Missing config files are handled through the persisted path set.
+async function scanModuleConfigFiles(repoPath: string): Promise<string[]> {
+  const found: string[] = [];
+
+  async function visit(directory: string): Promise<void> {
+    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+      if (entry.isSymbolicLink()) continue;
+      const fullPath = path.join(directory, entry.name);
+      const relativePath = path.relative(repoPath, fullPath).split(path.sep).join("/");
+      if (entry.isDirectory()) {
+        if (!CONFIG_SCAN_IGNORED_DIRECTORIES.has(entry.name)) await visit(fullPath);
+      } else if (entry.isFile() && isModuleConfigPath(relativePath)) {
+        found.push(relativePath);
+      }
     }
   }
+
+  await visit(repoPath);
+  return found;
+}
+
+async function moduleConfigPaths(repoPath: string, persistedFiles: ReadonlySet<string>): Promise<string[]> {
+  const paths = new Set([...persistedFiles].filter(isModuleConfigPath));
+  for (const file of await scanModuleConfigFiles(repoPath)) paths.add(file);
   return [...paths].sort();
 }
 
