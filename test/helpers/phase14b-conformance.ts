@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
 
 import type { ResolverDiagnostic } from "../../src/core/diagnostics/coverage-diagnostics.types.js";
 import { getLanguageFactExtractor } from "../../src/core/facts/language-fact-extractor.js";
@@ -34,6 +35,28 @@ export type FixtureResult = LanguageFixtureResult & {
   mayBeIncomplete: boolean;
   expected: Phase14bExpectedFixture;
 };
+
+export type ParallelFixtureResult = {
+  language: LanguageId;
+  startedAt: number;
+  finishedAt: number;
+  projection: {
+    decisions: readonly Record<string, unknown>[];
+    edges: readonly unknown[];
+    diagnostics: readonly Record<string, unknown>[];
+    mayBeIncomplete: boolean;
+  };
+};
+
+type ParallelWorkerData = {
+  kind: "phase14b-conformance";
+  language: LanguageId;
+  barrier: SharedArrayBuffer;
+};
+
+type ParallelWorkerMessage =
+  | ({ kind: "result" } & ParallelFixtureResult)
+  | { kind: "error"; message: string; stack?: string };
 
 type FixtureMetadata = {
   language?: string;
@@ -246,6 +269,15 @@ export function normalizeDiagnostic(diagnostic: ResolverDiagnostic): Record<stri
   }).filter(([, value]) => value !== undefined));
 }
 
+function fixtureProjection(result: FixtureResult): ParallelFixtureResult["projection"] {
+  return {
+    decisions: result.decisions.map(normalizeDecision),
+    edges: result.normalizedEdges,
+    diagnostics: result.diagnostics.map(normalizeDiagnostic),
+    mayBeIncomplete: result.mayBeIncomplete,
+  };
+}
+
 function compactEvidence(
   decision: ResolutionDecision,
   evidence: LanguageFixtureResult["resolverState"]["evidence"],
@@ -325,6 +357,85 @@ export async function runPhase14bFixture(
     mayBeIncomplete,
     expected,
   };
+}
+
+export async function runConcurrentPhase14bFixtures(languages: readonly [LanguageId, LanguageId]): Promise<readonly ParallelFixtureResult[]> {
+  const barrier = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+  const workers = languages.map((language) => new Worker(new URL("./phase14b-conformance.ts", import.meta.url), {
+    type: "module",
+    execArgv: process.execArgv,
+    workerData: { kind: "phase14b-conformance", language, barrier } satisfies ParallelWorkerData,
+  }));
+  try {
+    return await Promise.all(workers.map(waitForParallelWorker));
+  } finally {
+    await Promise.all(workers.map((worker) => worker.terminate()));
+  }
+}
+
+function waitForParallelWorker(worker: Worker): Promise<ParallelFixtureResult> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      void worker.terminate();
+      reject(new Error("Phase14B conformance worker timed out"));
+    }, 30_000);
+    worker.once("message", (message: ParallelWorkerMessage) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (message.kind === "error") {
+        const error = new Error(message.message);
+        error.stack = message.stack ?? error.stack;
+        reject(error);
+      } else {
+        resolve(message);
+      }
+    });
+    worker.once("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+    worker.once("exit", (code) => {
+      if (settled || code === 0) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(new Error(`Phase14B conformance worker exited with code ${code}`));
+    });
+  });
+}
+
+function monotonicMillis(): number {
+  return Number(process.hrtime.bigint()) / 1_000_000;
+}
+
+async function runParallelWorker(data: ParallelWorkerData): Promise<void> {
+  const barrier = new Int32Array(data.barrier);
+  const count = Atomics.add(barrier, 0, 1) + 1;
+  Atomics.notify(barrier, 0);
+  if (count < 2) {
+    const deadline = monotonicMillis() + 5_000;
+    while (Atomics.load(barrier, 0) < 2) {
+      const remaining = deadline - monotonicMillis();
+      if (remaining <= 0) throw new Error("Phase14B conformance workers did not reach their barrier");
+      Atomics.wait(barrier, 0, 1, remaining);
+    }
+  }
+  const startedAt = monotonicMillis();
+  const result = await runPhase14bFixture(data.language, { memoMode: "cold", parallel: false });
+  const message: ParallelWorkerMessage = { kind: "result", language: data.language, startedAt, finishedAt: monotonicMillis(), projection: fixtureProjection(result) };
+  parentPort?.postMessage(message);
+}
+
+if (!isMainThread && parentPort && workerData && typeof workerData === "object" && (workerData as Partial<ParallelWorkerData>).kind === "phase14b-conformance") {
+  void runParallelWorker(workerData as ParallelWorkerData).catch((error: unknown) => {
+    const message: ParallelWorkerMessage = { kind: "error", message: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined };
+    parentPort.postMessage(message);
+  });
 }
 
 export async function readJsonLine(stream: NodeJS.ReadableStream): Promise<Record<string, unknown>> {

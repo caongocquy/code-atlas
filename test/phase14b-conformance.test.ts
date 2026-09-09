@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { targetLanguages } from "./helpers/phase14b-language-fixtures.js";
-import { loadPhase14bExpectedFixture, normalizeDecision, normalizeDiagnostic, runPhase14bFixture } from "./helpers/phase14b-conformance.js";
+import { loadPhase14bExpectedFixture, normalizeDecision, normalizeDiagnostic, runConcurrentPhase14bFixtures, runPhase14bFixture, type ParallelFixtureResult } from "./helpers/phase14b-conformance.js";
 
 test("all target-language fixtures satisfy the applicable semantic floor", async () => {
   for (const language of targetLanguages) {
@@ -34,10 +34,6 @@ test("conformance decisions and persisted edge projections are deterministic acr
     const cold = await runPhase14bFixture(language, { memoMode: "cold", parallel: false });
     const coldMemoHits = cold.counters.memoHits;
     const warm = await runPhase14bFixture(language, { memoMode: "warm", parallel: false });
-    const parallelRuns = await Promise.all([
-      runPhase14bFixture(language, { memoMode: "warm", parallel: true }),
-      runPhase14bFixture(language, { memoMode: "warm", parallel: true }),
-    ]);
     const projection = (result: typeof cold) => ({
       decisions: result.decisions.map(normalizeDecision),
       edges: result.normalizedEdges,
@@ -47,13 +43,31 @@ test("conformance decisions and persisted edge projections are deterministic acr
     assert.ok(warm.counters.memoHits >= coldMemoHits, language);
     warmMemoHits += warm.counters.memoHits - coldMemoHits;
     assert.deepEqual(projection(warm), projection(cold), language);
-    assert.equal(parallelRuns[0]!.resolverState, parallelRuns[1]!.resolverState, language);
-    for (const parallel of parallelRuns) {
-      assert.ok(parallel.counters.memoHits > coldMemoHits, language);
-      assert.deepEqual(projection(parallel), projection(cold), language);
-    }
   }
   assert.ok(warmMemoHits > 0, "warm conformance runs must exercise the shared resolver memo cache");
+});
+
+test("independent worker resolver jobs overlap and remain deterministically equivalent", async () => {
+  const languages = ["typescript", "python"] as const;
+  const [first, second] = await Promise.all([
+    runConcurrentPhase14bFixtures(languages),
+    runConcurrentPhase14bFixtures(languages),
+  ]);
+  const expected = new Map(await Promise.all(languages.map(async (language) => [language, await loadPhase14bExpectedFixture(language)] as const)));
+  const projection = (result: ParallelFixtureResult) => result.projection;
+  for (const batch of [first, second]) {
+    assert.ok(Math.max(...batch.map((result) => result.startedAt)) < Math.min(...batch.map((result) => result.finishedAt)), "worker resolver jobs must overlap");
+    for (const result of batch) {
+      const oracle = expected.get(result.language)!;
+      assert.deepEqual(result.projection, {
+        decisions: oracle.decisions,
+        edges: oracle.normalizedEdges,
+        diagnostics: oracle.diagnostics,
+        mayBeIncomplete: oracle.mayBeIncomplete,
+      }, result.language);
+    }
+  }
+  assert.deepEqual(first.map(projection), second.map(projection));
 });
 
 test("authoritative expected fixtures are explicit and strict", async () => {

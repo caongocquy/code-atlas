@@ -222,19 +222,12 @@ export async function runFixtureThroughResolver(
   });
   const evidence = resolverState?.evidence ?? (parallel ? await Promise.all(facts.map(normalize)) : facts.map(normalize));
   const state = resolverState ?? createFixtureResolverState(fixture, facts, evidence, memoMode, repositoryIdentity, adapter, budgetOverrides);
-  const resolve = (site: ResolutionSiteIdentity): ResolutionDecision => {
+  const decisions = fixture.sites.map((site) => {
     const index = fixture.cases.findIndex((item) => item.filePath === site.sourceUnit.relativePath && item.language === site.sourceUnit.language);
     const factsBlob = facts[index];
     if (!factsBlob) throw new Error(`missing facts for ${site.sourceUnit.relativePath}`);
     return resolveSite({ facts: factsBlob, evidence: evidence[index], environment: state.typeEnvironment, context: state.context }, site);
-  };
-  const decisions = parallel
-    ? await Promise.all(fixture.sites.map((site) => new Promise<ResolutionDecision>((resolveDecision, reject) => {
-      setImmediate(() => {
-        try { resolveDecision(resolve(site)); } catch (error) { reject(error); }
-      });
-    })))
-    : fixture.sites.map(resolve);
+  });
   const expected = fixture.expectedDecisionStatuses;
   const floorPassed = decisions.length > 0 && (expected
     ? expected.length === decisions.length && decisions.every((decision, index) => decision.status === expected[index])
