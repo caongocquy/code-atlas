@@ -741,31 +741,40 @@ export class AtlasStore {
     }
   }
 
-  copyActiveGraphResolutionToCandidate(generationId: string): void {
+  private copyActiveGraphResolutionRows(generationId: string, repositoryId: string, activeGenerationId: string, paths?: readonly string[]): void {
+    const pathFilter = paths === undefined
+      ? ` AND file_path IN (
+           SELECT relative_path
+           FROM file_fact_bindings
+           WHERE repository_id = ? AND generation_id = ?
+         )`
+      : paths.length > 0
+        ? ` AND file_path IN (${paths.map(() => "?").join(", ")})`
+        : " AND 1 = 0";
+    const pathParameters = paths === undefined ? [repositoryId, generationId] : [...paths];
+    this.database.prepare(
+      `INSERT OR REPLACE INTO generation_graph_resolution_files
+       (repository_id, generation_id, file_path, calls, resolved_calls, unresolved_calls,
+        ambiguous_calls, extends_count, resolved_extends, unresolved_extends,
+        ambiguous_extends, parser_errors, unsupported_dynamic,
+        may_be_incomplete, diagnostics_json, updated_at)
+       SELECT repository_id, ?, file_path, calls, resolved_calls, unresolved_calls,
+              ambiguous_calls, extends_count, resolved_extends, unresolved_extends,
+              ambiguous_extends, parser_errors, unsupported_dynamic,
+              may_be_incomplete, diagnostics_json, updated_at
+       FROM generation_graph_resolution_files
+       WHERE repository_id = ? AND generation_id = ?${pathFilter}`,
+    ).run(generationId, repositoryId, activeGenerationId, ...pathParameters);
+  }
+
+  copyActiveGraphResolutionToCandidate(generationId: string, paths?: readonly string[]): void {
     const generation = this.generationRepository(generationId);
     const activeGenerationId = this.getActiveGenerationId(generation.repository_id);
     if (!activeGenerationId || !this.hasTable("generation_graph_resolution_files")) return;
 
     this.database.exec("BEGIN IMMEDIATE;");
     try {
-      this.database.prepare(
-        `INSERT OR REPLACE INTO generation_graph_resolution_files
-         (repository_id, generation_id, file_path, calls, resolved_calls, unresolved_calls,
-          ambiguous_calls, extends_count, resolved_extends, unresolved_extends,
-          ambiguous_extends, parser_errors, unsupported_dynamic,
-          may_be_incomplete, diagnostics_json, updated_at)
-         SELECT repository_id, ?, file_path, calls, resolved_calls, unresolved_calls,
-                ambiguous_calls, extends_count, resolved_extends, unresolved_extends,
-                ambiguous_extends, parser_errors, unsupported_dynamic,
-                may_be_incomplete, diagnostics_json, updated_at
-         FROM generation_graph_resolution_files
-         WHERE repository_id = ? AND generation_id = ?
-           AND file_path IN (
-             SELECT relative_path
-             FROM file_fact_bindings
-             WHERE repository_id = ? AND generation_id = ?
-           )`,
-      ).run(generationId, generation.repository_id, activeGenerationId, generation.repository_id, generationId);
+      this.copyActiveGraphResolutionRows(generationId, generation.repository_id, activeGenerationId, paths);
       this.database.exec("COMMIT;");
     } catch (error) {
       this.database.exec("ROLLBACK;");
@@ -838,6 +847,7 @@ export class AtlasStore {
     graph: CodeGraph,
     fileHashes: Map<string, string>,
     resolutionByFile?: Map<string, GraphResolutionFile>,
+    reuseResolutionPaths?: readonly string[],
   ): void {
     const generation = this.generationRepository(generationId);
     this.database.exec("BEGIN IMMEDIATE;");
@@ -846,6 +856,10 @@ export class AtlasStore {
       this.database.prepare("DELETE FROM generation_symbols WHERE generation_id = ?").run(generationId);
       if (this.hasTable("generation_graph_resolution_files")) {
         this.database.prepare("DELETE FROM generation_graph_resolution_files WHERE generation_id = ?").run(generationId);
+        const activeGenerationId = this.getActiveGenerationId(generation.repository_id);
+        if (activeGenerationId && reuseResolutionPaths && reuseResolutionPaths.length > 0) {
+          this.copyActiveGraphResolutionRows(generationId, generation.repository_id, activeGenerationId, reuseResolutionPaths);
+        }
       }
       const insertNode = this.database.prepare(
         `INSERT INTO generation_symbols

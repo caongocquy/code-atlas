@@ -30,6 +30,7 @@ test("pipeline resolves only changed file and direct importer while retaining un
     await mkdir(path.join(root, "src"), { recursive: true });
     await writeFile(path.join(root, "src", "consumer.ts"), 'import { dep } from "./dep.js"; export const consumer = dep;\n');
     await writeFile(dependency, "export function dep() { return true; }\n");
+    await writeFile(path.join(root, "src", "dynamic.ts"), "export function dynamic(obj: unknown, method: string) { return obj[method](); }\n");
     await writeFile(path.join(root, "src", "unrelated.c"), "int stable() { return 1; }\nint use() { return stable(); }\n");
 
     const first = await indexRepository(root, { skipGit: true });
@@ -39,6 +40,8 @@ test("pipeline resolves only changed file and direct importer while retaining un
     const beforeSemanticEdges = semanticEdgeKeys(before, repositoryId);
     const beforeNodeFiles = graphNodeFiles(before, repositoryId);
     const beforeGraph = before.loadGraph(repositoryId);
+    const beforeCoverage = before.getGraphResolutionCoverage(repositoryId);
+    const beforeDiagnostics = before.getGraphResolutionDiagnostics(repositoryId);
     assert.ok(beforeSemanticEdges.some((edge) => edge.includes("src/unrelated.c") && edge.endsWith(":calls")));
     assert.ok(beforeGraph.edges.some((edge) => edge.type === "calls" && edge.resolution?.resolutionVersion === CURRENT_INDEX_VERSION_DOMAINS.resolutionVersion));
     before.close();
@@ -48,7 +51,7 @@ test("pipeline resolves only changed file and direct importer while retaining un
 
     assert.equal(result.kind, "published");
     assert.deepEqual(result.plan.resolvePaths, ["src/consumer.ts", "src/dep.ts"]);
-    assert.deepEqual(result.plan.reusePaths, ["src/consumer.ts", "src/unrelated.c"]);
+    assert.deepEqual(result.plan.reusePaths, ["src/consumer.ts", "src/dynamic.ts", "src/unrelated.c"]);
     assert.equal(result.counters.filesParsed, 1);
     assert.equal(result.counters.filesResolved, 2);
 
@@ -56,6 +59,8 @@ test("pipeline resolves only changed file and direct importer while retaining un
     assert.deepEqual(graphNodeFiles(after, repositoryId), beforeNodeFiles);
     const afterSemanticEdges = semanticEdgeKeys(after, repositoryId);
     assert.deepEqual(afterSemanticEdges.filter((edge) => edge.includes("src/unrelated.c")), beforeSemanticEdges.filter((edge) => edge.includes("src/unrelated.c")));
+    assert.deepEqual(after.getGraphResolutionCoverage(repositoryId), beforeCoverage);
+    assert.deepEqual(after.getGraphResolutionDiagnostics(repositoryId), beforeDiagnostics);
     after.close();
 
     const repeat = await syncRepository(root, { skipGit: true });
