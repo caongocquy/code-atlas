@@ -400,7 +400,10 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
     const graph = graphCompatible
       ? { graph: structuredClone(previousGraph), resolutionByFile: new Map() }
       : await buildCodeGraphWithResolutionFromFacts(repoPath, candidateInput.allUnits, undefined, repoId, candidateInput.scope.paths, resolverContext);
-    if (!graphCompatible) {
+    if (graphCompatible) {
+      graph.graph.edges = graph.graph.edges.filter((edge) => edge.type !== "calls" && edge.type !== "extends");
+      rebindUnchangedSemanticEdges(graph.graph, previousGraph, candidateInput.allUnits, repoId, resolverContext.resolutionVersion, new Set());
+    } else {
       addResolutionProvenance(graph.graph, candidateInput.allUnits, graph.resolutionByFile, repoId, resolverContext.resolutionVersion);
       if (previousManifest !== undefined) rebindUnchangedSemanticEdges(graph.graph, previousGraph, candidateInput.allUnits, repoId, resolverContext.resolutionVersion, new Set(candidateInput.scope.paths));
     }

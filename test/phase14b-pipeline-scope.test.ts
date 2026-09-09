@@ -112,6 +112,14 @@ test("bounded sync drops legacy semantic edges without Phase14B provenance", asy
     store.publishCandidateGeneration(candidate.id);
     store.close();
 
+    const unchanged = await syncRepository(root, { skipGit: true });
+    assert.equal(unchanged.kind, "published");
+    assert.equal(unchanged.counters.filesParsed, 0);
+    assert.equal(unchanged.counters.filesResolved, 0);
+    const afterUnchanged = new AtlasStore(path.join(root, ".codeatlas", "atlas.db"));
+    assert.deepEqual(semanticEdgeKeys(afterUnchanged, repositoryId).filter((edge) => edge.includes("src/unrelated.c")), []);
+    afterUnchanged.close();
+
     await writeFile(dependency, "export function dep() { return false; }\n");
     const result = await syncRepository(root, { skipGit: true });
     assert.equal(result.kind, "published");
