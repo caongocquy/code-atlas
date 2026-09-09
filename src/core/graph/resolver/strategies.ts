@@ -191,10 +191,11 @@ function resolveReturns(input: ResolverInput, site: ResolutionSiteIdentity, stra
 }
 
 function resolveInheritance(input: ResolverInput, site: ResolutionSiteIdentity, strategy: ResolutionStrategyId): readonly ResolutionCandidate[] {
-  const fact = input.facts.inheritances.find((item) => item.localId === site.localId);
+  const fact = [...input.facts.inheritances, ...input.facts.implementations].find((item) => item.localId === site.localId);
   if (!fact) return [];
-  const items = input.evidence.inheritance.filter((item) => sameSourceUnit(item.sourceUnit, site.sourceUnit) && item.relation === fact.relationKind && item.target.kind === "named" && item.target.name === fact.targetName);
+  const items = [...input.evidence.inheritance, ...input.evidence.implementations].filter((item) => sameSourceUnit(item.sourceUnit, site.sourceUnit) && item.relation === fact.relationKind && ((item.target.kind === "named" && item.target.name === fact.targetName) || (item.target.kind === "known" && item.target.symbol.qualifiedName === fact.targetName)));
   return mergeCandidates(items.flatMap((item) => {
+    if (item.target.kind === "known") return [{ target: item.target.symbol, strategy, confidence: "strong" as const, evidenceIds: [item.evidenceId] as never }];
     const result = input.environment.resolveInheritance({ kind: "known", symbol: item.subject });
     return typeEnvironmentResult(input, site, result, strategy, [item.evidenceId]);
   }));

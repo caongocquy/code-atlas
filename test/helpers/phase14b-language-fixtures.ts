@@ -181,7 +181,7 @@ function prepareFixture(fixture: LanguageFixtureDefinition, facts: readonly Pars
       const inheritance = factsBlob.inheritances.find((item) => item.relationKind === "extends");
       const extension = factsBlob.implementations.find((item) => item.relationKind === "extension");
       const overloadCall = factsBlob.callSites.find((item) => item.calleeText.includes(".run"));
-      if (inheritance) { sites.push({ sourceUnit: source, localId: inheritance.localId }); expectedDecisionStatuses.push("unknown"); }
+      if (inheritance) { sites.push({ sourceUnit: source, localId: inheritance.localId }); expectedDecisionStatuses.push("resolved"); }
       if (extension) { sites.push({ sourceUnit: source, localId: extension.localId }); expectedDecisionStatuses.push("unknown"); }
       if (overloadCall) { sites.push({ sourceUnit: source, localId: overloadCall.localId }); expectedDecisionStatuses.push("ambiguous"); }
     }

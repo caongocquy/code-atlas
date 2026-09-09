@@ -130,6 +130,7 @@ function validateExpectedEdge(value: unknown, name: string): asserts value is No
 function conformanceSource(language: LanguageId): string {
   switch (language) {
     case "typescript":
+      return "class Base {} interface Api {} class Child extends Base implements Api {} class Service { refresh() {} } const local = new Service(); local.refresh();\n";
     case "tsx":
     case "javascript":
       return "class Service { refresh() {} } const local = new Service(); local.refresh();\n";
@@ -183,6 +184,11 @@ function siteFor(language: LanguageId, facts: ParsedFactsBlob, filePath: string)
   if (language === "rust") {
     const member = facts.members.find((item) => item.ownerSymbolId);
     return member ? [{ sourceUnit: sourceUnitIdentity, localId: member.localId }] : [];
+  }
+  if (language === "typescript") {
+    const relations = [...facts.inheritances, ...facts.implementations].map((item) => ({ sourceUnit: sourceUnitIdentity, localId: item.localId }));
+    const member = facts.members[0] ?? facts.callSites.find((item) => !item.calleeText.includes("new "));
+    return [...relations, ...(member ? [{ sourceUnit: sourceUnitIdentity, localId: member.localId }] : [])];
   }
   const semantic = language === "java"
     ? facts.members.find((item) => item.memberName === "value") ?? facts.members[0]
@@ -326,7 +332,7 @@ export async function runPhase14bFixture(
   );
   const normalizedEdges = result.decisions.flatMap((decision, index) => {
     if (decision.status !== "resolved" || !decision.edgeKind) return [];
-    const source = sourceIdentityForSite(outcome.facts, sites[index]!, result.resolverState.evidence[index]);
+    const source = sourceIdentityForSite(outcome.facts, sites[index]!, result.resolverState.evidence[0]);
     if (!source) throw new Error(`resolved ${name} decision has no logical source identity`);
     return [{ type: decision.edgeKind, sourceLogicalIdentity: symbolIdentityKey(source), targetLogicalIdentity: symbolIdentityKey(decision.target), strategy: decision.strategy, confidence: decision.confidence, resolutionVersion: decision.resolutionVersion, evidence: compactEvidence(decision, result.resolverState.evidence) }];
   });

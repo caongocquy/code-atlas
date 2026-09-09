@@ -169,7 +169,7 @@ test("real Java and Kotlin fixtures exercise the full floor deterministically", 
   assert.ok(kotlinEvidence?.diagnostics.some((item) => item.code === "compiler_dispatch_unknown"));
   assert.ok(kotlinEvidence?.typeAnnotations.some((item) => item.type.kind === "named" && item.type.name.endsWith("?")));
   assert.notEqual(jvmCold.decisions.length, 0);
-  assert.deepEqual(jvmCold.decisions.map((decision) => decision.status), ["resolved", "unknown", "unknown", "ambiguous"]);
+  assert.deepEqual(jvmCold.decisions.map((decision) => decision.status), ["resolved", "resolved", "unknown", "ambiguous"]);
   const overloadDecision = jvmCold.decisions.at(-1);
   assert.equal(overloadDecision?.status, "ambiguous");
   if (overloadDecision?.status === "ambiguous") assert.ok(overloadDecision.candidates.length >= 2);
