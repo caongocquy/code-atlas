@@ -13,6 +13,29 @@ import type {
   CoverageMetric,
   VerificationTarget,
 } from "./coverage-diagnostics.types.js";
+import type { ResolverDiagnostic } from "./coverage-diagnostics.types.js";
+
+export type CoverageResult = {
+  mayBeIncomplete: boolean;
+  authoritativeNegative: boolean;
+};
+
+const INCOMPLETE_RESOLVER_DIAGNOSTICS = new Set<ResolverDiagnostic["kind"]>([
+  "unknown",
+  "unsupported",
+  "budgetExhausted",
+  "weakEvidenceDropped",
+  "candidateOverflow",
+]);
+
+export function coverageForResolverDiagnostics(
+  diagnostics: readonly ResolverDiagnostic[],
+): CoverageResult {
+  return {
+    mayBeIncomplete: diagnostics.some((item) => INCOMPLETE_RESOLVER_DIAGNOSTICS.has(item.kind)),
+    authoritativeNegative: false,
+  };
+}
 
 const GAP_ORDER: CoverageGapKind[] = [
   "ambiguous_target",
@@ -187,6 +210,8 @@ function buildTargets(
 export function createCoverageDiagnostics(input: CoverageDiagnosticsInput = {}): CoverageDiagnostics {
   const gaps = buildGaps(input);
   const targetResult = buildTargets(gaps, input);
+  const resolverCoverage = coverageForResolverDiagnostics(input.resolverDiagnostics ?? []);
+  const legacyCoverageIncomplete = input.resolutionDiagnostics?.some((item) => item.kind === "unresolved") === true;
   if (targetResult.truncated) addGap(gaps, "truncated_analysis", 1, [], [`verification targets capped at ${MAX_VERIFICATION_TARGETS}`]);
   const reasons = new Set<string>();
   for (const [kind, value] of gaps) addReason(reasons, gapReason(kind, value.count));
@@ -205,12 +230,15 @@ export function createCoverageDiagnostics(input: CoverageDiagnosticsInput = {}):
     }));
   const mayBeIncomplete = input.graphState === "not_indexed" || input.graphState === "stale"
     || input.resolutionCoverage?.mayBeIncomplete === true
+    || resolverCoverage.mayBeIncomplete
+    || legacyCoverageIncomplete
     || input.change?.mayBeIncomplete === true
     || input.tests?.mayBeIncomplete === true
     || serialized.length > 0;
   return {
     mayBeIncomplete,
-    authoritativeNegativeResults: !mayBeIncomplete,
+    authoritativeNegativeResults: !mayBeIncomplete
+      && (input.resolverDiagnostics === undefined || resolverCoverage.authoritativeNegative),
     gaps: serialized,
     metrics: metric(input.internalCallResolution),
     verificationTargets: targetResult.targets,

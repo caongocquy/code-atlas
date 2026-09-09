@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
-import { lstat, mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import test from "node:test";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -70,12 +70,16 @@ async function sidecarSnapshot(databasePath: string) {
   const snapshot = async (suffix: string) => {
     try {
       const entry = await lstat(`${databasePath}${suffix}`);
-      return [entry.mtimeMs, entry.size] as const;
+      return [entry.mtimeMs, entry.size, (await readFile(`${databasePath}${suffix}`)).toString("base64")] as const;
     } catch {
       return undefined;
     }
   };
-  return { database: (await stat(databasePath)).mtimeMs, wal: await snapshot("-wal"), shm: await snapshot("-shm") };
+  return {
+    database: [(await stat(databasePath)).mtimeMs, (await readFile(databasePath)).toString("base64")] as const,
+    wal: await snapshot("-wal"),
+    shm: await snapshot("-shm"),
+  };
 }
 
 test("legacy read-only status and graph loading do not create v2 state or mutate storage", async () => {

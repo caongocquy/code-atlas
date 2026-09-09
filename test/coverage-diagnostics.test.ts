@@ -9,7 +9,7 @@ import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
-import { createCoverageDiagnostics, mergeCoverageDiagnostics } from "../src/core/diagnostics/coverage-diagnostics.service.js";
+import { coverageForResolverDiagnostics, createCoverageDiagnostics, mergeCoverageDiagnostics } from "../src/core/diagnostics/coverage-diagnostics.service.js";
 import { explainIncomplete } from "../src/core/diagnostics/explain-incomplete.service.js";
 import { indexRepository } from "../src/core/indexing/index-pipeline.service.js";
 import { buildCodeGraphWithResolution } from "../src/core/graph/build-graph.js";
@@ -18,6 +18,39 @@ import { affectedTests } from "../src/core/change/affected-tests.service.js";
 import { createMcpServer } from "../src/adapters/mcp/mcp-server.js";
 
 const execFile = promisify(execFileCallback);
+
+test("resolver diagnostic categories mark coverage incomplete without authoritative negatives", () => {
+  const kinds = ["unknown", "unsupported", "budgetExhausted", "weakEvidenceDropped", "candidateOverflow"] as const;
+  for (const kind of kinds) {
+    const result = coverageForResolverDiagnostics([{
+      kind,
+      language: "typescript",
+      file: "src/source.ts",
+      count: 1,
+      reason: "resolver coverage is incomplete",
+    }]);
+    assert.equal(result.mayBeIncomplete, true, kind);
+    assert.equal(result.authoritativeNegative, false, kind);
+  }
+});
+
+test("resolver diagnostics keep legacy resolved-only coverage non-authoritative", () => {
+  assert.deepEqual(coverageForResolverDiagnostics([{
+    kind: "resolved",
+    language: "typescript",
+    file: "src/source.ts",
+    count: 1,
+  }]), { mayBeIncomplete: false, authoritativeNegative: false });
+  const result = createCoverageDiagnostics({ resolverDiagnostics: [{
+    kind: "unknown",
+    language: "typescript",
+    file: "src/source.ts",
+    count: 1,
+    reason: "unknown target",
+  }] });
+  assert.equal(result.mayBeIncomplete, true);
+  assert.equal(result.authoritativeNegativeResults, false);
+});
 
 test("coverage diagnostics aggregate gaps, targets, and only defensible metrics", () => {
   const diagnostics = createCoverageDiagnostics({

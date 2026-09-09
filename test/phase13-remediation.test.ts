@@ -13,11 +13,26 @@ import { classifyArchitectureFile, parseArchitecturePolicy } from "../src/core/a
 import { architecturePolicySemanticHash } from "../src/core/architecture/architecture-policy-snapshot.js";
 import { changeGate } from "../src/core/gate/change-gate.service.js";
 import { explainIncomplete } from "../src/core/diagnostics/explain-incomplete.service.js";
+import { createCoverageDiagnostics } from "../src/core/diagnostics/coverage-diagnostics.service.js";
 import { graphDelta, readGraphDeltaContext } from "../src/core/change/graph-delta.service.js";
 import { analyzeInspectChangeFromContext, inspectChange } from "../src/core/change/inspect-change.service.js";
 import { indexRepository } from "../src/core/indexing/index-pipeline.service.js";
 
 const execFile = promisify(execFileCallback);
+
+test("legacy unresolved coverage remains compatibility-only and non-authoritative", () => {
+  const result = createCoverageDiagnostics({
+    resolutionDiagnostics: [{
+      kind: "unresolved",
+      evidence: [],
+      reason: "legacy unresolved result",
+      source: { file: "src/legacy.ts", line: 1 },
+    }],
+  });
+  assert.equal(result.mayBeIncomplete, true);
+  assert.equal(result.authoritativeNegativeResults, false);
+  assert.equal(result.gaps.some((gap) => gap.kind === "ambiguous_target"), false);
+});
 
 async function git(repoPath: string, args: string[]): Promise<string> {
   const result = await execFile("git", args, { cwd: repoPath, encoding: "utf8" });
