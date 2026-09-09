@@ -14,9 +14,12 @@ import { createGenerationResolverContext, type GenerationResolverContext } from 
 import { createResolverMemo } from "../graph/resolver/memo.js";
 import { createTypeEnvironment } from "../graph/resolver/type-environment.js";
 import { semanticAdapters } from "../graph/resolver/adapter-registry.js";
-import { symbolIdentity } from "../graph/resolver/identities.js";
+import { symbolIdentity, symbolIdentityKey, type SymbolIdentity } from "../graph/resolver/identities.js";
 import type { LanguageSemanticAdapter } from "../graph/resolver/types.js";
-import type { GraphResolutionFile, ResolutionDiagnostic } from "../graph/resolution.types.js";
+import type { GraphResolutionFile, ResolutionDiagnostic, ResolutionEvidence } from "../graph/resolution.types.js";
+import { withProvenance } from "../graph/resolver/provenance.js";
+import type { CodeGraph } from "../graph/types.js";
+import type { GraphResolutionFile as FactsGraphResolutionFile } from "../graph/build-graph.js";
 import type { LexicalFileUpdate } from "../../storage/atlas/atlas.types.js";
 import type { SemanticIndexResult } from "../semantic/semantic-index.service.js";
 import { prepareSemanticCandidateFromFacts, type SemanticCandidate } from "../semantic/semantic-index.service.js";
@@ -91,7 +94,7 @@ export function buildPipelineResolverContext(input: {
   });
 }
 
-function toPersistedResolution(unit: IndexedSourceUnit, resolution: { decisions: ReadonlyArray<{ site: { localId: string }; status: string; edgeKind?: string; reason?: string; candidates?: ReadonlyArray<{ qualifiedName: string }> }> }): GraphResolutionFile {
+function toPersistedResolution(unit: IndexedSourceUnit, resolution: FactsGraphResolutionFile): GraphResolutionFile {
   const calls = resolution.decisions.filter((decision) => decision.edgeKind === "calls");
   const inheritance = resolution.decisions.filter((decision) => decision.edgeKind === "extends");
   const resolved = (items: typeof calls) => items.filter((item) => item.status === "resolved").length;
@@ -103,18 +106,124 @@ function toPersistedResolution(unit: IndexedSourceUnit, resolution: { decisions:
     const line = unit.facts.callSites.find((site) => site.localId === decision.site.localId)?.range.startLine
       ?? unit.facts.inheritances.find((site) => site.localId === decision.site.localId)?.range.startLine ?? 1;
     const source = { file: unit.relativePath, line };
-    if (decision.status === "ambiguous") diagnostics.push({ kind: "ambiguous", candidates: (decision.candidates ?? []).map((candidate) => candidate.qualifiedName), evidence: [], ambiguityReason: decision.reason ?? "ambiguous", source });
-    else diagnostics.push({ kind: "unresolved", evidence: [], reason: decision.reason ?? decision.status, source });
+    const evidence: ResolutionEvidence[] = decision.evidenceIds.length > 0
+      ? decision.evidenceIds.map((evidenceId) => ({ evidenceKind: "INFERRED", source, detail: evidenceId }))
+      : [{ evidenceKind: "EXTRACTED", source }];
+    if (decision.status === "ambiguous") diagnostics.push({ kind: "ambiguous", candidates: decision.candidates.map((candidate) => symbolIdentityKey(candidate)), evidence, ambiguityReason: decision.reason, source });
+    else diagnostics.push({ kind: "unresolved", evidence, reason: decision.reason, source, unsupportedDynamic: isUnsupportedDynamic(unit, decision.site.localId, decision.reason) });
   }
+  const unsupportedDynamic = diagnostics.filter((diagnostic) => diagnostic.kind === "unresolved" && diagnostic.unsupportedDynamic).length;
   return {
     coverage: {
       calls: calls.length, resolvedCalls: resolved(calls), unresolvedCalls: unresolved(calls), ambiguousCalls: ambiguous(calls),
       extends: inheritance.length, resolvedExtends: resolved(inheritance), unresolvedExtends: unresolved(inheritance), ambiguousExtends: ambiguous(inheritance),
-      parserErrors: unit.facts.parseStatus === "deterministic_partial" ? 1 : 0, unsupportedDynamic: 0,
+      parserErrors: unit.facts.parseStatus === "deterministic_partial" ? 1 : 0, unsupportedDynamic,
       mayBeIncomplete: diagnostics.length > 0 || unit.facts.parseStatus !== "complete",
     },
     diagnostics,
   };
+}
+
+function isUnsupportedDynamic(unit: IndexedSourceUnit, localId: string, reason: string): boolean {
+  if (reason === "dynamic_expression" || reason === "runtime_dispatch") return true;
+  const call = unit.facts.callSites.find((site) => site.localId === localId);
+  return Boolean(call && /[?[\]*]/.test(call.calleeText));
+}
+
+function candidateSymbols(repoId: string, units: readonly IndexedSourceUnit[], graph: CodeGraph): Map<string, string> {
+  const result = new Map<string, string>();
+  for (const unit of units) {
+    for (const fact of unit.facts.symbols) {
+      const identity: SymbolIdentity = symbolIdentity({
+        repositoryId: repoId,
+        relativePath: unit.relativePath,
+        language: unit.facts.language,
+        kind: fact.kind,
+        qualifiedName: fact.declaredQualifiedName ?? fact.name,
+        discriminator: fact.localId,
+      });
+      const node = graph.nodes.find((candidate) => candidate.file === unit.relativePath
+        && candidate.type === fact.kind
+        && candidate.qualifiedName === identity.qualifiedName);
+      if (node && !result.has(symbolIdentityKey(identity))) result.set(symbolIdentityKey(identity), node.id);
+    }
+  }
+  return result;
+}
+
+function resolutionSourceFact(unit: IndexedSourceUnit, localId: string): string | undefined {
+  const site = unit.facts.callSites.find((item) => item.localId === localId)
+    ?? unit.facts.inheritances.find((item) => item.localId === localId)
+    ?? unit.facts.implementations.find((item) => item.localId === localId)
+    ?? unit.facts.references.find((item) => item.localId === localId);
+  return (site as { callerId?: string; ownerId?: string; subjectId?: string; scopeId?: string } | undefined)?.callerId
+    ?? (site as { ownerId?: string } | undefined)?.ownerId
+    ?? (site as { subjectId?: string } | undefined)?.subjectId
+    ?? unit.facts.symbols.find((symbol) => symbol.scopeId === (site as { scopeId?: string } | undefined)?.scopeId)?.localId
+}
+
+function sourceLine(unit: IndexedSourceUnit, localId: string): number {
+  return unit.facts.callSites.find((site) => site.localId === localId)?.range.startLine
+    ?? unit.facts.inheritances.find((site) => site.localId === localId)?.range.startLine ?? 1;
+}
+
+function addResolutionProvenance(
+  graph: CodeGraph,
+  units: readonly IndexedSourceUnit[],
+  resolutions: ReadonlyMap<string, FactsGraphResolutionFile>,
+  repoId: string,
+  resolutionVersion: string,
+): void {
+  const byIdentity = candidateSymbols(repoId, units, graph);
+  for (const unit of units) {
+    for (const decision of resolutions.get(unit.relativePath)?.decisions ?? []) {
+      if (decision.status !== "resolved" || (decision.edgeKind !== "calls" && decision.edgeKind !== "extends")) continue;
+      const sourceLocalId = resolutionSourceFact(unit, decision.site.localId);
+      const sourceFact = unit.facts.symbols.find((fact) => fact.localId === sourceLocalId);
+      if (!sourceFact) continue;
+      const sourceIdentity = symbolIdentity({ repositoryId: repoId, relativePath: unit.relativePath, language: unit.facts.language, kind: sourceFact.kind, qualifiedName: sourceFact.declaredQualifiedName ?? sourceFact.name, discriminator: sourceFact.localId });
+      const sourceId = byIdentity.get(symbolIdentityKey(sourceIdentity));
+      const targetId = byIdentity.get(symbolIdentityKey(decision.target));
+      if (!sourceId || !targetId) continue;
+      let edge = graph.edges.find((candidate) => candidate.from === sourceId && candidate.to === targetId && candidate.type === decision.edgeKind);
+      if (!edge) {
+        edge = { from: sourceId, to: targetId, type: decision.edgeKind };
+        graph.edges.push(edge);
+      }
+      const evidence = decision.evidenceIds.map((evidenceId) => ({ kind: "resolver", sourceUnit: unit.relativePath, startLine: sourceLine(unit, decision.site.localId), endLine: sourceLine(unit, decision.site.localId), evidenceId }));
+      Object.assign(edge, withProvenance(edge, { strategy: decision.strategy, confidence: decision.confidence, evidence, resolutionVersion, sourceLogicalIdentity: symbolIdentityKey(sourceIdentity), targetLogicalIdentity: symbolIdentityKey(decision.target) }));
+    }
+  }
+}
+
+function rebindUnchangedSemanticEdges(
+  graph: CodeGraph,
+  previousGraph: CodeGraph,
+  units: readonly IndexedSourceUnit[],
+  repoId: string,
+  resolutionVersion: string,
+  resolvedPaths: ReadonlySet<string>,
+): void {
+  const byIdentity = candidateSymbols(repoId, units, graph);
+  const previousNodes = new Map(previousGraph.nodes.map((node) => [node.id, node]));
+  const currentNodes = new Map(graph.nodes.map((node) => [`${node.file}:${node.type}:${node.qualifiedName ?? node.name}`, node.id]));
+  const rebindNode = (nodeId: string): string | undefined => {
+    const node = previousNodes.get(nodeId);
+    return node ? currentNodes.get(`${node.file}:${node.type}:${node.qualifiedName ?? node.name}`) : undefined;
+  };
+  for (const edge of previousGraph.edges) {
+    if (edge.type !== "calls" && edge.type !== "extends") continue;
+    const previousFrom = previousNodes.get(edge.from);
+    const previousTo = previousNodes.get(edge.to);
+    if (resolvedPaths.has(previousFrom?.file ?? "") || resolvedPaths.has(previousTo?.file ?? "")) continue;
+    if (edge.resolution && edge.resolution.resolutionVersion !== resolutionVersion) continue;
+    const from = edge.resolution ? byIdentity.get(edge.resolution.sourceLogicalIdentity) : rebindNode(edge.from);
+    const to = edge.resolution ? byIdentity.get(edge.resolution.targetLogicalIdentity) : rebindNode(edge.to);
+    if (!from || !to || graph.edges.some((candidate) => candidate.from === from && candidate.to === to && candidate.type === edge.type)) continue;
+    graph.edges.push({ ...edge, from, to });
+  }
+  graph.edges = [...new Map(graph.edges.map((edge) => [`${edge.from}:${edge.to}:${edge.type}`, edge])).values()]
+    .sort((left, right) => left.from.localeCompare(right.from) || left.to.localeCompare(right.to) || left.type.localeCompare(right.type));
 }
 
 type LegacyIndexResult = {
@@ -294,10 +403,12 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
     });
     const graphCompatible = plan.parsePaths.length === 0 && plan.resolvePaths.length === 0 && plan.removedPaths.length === 0 && previousManifest !== undefined;
     const graph = graphCompatible
-      ? { graph: previousGraph, resolutionByFile: new Map() }
-      : previousManifest === undefined
-        ? await buildCodeGraphWithResolutionFromFacts(repoPath, [...candidateInput.allUnits], undefined, repoId)
-        : await buildCodeGraphWithResolutionFromFacts(repoPath, candidateInput.allUnits, undefined, repoId, candidateInput.scope.paths, resolverContext);
+      ? { graph: structuredClone(previousGraph), resolutionByFile: new Map() }
+      : await buildCodeGraphWithResolutionFromFacts(repoPath, candidateInput.allUnits, undefined, repoId, candidateInput.scope.paths, resolverContext);
+    if (!graphCompatible) {
+      addResolutionProvenance(graph.graph, candidateInput.allUnits, graph.resolutionByFile, repoId, resolverContext.resolutionVersion);
+      if (previousManifest !== undefined) rebindUnchangedSemanticEdges(graph.graph, previousGraph, candidateInput.allUnits, repoId, resolverContext.resolutionVersion, new Set(candidateInput.scope.paths));
+    }
     const persistedResolution = new Map(
       [...graph.resolutionByFile].map(([file, resolution]) => {
         const unit = candidateInput.allUnits.find((candidate) => candidate.relativePath === file);

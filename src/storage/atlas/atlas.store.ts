@@ -1671,21 +1671,10 @@ export class AtlasStore {
     resolution: GraphResolutionFile,
   ): void {
     const coverage = resolution.coverage;
-    const diagnostics = resolution.diagnostics.map((diagnostic) =>
-      diagnostic.kind === "ambiguous"
-        ? {
-            kind: diagnostic.kind,
-            candidates: [...diagnostic.candidates].sort(),
-            ambiguityReason: diagnostic.ambiguityReason,
-            source: diagnostic.source,
-          }
-        : {
-            kind: diagnostic.kind,
-            reason: diagnostic.reason,
-            source: diagnostic.source,
-            unsupportedDynamic: diagnostic.unsupportedDynamic ?? false,
-          },
-    );
+    const diagnostics = resolution.diagnostics.map((diagnostic) => ({
+      ...diagnostic,
+      ...(diagnostic.kind === "ambiguous" ? { candidates: [...diagnostic.candidates].sort() } : { unsupportedDynamic: diagnostic.unsupportedDynamic ?? false }),
+    }));
     this.database
       .prepare(
         `INSERT INTO graph_resolution_files
@@ -1735,21 +1724,10 @@ export class AtlasStore {
     resolution: GraphResolutionFile,
   ): void {
     const coverage = resolution.coverage;
-    const diagnostics = resolution.diagnostics.map((diagnostic) =>
-      diagnostic.kind === "ambiguous"
-        ? {
-            kind: diagnostic.kind,
-            candidates: [...diagnostic.candidates].sort(),
-            ambiguityReason: diagnostic.ambiguityReason,
-            source: diagnostic.source,
-          }
-        : {
-            kind: diagnostic.kind,
-            reason: diagnostic.reason,
-            source: diagnostic.source,
-            unsupportedDynamic: diagnostic.unsupportedDynamic ?? false,
-          },
-    );
+    const diagnostics = resolution.diagnostics.map((diagnostic) => ({
+      ...diagnostic,
+      ...(diagnostic.kind === "ambiguous" ? { candidates: [...diagnostic.candidates].sort() } : { unsupportedDynamic: diagnostic.unsupportedDynamic ?? false }),
+    }));
     this.database
       .prepare(
         `INSERT INTO generation_graph_resolution_files

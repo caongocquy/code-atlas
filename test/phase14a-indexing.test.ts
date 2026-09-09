@@ -261,7 +261,7 @@ test("v2 publication preserves graph resolution coverage and diagnostics for sta
       const diagnostics = store.getGraphResolutionDiagnostics(repository.id);
       assert.equal(coverage.mayBeIncomplete, true);
       assert.equal(coverage.unsupportedDynamic > 0, true);
-      assert.equal(diagnostics.some((item) => item.kind === "unresolved" && item.unsupportedDynamic === true), true);
+      assert.equal(diagnostics.some((item) => item.kind === "unresolved" && item.unsupportedDynamic === true && item.evidence.length > 0), true);
 
       const status = await getRepositoryStatusReadOnly(repoPath);
       assert.deepEqual(status.graph.resolutionCoverage, coverage);
