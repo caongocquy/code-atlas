@@ -1,4 +1,5 @@
 import type { LanguageId, SymbolType } from "../graph/parsers/types.js";
+import type { ObjectiveSyntax } from "./objective-syntax.types.js";
 
 export type ParseStatus = "complete" | "deterministic_partial";
 
@@ -210,6 +211,7 @@ export type ParsedFactsBlob = {
   aliases: readonly AliasFact[];
   modules: readonly ModuleFact[];
   namespaces: readonly NamespaceFact[];
+  frameworkSyntax?: ObjectiveSyntax;
 };
 
 export type FactBlobKey = string & { readonly __brand: "FactBlobKey" };

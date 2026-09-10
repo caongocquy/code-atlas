@@ -4,6 +4,7 @@ import type {
   ParsedFactsBlob,
   ParserIdentity,
 } from "./facts.types.js";
+import type { ObjectiveSyntax, SyntaxObservation, SyntaxObservationKind } from "./objective-syntax.types.js";
 import {
   LANGUAGE_IDS,
   type SupportedLanguage,
@@ -306,6 +307,64 @@ function isFactArray(value: unknown, item: (value: unknown) => boolean): boolean
   return Array.isArray(value) && value.every(item);
 }
 
+const SYNTAX_KINDS: ReadonlySet<SyntaxObservationKind> = new Set([
+  "annotation", "directive", "jsx", "identifier", "literal", "object", "array", "property",
+  "call", "construct", "lambda", "return", "spread", "unknown",
+]);
+const MAX_SYNTAX_NODES = 10_000;
+const MAX_SYNTAX_LINKS = 512;
+
+function isSyntaxId(value: unknown): value is string {
+  return typeof value === "string" && /^syntax:[1-9]\d*$/.test(value);
+}
+
+function isSyntaxArgument(value: unknown): boolean {
+  return isRecord(value)
+    && isOptionalString(value.name)
+    && isSyntaxId(value.valueId)
+    && Object.keys(value).every((key) => key === "name" || key === "valueId");
+}
+
+function isSyntaxObservation(value: unknown): boolean {
+  return isRecord(value)
+    && isSyntaxId(value.id)
+    && typeof value.kind === "string"
+    && SYNTAX_KINDS.has(value.kind as SyntaxObservationKind)
+    && isRange(value.range)
+    && isOptionalFactId(value.ownerSymbolId)
+    && isOptionalFactId(value.ownerScopeId)
+    && isOptionalFactId(value.factId)
+    && isOptionalString(value.name)
+    && (value.value === undefined || typeof value.value === "string" || typeof value.value === "number" || typeof value.value === "boolean" || value.value === null)
+    && Array.isArray(value.children)
+    && value.children.length <= MAX_SYNTAX_LINKS
+    && value.children.every(isSyntaxId)
+    && Array.isArray(value.arguments)
+    && value.arguments.length <= MAX_SYNTAX_LINKS
+    && value.arguments.every(isSyntaxArgument)
+    && (value.receiverId === undefined || isSyntaxId(value.receiverId))
+    && Array.isArray(value.typeArguments)
+    && value.typeArguments.length <= MAX_SYNTAX_LINKS
+    && value.typeArguments.every(isSyntaxId)
+    && Object.keys(value).every((key) => ["id", "kind", "range", "ownerSymbolId", "ownerScopeId", "factId", "name", "value", "children", "arguments", "receiverId", "typeArguments"].includes(key));
+}
+
+function hasObjectiveSyntax(value: unknown, factIds: ReadonlySet<string>): value is ObjectiveSyntax {
+  if (!isRecord(value) || typeof value.complete !== "boolean" || !Array.isArray(value.nodes) || !Object.keys(value).every((key) => key === "nodes" || key === "complete")) return false;
+  const nodes = value.nodes as unknown[];
+  if (nodes.length > MAX_SYNTAX_NODES || !nodes.every(isSyntaxObservation)) return false;
+  const observations = nodes as SyntaxObservation[];
+  const ids = new Set<string>();
+  for (const node of observations) {
+    if (ids.has(node.id) || ![node.ownerSymbolId, node.ownerScopeId, node.factId].every((id) => id === undefined || factIds.has(id))) return false;
+    ids.add(node.id);
+  }
+  return observations.every((node) => node.children.every((id) => ids.has(id))
+    && node.arguments.every((argument) => ids.has(argument.valueId))
+    && (node.receiverId === undefined || ids.has(node.receiverId))
+    && node.typeArguments.every((id) => ids.has(id)));
+}
+
 function hasFactsShape(value: unknown): value is ParsedFactsBlob {
   if (!isRecord(value)) return false;
 
@@ -336,7 +395,20 @@ function hasFactsShape(value: unknown): value is ParsedFactsBlob {
     && isFactArray(value.implementations, isImplementationFact)
     && isFactArray(value.aliases, isAliasFact)
     && isFactArray(value.modules, isModuleFact)
-    && isFactArray(value.namespaces, isNamespaceFact);
+    && isFactArray(value.namespaces, isNamespaceFact)
+    && (() => {
+      if (value.frameworkSyntax === undefined) return true;
+      const factIds = new Set<string>();
+      for (const field of ["symbols", "containmentScopes", "imports", "exports", "references", "callSites", "bindingSeeds", "declaredTypeAnnotations", "expressions", "members", "assignments", "parameters", "returns", "constructors", "inheritances", "implementations", "aliases", "modules", "namespaces"] as const) {
+        const facts = value[field];
+        if (!Array.isArray(facts)) return false;
+        for (const fact of facts) {
+          if (!isRecord(fact) || typeof fact.localId !== "string") return false;
+          factIds.add(fact.localId);
+        }
+      }
+      return hasObjectiveSyntax(value.frameworkSyntax, factIds);
+    })();
 }
 
 function canonicalJson(value: unknown): string {

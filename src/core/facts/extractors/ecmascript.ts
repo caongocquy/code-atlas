@@ -9,6 +9,7 @@ import type {
 } from "../facts.types.js";
 import type { FactExtractionOutcome } from "../facts-extractor.js";
 import type { LanguageFactExtractor, LanguageFactExtractorInput } from "../language-fact-extractor.js";
+import { createObjectiveSyntaxCollector } from "../objective-syntax.types.js";
 
 const id = (kind: string, number: number) => `${kind}:${number}` as FactLocalId;
 const range = (node: Parser.SyntaxNode): SourceRangeFact => ({
@@ -36,6 +37,7 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
     const inheritances: InheritanceFact[] = [], implementations: ImplementationFact[] = [], aliases: AliasFact[] = [];
     const modules: ModuleFact[] = [], namespaces: NamespaceFact[] = [];
     const scopeStack: FactLocalId[] = [], callableStack: ParsedSymbolFact[] = [];
+    const syntax = createObjectiveSyntaxCollector();
     const expressionIds = new WeakMap<Parser.SyntaxNode, FactLocalId>();
     let sequence = 0;
     const next = (kind: string) => id(kind, ++sequence);
@@ -50,6 +52,7 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
       const expression = { localId: next("expression"), kind, text: node.text, ownerScopeId: scopeStack.at(-1), range: range(node) };
       expressions.push(expression);
       expressionIds.set(node, expression.localId);
+      syntax.linkFact(node, expression.localId);
       return expression;
     };
     const processImport = (node: Parser.SyntaxNode): void => {
@@ -98,6 +101,7 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
     const visit = (node: Parser.SyntaxNode): void => {
       const isCallable = ["function_declaration", "function_expression", "arrow_function", "method_definition"].includes(node.type);
       const isScope = ["program", "class_declaration", "function_declaration", "function_expression", "arrow_function", "method_definition"].includes(node.type);
+      const syntaxNode = syntax.observe(node, callableStack.at(-1)?.localId, scopeStack.at(-1));
       if (isScope) {
         const scope = { localId: next("scope"), kind: node.type, name: nameOf(node), parentId: scopeStack.at(-1), range: range(node) };
         containmentScopes.push(scope); scopeStack.push(scope.localId);
@@ -127,6 +131,7 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
         callable = { localId, name: `${node.type}@${node.startIndex}`, kind: "function", range: range(node), scopeId: scopeStack.at(-1), declaredQualifiedName: `${node.type}@${node.startIndex}` };
         symbols.push(callable);
       }
+      if (callable && syntaxNode) syntaxNode.ownerSymbolId = callable.localId;
       if (isCallable && callable) callableStack.push(callable);
       if (node.type === "import_statement") processImport(node);
       if (node.type === "export_statement") processExport(node);
@@ -154,8 +159,10 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
         const owner = callableStack.at(-1);
         if (parameterName && owner) {
           const bindingId = next("binding");
-          parameters.push({ localId: next("parameter"), ownerSymbolId: owner.localId, name: parameterName, bindingId, typeText: typeText(node), index: parameters.filter((item) => item.ownerSymbolId === owner.localId).length, range: range(node) });
+          const parameterId = next("parameter");
+          parameters.push({ localId: parameterId, ownerSymbolId: owner.localId, name: parameterName, bindingId, typeText: typeText(node), index: parameters.filter((item) => item.ownerSymbolId === owner.localId).length, range: range(node) });
           bindingSeeds.push({ localId: bindingId, name: parameterName, bindingKind: "parameter", ownerId: scopeStack.at(-1), range: range(node) });
+          syntax.linkFact(node, parameterId);
           if (typeText(node)) declaredTypeAnnotations.push({ localId: next("type"), ownerId: bindingId, text: typeText(node)!, range: range(node) });
         }
       }
@@ -182,7 +189,11 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
         const owner = callableStack.at(-1);
         if (body && body.type !== "statement_block" && owner) returns.push({ localId: next("return"), ownerSymbolId: owner.localId, expressionId: expressionFor(body, body.type === "member_expression" ? "member" : "identifier").localId, range: range(body) });
       }
-      if (node.type === "identifier" && node.parent && !["variable_declarator", "required_parameter", "optional_parameter", "formal_parameter", "type_annotation", "type_identifier", "import_specifier", "export_specifier"].includes(node.parent.type)) references.push({ localId: next("reference"), name: node.text, scopeId: scopeStack.at(-1), range: range(node) });
+      if (node.type === "identifier" && node.parent && !["variable_declarator", "required_parameter", "optional_parameter", "formal_parameter", "type_annotation", "type_identifier", "import_specifier", "export_specifier"].includes(node.parent.type)) {
+        const reference = { localId: next("reference"), name: node.text, scopeId: scopeStack.at(-1), range: range(node) };
+        references.push(reference);
+        syntax.linkFact(node, reference.localId);
+      }
       for (const child of node.namedChildren) visit(child);
       if (isCallable && callable) callableStack.pop();
       if (isScope) scopeStack.pop();
@@ -198,6 +209,7 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
       parserIdentity: { language: parsed.adapter.language, ...parsed.adapter.metadata }, parseStatus: parsed.tree.rootNode.hasError || uniqueDiagnostics.length > 0 ? "deterministic_partial" : "complete", parserDiagnostics: uniqueDiagnostics,
       symbols, containmentScopes, imports, exports, references, callSites, bindingSeeds, declaredTypeAnnotations, expressions, members, assignments,
       parameters, returns, constructors, inheritances, implementations, aliases, modules, namespaces,
+      frameworkSyntax: syntax.finish(!(parsed.tree.rootNode.hasError || uniqueDiagnostics.length > 0), parsed.tree.rootNode),
     };
     return { kind: "facts", facts };
   } catch (error) { return { kind: "infrastructure_failure", error: error instanceof Error ? error : new Error(String(error)) }; }

@@ -40,16 +40,15 @@ test("fact extraction returns every objective array and complete parser identity
   assert.equal(result.kind, "facts");
   if (result.kind !== "facts") return;
 
-  assert.deepEqual(
-    Object.fromEntries([
-      "expressions", "members", "assignments", "parameters", "returns",
-      "constructors", "inheritances", "implementations", "aliases", "modules", "namespaces",
-    ].map((key) => [key, result.facts[key as keyof typeof result.facts]])),
-    {
-      expressions: [], members: [], assignments: [], parameters: [], returns: [],
-      constructors: [], inheritances: [], implementations: [], aliases: [], modules: [], namespaces: [],
-    },
-  );
+  for (const key of [
+    "expressions", "members", "assignments", "parameters", "returns",
+    "constructors", "inheritances", "implementations", "aliases", "modules", "namespaces",
+  ] as const) assert.ok(Array.isArray(result.facts[key]), `${key} is an array`);
+  assert.equal(result.facts.expressions[0]?.localId, "expression:3");
+  assert.equal(result.facts.assignments[0]?.sourceExpressionId, "expression:3");
+  assert.equal(result.facts.modules.length, 1);
+  assert.equal(result.facts.frameworkSyntax?.complete, true);
+  assert.ok(result.facts.frameworkSyntax?.nodes.some((node) => node.kind === "literal" && node.value === 1));
   assert.deepEqual(result.facts.parserIdentity, {
     language: "typescript",
     runtimeName: "tree-sitter",

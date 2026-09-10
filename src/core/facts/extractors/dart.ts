@@ -8,6 +8,7 @@ import type {
 } from "../facts.types.js";
 import type { FactExtractionOutcome } from "../facts-extractor.js";
 import type { LanguageFactExtractor, LanguageFactExtractorInput } from "../language-fact-extractor.js";
+import { createObjectiveSyntaxCollector } from "../objective-syntax.types.js";
 
 const range = (node: Parser.SyntaxNode): SourceRangeFact => ({ startLine: node.startPosition.row + 1, endLine: node.endPosition.row + 1, startColumn: node.startPosition.column, endColumn: node.endPosition.column });
 const field = (node: Parser.SyntaxNode | null | undefined, name: string) => node?.childForFieldName(name) ?? undefined;
@@ -34,16 +35,18 @@ function extractDartTreeFacts(parsed: ParsedSource | undefined, input: LanguageF
     const bindings: BindingSeedFact[] = [], types: DeclaredTypeAnnotationFact[] = [], expressions: ExpressionFact[] = [], members: MemberFact[] = [], assignments: AssignmentFact[] = [];
     const parameters: ParameterFact[] = [], returns: ReturnFact[] = [], constructors: ConstructorFact[] = [], inheritances: InheritanceFact[] = [], implementations: ImplementationFact[] = [], modules: ModuleFact[] = [];
     const scopeStack: FactLocalId[] = [], typeStack: ParsedSymbolFact[] = [], callableStack: ParsedSymbolFact[] = [];
+    const syntax = createObjectiveSyntaxCollector();
     const symbolsByName = new Map<string, ParsedSymbolFact[]>();
     const extensionNodes: Array<{ node: Parser.SyntaxNode; ownerName: string; extensionSymbol: ParsedSymbolFact; scopePath: FactLocalId[] }> = [];
     let extensionContext: { symbol: ParsedSymbolFact } | undefined;
+    let pendingBodyOwner: ParsedSymbolFact | undefined;
     let sequence = 0;
     const next = (kind: string) => id(kind, ++sequence);
     const addSymbol = (node: Parser.SyntaxNode, name: string, kind: ParsedSymbolFact["kind"], qualifiedName = name): ParsedSymbolFact => {
       const value = { localId: next("symbol"), name, kind, scopeId: scopeStack.at(-1), declaredQualifiedName: qualifiedName, range: range(node) };
       symbols.push(value); symbolsByName.set(name, [...(symbolsByName.get(name) ?? []), value]); return value;
     };
-    const addExpression = (node: Parser.SyntaxNode, kind: ExpressionFact["kind"]): ExpressionFact => { const value = { localId: next("expression"), kind, text: node.text, ownerScopeId: scopeStack.at(-1), range: range(node) }; expressions.push(value); return value; };
+    const addExpression = (node: Parser.SyntaxNode, kind: ExpressionFact["kind"]): ExpressionFact => { const value = { localId: next("expression"), kind, text: node.text, ownerScopeId: scopeStack.at(-1), range: range(node) }; expressions.push(value); syntax.linkFact(node, value.localId); return value; };
     const addBinding = (node: Parser.SyntaxNode, name: string, bindingKind: string): BindingSeedFact => { const value = { localId: next("binding"), name, bindingKind, ownerId: scopeStack.at(-1), range: range(node) }; bindings.push(value); return value; };
     const currentType = () => typeStack.at(-1);
     const visit = (node: Parser.SyntaxNode): void => {
@@ -51,6 +54,11 @@ function extractDartTreeFacts(parsed: ParsedSource | undefined, input: LanguageF
       const isExtension = node.type === "extension_declaration";
       const isCallable = ["function_signature", "constructor_signature"].includes(node.type) && Boolean(field(node, "name"));
       const isScope = node.type === "program" || isType || isCallable || node.type === "function_body" || node.type === "class_body" || node.type === "extension_body";
+      const bodyOwner = node.type === "function_body" ? pendingBodyOwner : undefined;
+      if (node.type === "function_body") pendingBodyOwner = undefined;
+      if (bodyOwner) callableStack.push(bodyOwner);
+      const syntaxNode = syntax.observe(node, callableStack.at(-1)?.localId ?? bodyOwner?.localId ?? typeStack.at(-1)?.localId, scopeStack.at(-1));
+      if (bodyOwner) syntax.linkOwner(node, bodyOwner.localId);
       if (isExtension) {
         const ownerName = nameOf(field(node, "class"));
         const extensionName = nameOf(field(node, "name"));
@@ -77,16 +85,16 @@ function extractDartTreeFacts(parsed: ParsedSource | undefined, input: LanguageF
         if (declared && interfaces) for (const item of interfaces.namedChildren) implementations.push({ localId: next("implementation"), subjectId: declared.localId, targetName: item.text, relationKind: "implements", range: range(item) });
       } else if (node.type === "function_signature") {
         const name = nameOf(field(node, "name"));
-        if (name) { const owner = extensionContext?.symbol ?? currentType(); declared = addSymbol(node, name, owner ? "method" : "function", owner ? `${owner.declaredQualifiedName}.${name}` : name); callableStack.push(declared); if (owner) members.push({ localId: next("member"), ownerSymbolId: owner.localId, memberName: name, memberKind: "method", access: extensionContext ? "extension" : "instance", range: range(node) }); const returnType = field(node, "return_type"); if (returnType) returns.push({ localId: next("return"), ownerSymbolId: declared.localId, typeText: returnType.text, range: range(returnType) }); }
+        if (name) { const owner = extensionContext?.symbol ?? currentType(); declared = addSymbol(node, name, owner ? "method" : "function", owner ? `${owner.declaredQualifiedName}.${name}` : name); pendingBodyOwner = declared; callableStack.push(declared); if (owner) members.push({ localId: next("member"), ownerSymbolId: owner.localId, memberName: name, memberKind: "method", access: extensionContext ? "extension" : "instance", range: range(node) }); const returnType = field(node, "return_type"); if (returnType) returns.push({ localId: next("return"), ownerSymbolId: declared.localId, typeText: returnType.text, range: range(returnType) }); }
       } else if (node.type === "constructor_signature") {
         const owner = currentType();
         if (owner) { declared = addSymbol(node, "new", "method", `${owner.name}.new`); callableStack.push(declared); constructors.push({ localId: next("constructor"), ownerSymbolId: declared.localId, constructedTypeName: owner.name, range: range(node) }); }
       } else if (node.type === "formal_parameter_list" && callableStack.at(-1)) {
-        for (const parameter of node.descendantsOfType("formal_parameter")) { const name = nameOf(parameter.namedChildren.find((child) => child.type === "identifier")); if (!name) continue; const type = parameter.namedChildren.find((child) => ["type_identifier", "built_in_type"].includes(child.type)); const binding = addBinding(parameter, name, "parameter"); parameters.push({ localId: next("parameter"), ownerSymbolId: callableStack.at(-1)!.localId, name, bindingId: binding.localId, typeText: type?.text, index: parameters.filter((item) => item.ownerSymbolId === callableStack.at(-1)!.localId).length, range: range(parameter) }); if (type) types.push({ localId: next("type"), ownerId: binding.localId, text: type.text, range: range(type) }); }
+        for (const parameter of node.descendantsOfType("formal_parameter")) { const name = nameOf(parameter.namedChildren.find((child) => child.type === "identifier")); if (!name) continue; const type = parameter.namedChildren.find((child) => ["type_identifier", "built_in_type"].includes(child.type)); const binding = addBinding(parameter, name, "parameter"); const parameterId = next("parameter"); parameters.push({ localId: parameterId, ownerSymbolId: callableStack.at(-1)!.localId, name, bindingId: binding.localId, typeText: type?.text, index: parameters.filter((item) => item.ownerSymbolId === callableStack.at(-1)!.localId).length, range: range(parameter) }); syntax.linkFact(parameter, parameterId); if (type) types.push({ localId: next("type"), ownerId: binding.localId, text: type.text, range: range(type) }); }
       } else if (node.type === "declaration" && (currentType() || extensionContext) && !callableStack.at(-1)) {
         const owner = extensionContext?.symbol ?? currentType();
         const name = nameOf(node.descendantsOfType("initialized_identifier")[0]?.namedChildren.find((child) => child.type === "identifier"));
-        if (name && owner) { const member = addSymbol(node, name, "variable", `${owner.declaredQualifiedName}.${name}`); members.push({ localId: next("member"), ownerSymbolId: owner.localId, memberName: name, memberKind: "field", access: extensionContext ? "extension" : "instance", range: range(node) }); const type = node.namedChildren.find((child) => child.type === "type_identifier"); if (type) types.push({ localId: next("type"), ownerId: member.localId, text: type.text, range: range(type) }); }
+        if (name && owner) { const member = addSymbol(node, name, "variable", `${owner.declaredQualifiedName}.${name}`); members.push({ localId: next("member"), ownerSymbolId: owner.localId, memberName: name, memberKind: "field", access: extensionContext ? "extension" : "instance", range: range(node) }); syntax.linkOwner(node, member.localId); const type = node.namedChildren.find((child) => child.type === "type_identifier"); if (type) types.push({ localId: next("type"), ownerId: member.localId, text: type.text, range: range(type) }); }
       } else if (node.type === "initialized_variable_definition") {
         const name = nameOf(field(node, "name"));
         if (name) { const binding = addBinding(node, name, "local"); const value = node.namedChildren.find((child) => child.type === "selector"); const constructorType = field(node, "value"); const expression = value ? addExpression(value, "call") : undefined; assignments.push({ localId: next("assignment"), targetId: binding.localId, sourceExpressionId: expression?.localId, assignmentKind: "declaration", range: range(node) }); if (constructorType) constructors.push({ localId: next("constructor"), constructedTypeName: constructorType.text, callExpressionId: expression?.localId, resultBindingId: binding.localId, range: range(value ?? node) }); const type = node.namedChildren.find((child) => child.type === "type_identifier"); if (type) types.push({ localId: next("type"), ownerId: binding.localId, text: type.text, range: range(type) }); }
@@ -101,7 +109,7 @@ function extractDartTreeFacts(parsed: ParsedSource | undefined, input: LanguageF
         if (target && receiver && memberName) {
           const existingMember = members.find((item) => item.memberName === memberName && item.ownerSymbolId && !item.receiverId);
           if (existingMember) assignments.push({ localId: next("assignment"), targetId: existingMember.localId, sourceName: node.childForFieldName("right")?.text, assignmentKind: "reassignment", range: range(node) });
-        }
+      }
       } else if (node.type === "selector") {
         const selector = node.namedChildren.find((child) => ["unconditional_assignable_selector", "assignable_selector"].includes(child.type));
         const parent = node.parent?.type === "selector" || node.parent?.type === "expression_statement" ? node.parent : undefined;
@@ -110,9 +118,10 @@ function extractDartTreeFacts(parsed: ParsedSource | undefined, input: LanguageF
         const memberName = selectorText?.startsWith(".") ? selectorText.slice(1) : selectorText;
         if (receiver && memberName) members.push({ localId: next("member"), receiverId: addExpression(receiver, "identifier").localId, memberName, memberKind: "property", access: "instance", range: range(node) });
         if (node.namedChildren.some((child) => child.type === "argument_part") && receiver) calls.push({ localId: next("call"), calleeText: `${receiver.text}.${memberName ?? node.text}`, callerId: callableStack.at(-1)?.localId, scopeId: scopeStack.at(-1), range: range(node) });
-      } else if (node.type === "identifier" && node.parent?.type !== "import_or_export") references.push({ localId: next("reference"), name: node.text, ownerId: callableStack.at(-1)?.localId, scopeId: scopeStack.at(-1), range: range(node) });
+      } else if (node.type === "identifier" && node.parent?.type !== "import_or_export") { const reference = { localId: next("reference"), name: node.text, ownerId: callableStack.at(-1)?.localId, scopeId: scopeStack.at(-1), range: range(node) }; references.push(reference); syntax.linkFact(node, reference.localId); }
       for (const child of node.namedChildren) visit(child);
       if (isCallable && declared) callableStack.pop();
+      if (bodyOwner) callableStack.pop();
       if (isType && declared) typeStack.pop();
       if (isScope) scopeStack.pop();
     };
@@ -125,7 +134,8 @@ function extractDartTreeFacts(parsed: ParsedSource | undefined, input: LanguageF
     }
     modules.push({ localId: next("module"), name: input.filePath, moduleKind: "file", exported: false, range: range(parsed.tree.rootNode) });
     const parserDiagnostics = diagnostics(parsed.tree.rootNode);
-    return { kind: "facts", facts: { factsSchemaVersion: input.factsSchemaVersion, factsVersion: input.factsVersion, contentHash: input.contentHash, language: "dart", parserIdentity: { language: parsed.adapter.language, ...parsed.adapter.metadata }, parseStatus: parserDiagnostics.length ? "deterministic_partial" : "complete", parserDiagnostics, symbols, containmentScopes: scopes, imports, exports: [], references, callSites: calls, bindingSeeds: bindings, declaredTypeAnnotations: types, expressions, members, assignments, parameters, returns, constructors, inheritances, implementations, aliases: [], modules, namespaces: [] } };
+    const parseStatus = parserDiagnostics.length ? "deterministic_partial" : "complete";
+    return { kind: "facts", facts: { factsSchemaVersion: input.factsSchemaVersion, factsVersion: input.factsVersion, contentHash: input.contentHash, language: "dart", parserIdentity: { language: parsed.adapter.language, ...parsed.adapter.metadata }, parseStatus, parserDiagnostics, symbols, containmentScopes: scopes, imports, exports: [], references, callSites: calls, bindingSeeds: bindings, declaredTypeAnnotations: types, expressions, members, assignments, parameters, returns, constructors, inheritances, implementations, aliases: [], modules, namespaces: [], frameworkSyntax: syntax.finish(parseStatus === "complete", parsed.tree.rootNode) } };
   } catch (error) { return { kind: "infrastructure_failure", error: error instanceof Error ? error : new Error(String(error)) }; }
 }
 
