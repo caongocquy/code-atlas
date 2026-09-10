@@ -8,7 +8,7 @@ import type { IndexVersionDomains } from "../facts/facts.types.js";
 export type GraphRefreshMode = "full-rebuild" | "incremental";
 export type VectorRefreshMode = "semantic-reindex" | "incremental";
 
-export const INDEX_SCHEMA_VERSION = "1.0.0";
+export const INDEX_SCHEMA_VERSION = "2.0.0";
 export const FACTS_SCHEMA_VERSION = "3.0.0";
 export const FACTS_VERSION = "3.0.0";
 export const FRAMEWORK_RESOLUTION_VERSION = "1.0.0";

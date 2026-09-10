@@ -17,7 +17,7 @@ let databasePath = "";
 let repositoryId = "";
 
 const versions = {
-  schemaVersion: "2",
+  schemaVersion: "3",
   factsSchemaVersion: "facts-schema-7",
   factsVersion: "facts-7",
   resolutionVersion: "resolution-7",
@@ -108,7 +108,7 @@ test("writable schema-1 databases migrate once and keep facts schema independent
   store.close();
 
   const migrated = new DatabaseSync(databasePath, { readOnly: true });
-  assert.equal((migrated.prepare("SELECT version FROM atlas_schema").get() as { version: string }).version, "2");
+  assert.equal((migrated.prepare("SELECT version FROM atlas_schema").get() as { version: string }).version, "3");
   for (const table of ["edges", "generation_edges"]) {
     const columns = migrated.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
     assert.equal(columns.some((column) => column.name === "resolution_evidence_json"), true);
@@ -173,7 +173,7 @@ test("read-only construction rejects unknown schema versions without writing", a
 
   assert.throws(
     () => new AtlasStore(databasePath, { readOnly: true }),
-    /Unsupported AtlasStore schema version: 999; expected 2/,
+    /Unsupported AtlasStore schema version: 999; expected 3/,
   );
   assert.deepEqual(await readFile(databasePath), before);
 }));

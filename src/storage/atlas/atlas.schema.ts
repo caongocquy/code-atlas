@@ -1,7 +1,8 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export const ATLAS_SCHEMA_VERSION = "2";
-export const PREVIOUS_ATLAS_SCHEMA_VERSION = "1";
+export const ATLAS_SCHEMA_VERSION = "3";
+export const PREVIOUS_ATLAS_SCHEMA_VERSION = "2";
+const SUPPORTED_ATLAS_SCHEMA_VERSIONS = new Set(["1", "2", ATLAS_SCHEMA_VERSION]);
 
 export const ADD_PHASE14B_COLUMNS = [
   ["generation_edges", "resolution_strategy TEXT"],
@@ -23,28 +24,7 @@ type SchemaRow = {
   version: string;
 };
 
-export function initializeAtlasSchema(database: DatabaseSync): void {
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS atlas_schema (
-      id INTEGER PRIMARY KEY CHECK (id = 1),
-      version TEXT NOT NULL
-    );
-  `);
-
-  const row = database
-    .prepare("SELECT version FROM atlas_schema WHERE id = 1")
-    .get() as SchemaRow | undefined;
-
-  if (row && row.version !== ATLAS_SCHEMA_VERSION && row.version !== PREVIOUS_ATLAS_SCHEMA_VERSION) {
-    throw new Error(
-      `Unsupported AtlasStore schema version: ${row.version}; expected ${ATLAS_SCHEMA_VERSION}`,
-    );
-  }
-
-  if (!row) {
-    database.prepare("INSERT INTO atlas_schema (id, version) VALUES (1, ?)").run(ATLAS_SCHEMA_VERSION);
-  }
-
+function createCurrentSchema(database: DatabaseSync): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS repositories (
       id TEXT PRIMARY KEY,
@@ -230,6 +210,7 @@ export function initializeAtlasSchema(database: DatabaseSync): void {
       active_schema_version TEXT NOT NULL,
       active_facts_version TEXT NOT NULL,
       active_facts_schema_version TEXT,
+      active_framework_resolution_version TEXT,
       active_resolution_version TEXT NOT NULL,
       active_derived_version TEXT NOT NULL,
       active_provenance_metadata TEXT NOT NULL DEFAULT '{}',
@@ -353,6 +334,74 @@ export function initializeAtlasSchema(database: DatabaseSync): void {
       FOREIGN KEY (generation_id) REFERENCES index_generations(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS generation_framework_entities (
+      repository_id TEXT NOT NULL,
+      generation_id TEXT NOT NULL,
+      entity_key TEXT NOT NULL,
+      framework TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      logical_key TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      PRIMARY KEY (repository_id, generation_id, entity_key),
+      UNIQUE (repository_id, generation_id, framework, kind, logical_key),
+      FOREIGN KEY (generation_id) REFERENCES index_generations(id) ON DELETE CASCADE,
+      FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS generation_framework_relationships (
+      repository_id TEXT NOT NULL,
+      generation_id TEXT NOT NULL,
+      output_key TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      PRIMARY KEY (repository_id, generation_id, output_key),
+      FOREIGN KEY (generation_id) REFERENCES index_generations(id) ON DELETE CASCADE,
+      FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS generation_framework_classifications (
+      repository_id TEXT NOT NULL,
+      generation_id TEXT NOT NULL,
+      subject_key TEXT NOT NULL,
+      classification_kind TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      PRIMARY KEY (repository_id, generation_id, subject_key, classification_kind),
+      FOREIGN KEY (generation_id) REFERENCES index_generations(id) ON DELETE CASCADE,
+      FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS generation_framework_diagnostics (
+      repository_id TEXT NOT NULL,
+      generation_id TEXT NOT NULL,
+      diagnostic_key TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      PRIMARY KEY (repository_id, generation_id, diagnostic_key),
+      FOREIGN KEY (generation_id) REFERENCES index_generations(id) ON DELETE CASCADE,
+      FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS generation_framework_coverage (
+      repository_id TEXT NOT NULL,
+      generation_id TEXT NOT NULL,
+      dimension_key TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      PRIMARY KEY (repository_id, generation_id, dimension_key),
+      FOREIGN KEY (generation_id) REFERENCES index_generations(id) ON DELETE CASCADE,
+      FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS generation_framework_state (
+      repository_id TEXT NOT NULL,
+      generation_id TEXT NOT NULL,
+      framework_resolution_version TEXT NOT NULL,
+      config_json TEXT NOT NULL,
+      detections_json TEXT NOT NULL,
+      dependencies_json TEXT NOT NULL,
+      complete INTEGER NOT NULL CHECK (complete IN (0, 1)),
+      PRIMARY KEY (repository_id, generation_id),
+      FOREIGN KEY (generation_id) REFERENCES index_generations(id) ON DELETE CASCADE,
+      FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS idx_generation_symbols_active
       ON generation_symbols (repository_id, generation_id, file_path);
     CREATE INDEX IF NOT EXISTS idx_generation_edges_active
@@ -361,56 +410,65 @@ export function initializeAtlasSchema(database: DatabaseSync): void {
       ON generation_graph_resolution_files (repository_id, generation_id, file_path);
     CREATE INDEX IF NOT EXISTS idx_generation_lexical_active
       ON generation_lexical_documents (repository_id, generation_id, file);
+    CREATE INDEX IF NOT EXISTS idx_generation_framework_entities_generation
+      ON generation_framework_entities (repository_id, generation_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_generation_framework_entities_tuple
+      ON generation_framework_entities (repository_id, generation_id, framework, kind, logical_key);
+    CREATE INDEX IF NOT EXISTS idx_generation_framework_relationships_generation
+      ON generation_framework_relationships (repository_id, generation_id);
+    CREATE INDEX IF NOT EXISTS idx_generation_framework_classifications_generation
+      ON generation_framework_classifications (repository_id, generation_id);
+    CREATE INDEX IF NOT EXISTS idx_generation_framework_diagnostics_generation
+      ON generation_framework_diagnostics (repository_id, generation_id);
+    CREATE INDEX IF NOT EXISTS idx_generation_framework_coverage_generation
+      ON generation_framework_coverage (repository_id, generation_id);
+    CREATE INDEX IF NOT EXISTS idx_generation_framework_state_generation
+      ON generation_framework_state (repository_id, generation_id);
   `);
 
-  const capabilityColumns = database
-    .prepare("PRAGMA table_info(file_capability_state)")
-    .all() as Array<{ name: string }>;
+}
 
-  if (!capabilityColumns.some((column) => column.name === "file_hash")) {
-    database.exec("BEGIN IMMEDIATE;");
+export function initializeAtlasSchema(database: DatabaseSync): void {
+  database.exec("BEGIN IMMEDIATE;");
+  let transactionStarted = true;
+  try {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS atlas_schema (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        version TEXT NOT NULL
+      );
+    `);
 
-    try {
-      database.exec("ALTER TABLE file_capability_state ADD COLUMN file_hash TEXT;");
-      database.exec(`
-        UPDATE file_capability_state
-        SET file_hash = (
-          SELECT file_hash
-          FROM files
-          WHERE files.repository_id = file_capability_state.repository_id
-            AND files.path = file_capability_state.file_path
-        )
-        WHERE file_hash IS NULL;
-      `);
-      database.exec("COMMIT;");
-    } catch (error) {
-      database.exec("ROLLBACK;");
-      throw error;
+    const row = database
+      .prepare("SELECT version FROM atlas_schema WHERE id = 1")
+      .get() as SchemaRow | undefined;
+
+    if (row && !SUPPORTED_ATLAS_SCHEMA_VERSIONS.has(row.version)) {
+      throw new Error(
+        `Unsupported AtlasStore schema version: ${row.version}; expected ${ATLAS_SCHEMA_VERSION}`,
+      );
     }
-  }
 
-  if (!capabilityColumns.some((column) => column.name === "provider_identity")) {
-    database.exec("ALTER TABLE file_capability_state ADD COLUMN provider_identity TEXT;");
-  }
+    if (!row) {
+      database.prepare("INSERT INTO atlas_schema (id, version) VALUES (1, ?)").run(ATLAS_SCHEMA_VERSION);
+    } else if (row.version !== ATLAS_SCHEMA_VERSION) {
+      database.exec("COMMIT;");
+      transactionStarted = false;
+      return;
+    }
 
-  const edgeColumns = database
-    .prepare("PRAGMA table_info(edges)")
-    .all() as Array<{ name: string }>;
-
-  if (!edgeColumns.some((column) => column.name === "resolution_method")) {
-    database.exec("ALTER TABLE edges ADD COLUMN resolution_method TEXT;");
-  }
-  if (!edgeColumns.some((column) => column.name === "evidence_kind")) {
-    database.exec("ALTER TABLE edges ADD COLUMN evidence_kind TEXT;");
-  }
-  if (!edgeColumns.some((column) => column.name === "confidence")) {
-    database.exec("ALTER TABLE edges ADD COLUMN confidence REAL;");
-  }
-  if (!edgeColumns.some((column) => column.name === "resolution_file")) {
-    database.exec("ALTER TABLE edges ADD COLUMN resolution_file TEXT;");
-  }
-  if (!edgeColumns.some((column) => column.name === "resolution_line")) {
-    database.exec("ALTER TABLE edges ADD COLUMN resolution_line INTEGER;");
+    createCurrentSchema(database);
+    database.exec("COMMIT;");
+    transactionStarted = false;
+  } catch (error) {
+    if (transactionStarted) {
+      try {
+        database.exec("ROLLBACK;");
+      } catch {
+        // Preserve the original initialization error.
+      }
+    }
+    throw error;
   }
 }
 
@@ -421,7 +479,7 @@ export function validateAtlasSchemaForReadOnly(database: DatabaseSync): void {
   if (!table) return;
 
   const row = database.prepare("SELECT version FROM atlas_schema WHERE id = 1").get() as SchemaRow | undefined;
-  if (row && row.version !== ATLAS_SCHEMA_VERSION && row.version !== PREVIOUS_ATLAS_SCHEMA_VERSION) {
+  if (row && !SUPPORTED_ATLAS_SCHEMA_VERSIONS.has(row.version)) {
     throw new Error(`Unsupported AtlasStore schema version: ${row.version}; expected ${ATLAS_SCHEMA_VERSION}`);
   }
 }
@@ -430,18 +488,58 @@ export function migrateAtlasSchema(database: DatabaseSync): void {
   const row = database.prepare("SELECT version FROM atlas_schema WHERE id = 1").get() as SchemaRow | undefined;
   if (!row) throw new Error("AtlasStore schema metadata is missing");
   if (row.version === ATLAS_SCHEMA_VERSION) return;
-  if (row.version !== PREVIOUS_ATLAS_SCHEMA_VERSION) {
+  if (!SUPPORTED_ATLAS_SCHEMA_VERSIONS.has(row.version)) {
     throw new Error(`Unsupported AtlasStore schema version: ${row.version}; expected ${ATLAS_SCHEMA_VERSION}`);
   }
 
   database.exec("BEGIN IMMEDIATE;");
   try {
+    createCurrentSchema(database);
+
+    const legacyColumns = [
+      ["file_capability_state", "file_hash TEXT"],
+      ["file_capability_state", "provider_identity TEXT"],
+      ["edges", "resolution_method TEXT"],
+      ["edges", "evidence_kind TEXT"],
+      ["edges", "confidence REAL"],
+      ["edges", "resolution_file TEXT"],
+      ["edges", "resolution_line INTEGER"],
+    ] as const;
+    for (const [table, definition] of legacyColumns) {
+      const column = definition.slice(0, definition.indexOf(" "));
+      const columns = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+      if (!columns.some((item) => item.name === column)) {
+        database.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
+      }
+    }
+    database.exec(`
+      UPDATE file_capability_state
+      SET file_hash = (
+        SELECT file_hash
+        FROM files
+        WHERE files.repository_id = file_capability_state.repository_id
+          AND files.path = file_capability_state.file_path
+      )
+      WHERE file_hash IS NULL;
+    `);
+
     for (const [table, definition] of ADD_PHASE14B_COLUMNS) {
       const column = definition.slice(0, definition.indexOf(" "));
       const columns = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
       if (!columns.some((item) => item.name === column)) {
         database.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
       }
+    }
+
+    const repositoryStateColumns = database
+      .prepare("PRAGMA table_info(repository_index_state)")
+      .all() as Array<{ name: string }>;
+    if (!repositoryStateColumns.some((column) => column.name === "active_framework_resolution_version")) {
+      database.exec("ALTER TABLE repository_index_state ADD COLUMN active_framework_resolution_version TEXT;");
+    }
+
+    if (row.version === "1") {
+      database.prepare("UPDATE atlas_schema SET version = ? WHERE id = 1").run(PREVIOUS_ATLAS_SCHEMA_VERSION);
     }
     database.prepare("UPDATE atlas_schema SET version = ? WHERE id = 1").run(ATLAS_SCHEMA_VERSION);
     database.exec("COMMIT;");
