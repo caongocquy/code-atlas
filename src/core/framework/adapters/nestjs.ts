@@ -56,6 +56,13 @@ export const nestjsAdapter: FrameworkSemanticAdapter = {
           }
         }
       }
+      for (const parameter of materialized.facts.parameters) {
+        if (!parameter.typeText || !parameter.ownerSymbolId) continue;
+        const owners = graphNodes.filter((node) => node.id === parameter.ownerSymbolId || ((node.startLine ?? 0) <= parameter.range.startLine && (node.endLine ?? Number.MAX_SAFE_INTEGER) >= parameter.range.endLine));
+        const providers = graphNodes.filter((node) => node.name === parameter.typeText);
+        lookupKeys.push(`inject:${parameter.typeText}`);
+        evidence.push({ evidenceId: `nestjs-inject:${materialized.relativePath}:${parameter.localId}`, framework: "nestjs", adapterId: "nestjs", adapterVersion: "1.0.0", strategy: "constructor.type", capability: "nestjs.injection", relativePath: materialized.relativePath, origin: "framework_inferred", confidence: "exact", refs: [{ relativePath: materialized.relativePath, inputKey: `facts:${materialized.relativePath}`, localId: parameter.localId, range: parameter.range }], entities: [], applicable: true, supported: true, attempted: true, state: "candidate", outputKind: "relationship", relationKind: "dependency_injection", sourceCandidates: owners.map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id })), targetCandidates: providers.map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id })) });
+      }
       dependencies.push({ framework: "nestjs", scope: "root", ownerPath: materialized.relativePath, inputKeys: [`facts:${materialized.relativePath}`], lookupKeys: [...new Set(lookupKeys)].sort(), complete: syntax.complete });
     }
     return { evidence, dependencies };
