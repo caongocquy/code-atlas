@@ -75,6 +75,8 @@ test("index publishes one typed generation and unchanged sync reuses it", async 
       filesResolved: 1,
       importersInvalidated: 0,
       fullResolutionFallbacks: 0,
+      frameworkFilesResolved: 1,
+      frameworkFilesReused: 0,
     });
     assert.deepEqual(second.counters, {
       filesScanned: 1,
@@ -85,6 +87,8 @@ test("index publishes one typed generation and unchanged sync reuses it", async 
       filesResolved: 0,
       importersInvalidated: 0,
       fullResolutionFallbacks: 0,
+      frameworkFilesResolved: 0,
+      frameworkFilesReused: 1,
     });
     assert.doesNotMatch(JSON.stringify(first), /filesParsed|factCacheMisses/);
 
