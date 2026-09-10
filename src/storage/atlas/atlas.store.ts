@@ -274,7 +274,7 @@ function normalizeConfigValue(value: unknown, depth = 0): unknown {
 
 function normalizeConfig(value: unknown): FrameworkConfigFact {
   if (!isRecord(value) || !hasExactKeys(value, ["relativePath", "scope", "inputKey", "kind", "values", "complete"])
-    || !isSafeRelativePath(value.relativePath) || !isBoundedString(value.scope) || !isBoundedString(value.inputKey)
+    || !isSafeRelativePath(value.relativePath) || typeof value.scope !== "string" || value.scope.length > MAX_FRAMEWORK_STRING_LENGTH || !isBoundedString(value.inputKey)
     || !["package", "next", "maven", "gradle", "pubspec"].includes(String(value.kind)) || typeof value.complete !== "boolean" || !isRecord(value.values)) {
     throw new TypeError("Invalid framework config fact");
   }

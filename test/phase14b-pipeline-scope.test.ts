@@ -10,9 +10,25 @@ import { indexRepository, syncRepository } from "../src/core/indexing/index-pipe
 import { createCandidateGeneration } from "../src/core/indexing/index-manifest.js";
 import { getRepositoryIdentity } from "../src/core/repository/repository-identity.js";
 import { CURRENT_INDEX_VERSION_DOMAINS } from "../src/core/repository/index-version.js";
+import type { FrameworkMaterialization } from "../src/core/framework/framework.types.js";
 import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
 
 const execFileAsync = promisify(execFile);
+
+function emptyFramework(): FrameworkMaterialization {
+  return {
+    frameworkResolutionVersion: CURRENT_INDEX_VERSION_DOMAINS.frameworkResolutionVersion!,
+    entities: [],
+    relationships: [],
+    classifications: [],
+    diagnostics: [],
+    coverage: [],
+    config: [],
+    detections: [],
+    dependencies: [],
+    complete: true,
+  };
+}
 
 async function git(repoPath: string, args: string[]): Promise<void> {
   await execFileAsync("git", args, { cwd: repoPath });
@@ -232,7 +248,8 @@ test("incomplete semantic provenance forces repository resolution on unchanged s
       }),
     }, new Map());
     store.copyActiveGraphResolutionToCandidate(candidate.id);
-    store.publishCandidateGeneration(candidate.id);
+    store.writeCandidateFramework(candidate.id, emptyFramework());
+    store.publishCandidateGeneration(candidate.id, { frameworkStaged: true });
     store.close();
 
     const unchanged = await syncRepository(root, { skipGit: true });
