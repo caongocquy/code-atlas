@@ -89,7 +89,7 @@ function factsInvalidated(
   previousVersions: IndexVersionDomains | undefined,
 ): boolean {
   return previousVersions !== undefined && (
-    versions.schemaVersion !== previousVersions.schemaVersion
+    versions.factsSchemaVersion !== previousVersions.factsSchemaVersion
     || versions.factsVersion !== previousVersions.factsVersion
   );
 }

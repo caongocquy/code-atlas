@@ -9,7 +9,7 @@ import {
 
 test("version domains expose independent facts schema and resolution versions", () => {
   assert.deepEqual(Object.keys(CURRENT_INDEX_VERSION_DOMAINS).sort(), [
-    "derivedVersion", "factsSchemaVersion", "factsVersion", "resolutionVersion", "schemaVersion",
+    "derivedVersion", "factsSchemaVersion", "factsVersion", "frameworkResolutionVersion", "resolutionVersion", "schemaVersion",
   ]);
   assert.notEqual(CURRENT_INDEX_VERSION_DOMAINS.resolutionVersion, GRAPH_INDEX_VERSION);
   assert.equal(CURRENT_INDEX_VERSION_DOMAINS.factsSchemaVersion, FACTS_SCHEMA_VERSION);

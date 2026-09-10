@@ -236,4 +236,5 @@ export type IndexVersionDomains = {
   factsVersion: string;
   resolutionVersion: string;
   derivedVersion: string;
+  frameworkResolutionVersion?: string;
 };
