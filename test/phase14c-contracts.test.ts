@@ -12,6 +12,7 @@ import type {
   FrameworkDiagnosticCode,
   FrameworkDiagnostic,
   FrameworkEntity,
+  FrameworkEvidenceRef,
   FrameworkEntityRef,
   FrameworkProvenance,
   FrameworkRelationship,
@@ -80,6 +81,9 @@ test("framework entity keys reject malformed and noncanonical logical tuples", (
     JSON.stringify(["app-a", "app", "/users", "GET", [], null, "extra"]),
     JSON.stringify(["../app-a", "app", "/users", "GET", [], null]),
     JSON.stringify(["app-a", "../app", "/users", "GET", [], null]),
+    JSON.stringify(["app\\a", "app", "/users", "GET", [], null]),
+    JSON.stringify(["app/.", "app", "/users", "GET", [], null]),
+    JSON.stringify(["app//a", "app", "/users", "GET", [], null]),
   ];
 
   for (const logicalKey of malformedKeys) {
@@ -185,6 +189,40 @@ test("accepted provenance rejects empty or oversized evidence and invalid ranges
         inputKey: "facts:1",
         range: { startLine: 0, endLine: 1 },
       }]),
+    }),
+    undefined,
+  );
+});
+
+test("accepted provenance rejects unknown and oversized payload fields", () => {
+  const relationship = {
+    outputKind: "relationship",
+    source: { kind: "language", nodeId: "node:1" },
+    target: { kind: "language", nodeId: "node:2" },
+    relationKind: "component_usage",
+    provenance: provenance("exact"),
+  };
+  const validRef = relationship.provenance.refs[0];
+  const extraPayload = "x".repeat(1_000_000);
+
+  assert.deepEqual(
+    decodeFrameworkAcceptedOutput(relationship)?.provenance.refs[0],
+    validRef,
+  );
+  assert.equal(
+    decodeFrameworkAcceptedOutput({
+      ...relationship,
+      provenance: provenance("exact", [{ ...validRef, extra: "unexpected" } as unknown as FrameworkEvidenceRef]),
+    }),
+    undefined,
+  );
+  assert.equal(
+    decodeFrameworkAcceptedOutput({
+      ...relationship,
+      provenance: provenance("exact", [{
+        ...validRef,
+        range: { startLine: 1, endLine: 1, extra: extraPayload } as unknown as NonNullable<FrameworkEvidenceRef["range"]>,
+      } as FrameworkEvidenceRef]),
     }),
     undefined,
   );

@@ -14,6 +14,9 @@ const FRAMEWORK_IDS: readonly FrameworkId[] = ["react", "next", "nestjs", "sprin
 const MAX_PROVENANCE_ITEMS = 32;
 const MAX_PROVENANCE_STRING_LENGTH = 256;
 const MAX_EVIDENCE_PATH_LENGTH = 1024;
+const MAX_SOURCE_RANGE_SERIALIZED_LENGTH = 128;
+const MAX_EVIDENCE_REF_SERIALIZED_LENGTH = 2048;
+const MAX_PROVENANCE_SERIALIZED_LENGTH = 128 * 1024;
 const RELATION_KINDS: readonly FrameworkRelationKind[] = [
   "component_usage",
   "route_binding",
@@ -42,6 +45,28 @@ function isRepositoryRelativePath(value: unknown): value is string {
     && !normalized.split("/").includes("..");
 }
 
+function isCanonicalRelativePath(value: unknown): value is string {
+  if (!isNonEmptyString(value, MAX_EVIDENCE_PATH_LENGTH)) return false;
+  if (value.replaceAll("\\", "/") !== value || value.startsWith("/")) return false;
+  if (/^[A-Za-z]:\//.test(value)) return false;
+
+  const segments = value.split("/");
+  return segments.every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  return Object.keys(value).every((key) => keys.includes(key));
+}
+
+function serializedWithinLimit(value: unknown, maxLength: number): boolean {
+  try {
+    const serialized = JSON.stringify(value);
+    return typeof serialized === "string" && serialized.length <= maxLength;
+  } catch {
+    return false;
+  }
+}
+
 function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
@@ -58,8 +83,8 @@ function isCanonicalLogicalKey(value: unknown): value is string {
 
   if (!Array.isArray(parsed) || parsed.length !== 6) return false;
   const [scope, router, path, method, conditions, owner] = parsed;
-  if (!isRepositoryRelativePath(scope)
-    || !isRepositoryRelativePath(router)
+  if (!isCanonicalRelativePath(scope)
+    || !isCanonicalRelativePath(router)
     || !isNonEmptyString(path)
     || !(method === null || isNonEmptyString(method))
     || !Array.isArray(conditions)
@@ -76,6 +101,7 @@ function isCanonicalLogicalKey(value: unknown): value is string {
 
 function isFrameworkEntityRef(value: unknown): value is FrameworkEntityRef {
   return isRecord(value)
+    && hasOnlyKeys(value, ["framework", "kind", "logicalKey"])
     && FRAMEWORK_IDS.includes(value.framework as FrameworkId)
     && (value.kind === "route" || value.kind === "layout")
     && isCanonicalLogicalKey(value.logicalKey);
@@ -83,20 +109,27 @@ function isFrameworkEntityRef(value: unknown): value is FrameworkEntityRef {
 
 function isSubjectRef(value: unknown): value is FrameworkSubjectRef {
   if (!isRecord(value) || !isNonEmptyString(value.kind)) return false;
-  if (value.kind === "language") return isNonEmptyString(value.nodeId);
-  return value.kind === "framework" && isFrameworkEntityRef(value.entity);
+  if (value.kind === "language") {
+    return hasOnlyKeys(value, ["kind", "nodeId"]) && isNonEmptyString(value.nodeId);
+  }
+  return value.kind === "framework"
+    && hasOnlyKeys(value, ["kind", "entity"])
+    && isFrameworkEntityRef(value.entity);
 }
 
 function isSourceRange(value: unknown): value is SourceRangeFact {
   const startLine = isRecord(value) ? value.startLine : undefined;
   const endLine = isRecord(value) ? value.endLine : undefined;
   if (!isRecord(value)
+    || !hasOnlyKeys(value, ["startLine", "endLine", "startColumn", "endColumn"])
     || !isNonNegativeInteger(startLine)
     || !isNonNegativeInteger(endLine)
     || startLine < 1
     || endLine < startLine) {
     return false;
   }
+
+  if (!serializedWithinLimit(value, MAX_SOURCE_RANGE_SERIALIZED_LENGTH)) return false;
 
   const startColumn = value.startColumn;
   const endColumn = value.endColumn;
@@ -113,10 +146,12 @@ function isSourceRange(value: unknown): value is SourceRangeFact {
 
 function isEvidenceRef(value: unknown): value is FrameworkEvidenceRef {
   return isRecord(value)
+    && hasOnlyKeys(value, ["relativePath", "inputKey", "localId", "range"])
     && isRepositoryRelativePath(value.relativePath)
     && isNonEmptyString(value.inputKey, MAX_PROVENANCE_STRING_LENGTH)
     && (value.localId === undefined || isNonEmptyString(value.localId, MAX_PROVENANCE_STRING_LENGTH))
-    && (value.range === undefined || isSourceRange(value.range));
+    && (value.range === undefined || isSourceRange(value.range))
+    && serializedWithinLimit(value, MAX_EVIDENCE_REF_SERIALIZED_LENGTH);
 }
 
 function evidenceRefKey(ref: FrameworkEvidenceRef): string {
@@ -131,6 +166,7 @@ function evidenceRefKey(ref: FrameworkEvidenceRef): string {
 
 function isProvenance(value: unknown): value is FrameworkProvenance {
   return isRecord(value)
+    && hasOnlyKeys(value, ["origin", "framework", "adapterId", "adapterVersion", "strategy", "confidence", "evidenceIds", "refs"])
     && value.origin === "framework_inferred"
     && FRAMEWORK_IDS.includes(value.framework as FrameworkId)
     && isNonEmptyString(value.adapterId, MAX_PROVENANCE_STRING_LENGTH)
@@ -146,7 +182,9 @@ function isProvenance(value: unknown): value is FrameworkProvenance {
     && value.refs.length > 0
     && value.refs.length <= MAX_PROVENANCE_ITEMS
     && value.refs.every(isEvidenceRef)
-    && new Set(value.refs.map((ref) => evidenceRefKey(ref))).size === value.refs.length;
+    && new Set(value.refs.map((ref) => evidenceRefKey(ref))).size === value.refs.length
+    && serializedWithinLimit(value.evidenceIds, MAX_PROVENANCE_SERIALIZED_LENGTH)
+    && serializedWithinLimit(value.refs, MAX_PROVENANCE_SERIALIZED_LENGTH);
 }
 
 function parsePayload(payload: unknown): unknown {
@@ -175,7 +213,8 @@ export function decodeFrameworkAcceptedOutput(payload: unknown): FrameworkAccept
   if (!isRecord(value) || !isProvenance(value.provenance)) return undefined;
 
   if (value.outputKind === "relationship") {
-    return isSubjectRef(value.source)
+    return hasOnlyKeys(value, ["outputKind", "source", "target", "relationKind", "provenance"])
+      && isSubjectRef(value.source)
       && isSubjectRef(value.target)
       && RELATION_KINDS.includes(value.relationKind as FrameworkRelationKind)
       ? value as unknown as FrameworkAcceptedOutput
@@ -183,7 +222,8 @@ export function decodeFrameworkAcceptedOutput(payload: unknown): FrameworkAccept
   }
 
   if (value.outputKind === "classification") {
-    return !Object.prototype.hasOwnProperty.call(value, "target")
+    return hasOnlyKeys(value, ["outputKind", "subject", "classificationKind", "classificationValue", "provenance"])
+      && !Object.prototype.hasOwnProperty.call(value, "target")
       && isSubjectRef(value.subject)
       && value.classificationKind === "execution_boundary"
       && (value.classificationValue === "client" || value.classificationValue === "server")
