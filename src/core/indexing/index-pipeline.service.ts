@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { parse as parseJsonc, type ParseError } from "jsonc-parser";
 
 import { GRAPH_INDEX_VERSION, LEXICAL_INDEX_VERSION, VECTOR_INDEX_VERSION } from "../../config/constants.js";
 import { decodeFacts } from "../facts/facts-codec.js";
@@ -40,6 +41,8 @@ import { createIndexWorkCounters, freezeIndexWorkCounters, recordIndexWork } fro
 import { createCandidateResolutionInput } from "./resolution-scope.js";
 import { createResolutionScope } from "./invalidation-planner.js";
 import type { IndexPipelineOptions, IndexingChanges, IndexRunOutcome, IndexFailure, IndexedSourceUnit, PublishedIndexRun } from "./indexing.types.js";
+import { materializeFrameworkConfig, type FrameworkConfigInput } from "../framework/framework-config.js";
+import type { FrameworkConfigFact, FrameworkConfigValue } from "../framework/framework.types.js";
 
 const RESOLVER_BUDGETS = {
   candidateExpansions: 1000,
@@ -244,7 +247,27 @@ type LegacyIndexResult = {
   semantic?: SemanticIndexResult; totalMs: number;
 };
 
-export type IndexPipelineResult = PublishedIndexRun & LegacyIndexResult;
+export type IndexPipelineResult = PublishedIndexRun & LegacyIndexResult & {
+  frameworkConfig: readonly FrameworkConfigFact[];
+};
+
+const frameworkConfigKind = (relativePath: string): FrameworkConfigInput["kind"] | undefined => {
+  const name = path.posix.basename(relativePath);
+  if (name === "package.json") return "package";
+  if (/^next\.config\.(js|mjs|ts)$/.test(name)) return "next";
+  if (name === "pom.xml") return "maven";
+  if (name === "build.gradle" || name === "build.gradle.kts") return "gradle";
+  if (name === "pubspec.yaml") return "pubspec";
+  return undefined;
+};
+
+function packageObjectiveValues(source: string): { values: Readonly<Record<string, FrameworkConfigValue>>; complete: boolean } {
+  const errors: ParseError[] = [];
+  const parsed = parseJsonc(source, errors, { allowTrailingComma: true }) as unknown;
+  return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+    ? { values: parsed as Readonly<Record<string, FrameworkConfigValue>>, complete: errors.length === 0 }
+    : { values: {}, complete: false };
+}
 
 class CacheWriteFailure extends Error {
   constructor(message: string) {
@@ -314,6 +337,22 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       currentFiles.set(relativePath, { contentHash, language: adapter.language });
       sources.set(relativePath, await fs.readFile(path.join(repoPath, relativePath), "utf8"));
     }
+
+    const frameworkConfigInputs: FrameworkConfigInput[] = [];
+    for (const [relativePath, contentHash] of changes.fileHashes) {
+      const kind = frameworkConfigKind(relativePath);
+      if (!kind) continue;
+      let values: Readonly<Record<string, FrameworkConfigValue>> = {};
+      let complete = false;
+      try {
+        const source = await fs.readFile(path.join(repoPath, relativePath), "utf8");
+        if (kind === "package") ({ values, complete } = packageObjectiveValues(source));
+      } catch {
+        complete = false;
+      }
+      frameworkConfigInputs.push({ relativePath, contentHash, kind, objectiveValues: values, complete });
+    }
+    const frameworkConfig = materializeFrameworkConfig(frameworkConfigInputs);
 
     const units: IndexedSourceUnit[] = [];
     const bindings: Array<{ repositoryId: string; relativePath: string; generationId: string; factBlobKey: FactBlobKey; contentHash: string; language: SupportedLanguage }> = [];
@@ -514,14 +553,14 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       semantic,
       totalMs,
     };
-    const published = { kind: "published" as const, repositoryId: repoId, generationId: generation.id, plan, published: true as const, ...legacy };
+    const published = { kind: "published" as const, repositoryId: repoId, generationId: generation.id, plan, published: true as const, frameworkConfig, ...legacy };
     Object.defineProperty(published, "counters", {
       value: freezeIndexWorkCounters(counters),
       enumerable: false,
       writable: false,
       configurable: false,
     });
-    return published as PublishedIndexRun & LegacyIndexResult;
+    return published as unknown as IndexPipelineResult;
   } catch (error) {
     return { kind: "failed", repositoryId: repoId, ...(activeGenerationId ? { activeGenerationId } : {}), published: false, failure: failure(error, activeGenerationId) };
   } finally {
