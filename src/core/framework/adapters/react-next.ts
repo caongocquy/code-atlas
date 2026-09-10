@@ -52,6 +52,28 @@ function analyze(ctx: FrameworkAnalysisContext): { evidence: readonly FrameworkE
         outputKind: "relationship", relationKind: "component_usage", sourceCandidates: source, targetCandidates: targets,
       });
     }
+    const nextFile = materialized.relativePath.replaceAll("\\", "/");
+    const routeMatch = /^(?:app|pages)\/(.*)\/(page|layout|route)\.(?:tsx?|jsx?)$/.exec(nextFile)
+      ?? /^(?:app|pages)\/(page|layout|route)\.(?:tsx?|jsx?)$/.exec(nextFile);
+    if (routeMatch) {
+      const router = nextFile.startsWith("app/") ? "app" : "pages";
+      const fileKind = routeMatch[2] ?? routeMatch[1];
+      const routeSegments = (routeMatch[2] ? routeMatch[1] : "").split("/").filter(Boolean).filter((segment) => !/^\([^)]*\)$/.test(segment));
+      const routePath = `/${routeSegments.join("/")}`.replace(/\/+/g, "/");
+      const kind = fileKind === "layout" ? "layout" as const : "route" as const;
+      const canonical = canonicalizeNextRoute({ framework: "next", scope: "root", router, kind, path: routePath === "/" ? "/" : routePath, method: fileKind === "route" ? null : null, conditions: [], owner: null });
+      if (canonical.kind === "canonical") {
+        const entity = { ref: canonical.ref, displayName: routePath, declarationKey: `route:${nextFile}`, confidence: "exact" as const, refs: refsFor(nextFile, inputKey) };
+        const fileNodes = localNodes.filter((node) => node.type === "file").map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id }));
+        evidence.push({ evidenceId: `next-route:${nextFile}`, framework: "next", adapterId: "react-next", adapterVersion: "1.0.0", strategy: "next-route-convention", capability: "next.app_routes", relativePath: nextFile, origin: "framework_inferred", confidence: "exact", refs: entity.refs, entities: [entity], applicable: true, supported: true, attempted: true, state: "candidate", outputKind: "relationship", relationKind: "route_binding", sourceCandidates: fileNodes, targetCandidates: [{ kind: "framework", entity: canonical.ref }] });
+      }
+    }
+    const directives = syntax.nodes.filter((node) => node.kind === "directive" && (node.name === "use client" || node.name === "use server"));
+    for (const directive of directives) {
+      const subjects = localNodes.filter((node) => node.type !== "file" && (node.startLine ?? 0) <= directive.range.startLine && (node.endLine ?? Number.MAX_SAFE_INTEGER) >= directive.range.endLine)
+        .map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id }));
+      evidence.push({ evidenceId: `next-directive:${nextFile}:${directive.id}`, framework: "next", adapterId: "react-next", adapterVersion: "1.0.0", strategy: "next-execution-directive", capability: "next.execution_boundary", relativePath: nextFile, origin: "framework_inferred", confidence: "exact", refs: refsFor(nextFile, inputKey), entities: [], applicable: true, supported: true, attempted: true, state: "candidate", outputKind: "classification", classificationKind: "execution_boundary", subjectCandidates: subjects, values: [directive.name === "use client" ? "client" : "server"] });
+    }
   }
   return { evidence, dependencies };
 }
