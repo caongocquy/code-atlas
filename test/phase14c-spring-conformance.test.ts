@@ -3,7 +3,7 @@ import test from "node:test";
 import { analyzeFramework, builtinFrameworkAdapters, detectFrameworks } from "../src/core/framework/framework-registry.js";
 
 test("Spring is independently registered and plain JVM stays outside Spring", () => {
-  assert.deepEqual(builtinFrameworkAdapters.map((adapter) => adapter.id).sort(), ["nestjs", "react-next", "spring"]);
+  assert.deepEqual(builtinFrameworkAdapters.map((adapter) => adapter.id).sort(), ["flutter", "nestjs", "react-next", "spring"]);
   const context = { repositoryId: "repo", facts: [], graph: { nodes: [], edges: [] }, config: [] };
   const detections = detectFrameworks(context, builtinFrameworkAdapters);
   assert.deepEqual(detections, []);
