@@ -352,17 +352,40 @@ function isSyntaxObservation(value: unknown): boolean {
 function hasObjectiveSyntax(value: unknown, factIds: ReadonlySet<string>): value is ObjectiveSyntax {
   if (!isRecord(value) || typeof value.complete !== "boolean" || !Array.isArray(value.nodes) || !Object.keys(value).every((key) => key === "nodes" || key === "complete")) return false;
   const nodes = value.nodes as unknown[];
-  if (nodes.length > MAX_SYNTAX_NODES || !nodes.every(isSyntaxObservation)) return false;
+  if (nodes.length === 0 || nodes.length > MAX_SYNTAX_NODES || !nodes.every(isSyntaxObservation)) return false;
   const observations = nodes as SyntaxObservation[];
+  if (!value.complete && !observations.some((node) => node.kind === "unknown")) return false;
   const ids = new Set<string>();
   for (const node of observations) {
     if (ids.has(node.id) || ![node.ownerSymbolId, node.ownerScopeId, node.factId].every((id) => id === undefined || factIds.has(id))) return false;
     ids.add(node.id);
   }
-  return observations.every((node) => node.children.every((id) => ids.has(id))
-    && node.arguments.every((argument) => ids.has(argument.valueId))
-    && (node.receiverId === undefined || ids.has(node.receiverId))
-    && node.typeArguments.every((id) => ids.has(id)));
+  const observationsById = new Map(observations.map((node) => [node.id, node]));
+  const links = (node: SyntaxObservation): string[] => [
+    ...node.children,
+    ...node.arguments.map((argument) => argument.valueId),
+    ...(node.receiverId === undefined ? [] : [node.receiverId]),
+    ...node.typeArguments,
+  ];
+  if (!observations.every((node) => links(node).every((id) => ids.has(id)))) return false;
+
+  const incoming = new Map(observations.map((node) => [node.id, 0]));
+  for (const node of observations) {
+    for (const id of links(node)) incoming.set(id, incoming.get(id)! + 1);
+  }
+  const ready = observations.filter((node) => incoming.get(node.id) === 0).map((node) => node.id);
+  let visited = 0;
+  for (let index = 0; index < ready.length; index += 1) {
+    const id = ready[index]!;
+    visited += 1;
+    const node = observationsById.get(id)!;
+    for (const linkedId of links(node)) {
+      const remaining = incoming.get(linkedId)! - 1;
+      incoming.set(linkedId, remaining);
+      if (remaining === 0) ready.push(linkedId);
+    }
+  }
+  return visited === observations.length;
 }
 
 function hasFactsShape(value: unknown): value is ParsedFactsBlob {

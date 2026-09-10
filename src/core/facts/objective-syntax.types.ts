@@ -85,6 +85,18 @@ function previousNamedSibling(node: SyntaxNode): SyntaxNode | undefined {
   return index > 0 ? siblings[index - 1] : undefined;
 }
 
+function isDartInvocationSelector(node: SyntaxNode): boolean {
+  return node.type === "selector" && node.namedChildren.some((child) => child.type === "argument_part");
+}
+
+function dartSelectorName(node: SyntaxNode): string | undefined {
+  const member = node.namedChildren.find((child) => child.type.includes("assignable_selector"));
+  const ownName = member ? firstDescendant(member, isIdentifier) : undefined;
+  if (ownName) return ownName.text;
+  const previous = previousNamedSibling(node);
+  return previous?.type === "selector" ? dartSelectorName(previous) : previous?.text;
+}
+
 const nodeKey = (node: SyntaxNode): string => `${node.type}:${node.startIndex}:${node.endIndex}`;
 
 function kindFor(node: SyntaxNode): SyntaxObservationKind | undefined {
@@ -98,10 +110,9 @@ function kindFor(node: SyntaxNode): SyntaxObservationKind | undefined {
   if (type.includes("spread")) return "spread";
   if (type === "object" || type.includes("object_literal") || type.includes("map_literal") || type === "set_or_map_literal") return "object";
   if (type.includes("array") || type.includes("list_literal")) return "array";
-  if (type === "pair" || type.includes("property") || type === "map_entry" || type === "record_field") return "property";
-  if (type === "new_expression" || type === "object_creation_expression" || type === "constructor_invocation" || (isDartGenericInvocation(node) && /^[A-Z]/.test(firstDescendant(node, isIdentifier)?.text ?? ""))) return "construct";
-  if (type === "selector" && /^[A-Z]/.test(previousNamedSibling(node)?.text ?? "")) return "construct";
-  if (type === "call_expression" || type === "method_invocation" || type === "selector" || isDartGenericInvocation(node)) return "call";
+  if (type === "pair" || type.includes("property") || type === "map_entry" || type === "record_field" || (type === "selector" && !isDartInvocationSelector(node))) return "property";
+  if (type === "new_expression" || type === "object_creation_expression" || type === "constructor_invocation") return "construct";
+  if (type === "call_expression" || type === "method_invocation" || isDartInvocationSelector(node) || isDartGenericInvocation(node)) return "call";
   if (isIdentifier(node)) return "identifier";
   if (type === "string" || type.includes("string_literal") || type.includes("number") || type.includes("integer") || type.includes("decimal") || type === "true" || type === "false" || type === "null") return "literal";
   return undefined;
@@ -184,9 +195,11 @@ export function createObjectiveSyntaxCollector() {
       return typeof value === "string" ? value : undefined;
     }
     if (kind === "property") {
+      if (node.type === "selector") return dartSelectorName(node);
       const key = node.childForFieldName("key");
       if (key && !key.type.includes("computed")) return key.text;
       if (node.type === "record_field") return firstDescendant(node.namedChildren[0] ?? node, isIdentifier)?.text;
+      if (isIdentifier(node)) return node.text;
     }
     if (kind === "jsx") return node.childForFieldName("name")?.text;
     if (kind === "annotation") {
@@ -194,7 +207,7 @@ export function createObjectiveSyntaxCollector() {
       return name?.text;
     }
     if (kind === "call" || kind === "construct") {
-      if (node.type === "selector") return previousNamedSibling(node)?.text;
+      if (node.type === "selector") return dartSelectorName(node);
       if (isDartGenericInvocation(node)) return firstDescendant(node.namedChildren[0]!, isIdentifier)?.text;
       const callable = node.childForFieldName("function") ?? node.childForFieldName("constructor") ?? node.childForFieldName("type");
       if (callable?.type === "member_expression" || callable?.type === "field_access") {
@@ -272,14 +285,20 @@ export function createObjectiveSyntaxCollector() {
     }
     for (const { source, observation } of entries) {
       if (observation.kind === "property") {
-        observation.children = nearestObservations(argumentParts(source).value).map((item) => item.id);
+        const value = argumentParts(source).value;
+        if (value !== source) observation.children = nearestObservations(value).map((item) => item.id);
+        observation.children = observation.children.filter((id) => id !== observation.id);
+        if (source.type === "selector") {
+          const receiver = previousNamedSibling(source);
+          observation.receiverId = receiver ? nearestObservations(receiver)[0]?.id : undefined;
+        }
       }
       if (observation.kind === "annotation" || observation.kind === "call" || observation.kind === "construct") {
         const container = argumentContainer(source);
         observation.arguments = (container?.namedChildren ?? []).flatMap((item) => {
           const part = argumentParts(item);
           const value = nearestObservations(part.value)[0];
-          return value ? [{ name: part.name, valueId: value.id }] : [];
+          return value && value.id !== observation.id ? [{ name: part.name, valueId: value.id }] : [];
         });
       }
       if (observation.kind === "call" || observation.kind === "construct") {

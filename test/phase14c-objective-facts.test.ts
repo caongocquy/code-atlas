@@ -48,7 +48,7 @@ const fixtures = [
     language: "dart" as const,
     filePath: "lib/screen.dart",
     source: 'class Screen { Widget build(BuildContext context) { return MaterialApp(routes: {"/": (context) => Home()}, home: Provider<Foo>(create: (context) => Foo())); } }\n',
-    expected: ["construct", "object", "lambda"] as const,
+    expected: ["call", "object", "lambda"] as const,
   },
 ];
 
@@ -111,6 +111,95 @@ test("objective syntax round-trips and malformed linked observations miss the ca
     decodeFacts(JSON.stringify(malformed), expected),
     { kind: "miss", reason: "schema_mismatch" },
   );
+
+  type EncodedFacts = {
+    frameworkSyntax?: {
+      complete: boolean;
+      nodes: Array<{
+        id: string;
+        kind: string;
+        range: { startLine: number; endLine: number; startColumn?: number; endColumn?: number };
+        children: string[];
+        arguments: Array<{ name?: string; valueId: string }>;
+        receiverId?: string;
+        typeArguments: string[];
+      }>;
+    };
+  };
+  const rejectMutation = (mutate: (value: EncodedFacts) => void): void => {
+    const value = JSON.parse(encodeFacts(facts)) as EncodedFacts;
+    assert.ok(value.frameworkSyntax);
+    mutate(value);
+    assert.deepEqual(
+      decodeFacts(JSON.stringify(value), expected),
+      { kind: "miss", reason: "schema_mismatch" },
+    );
+  };
+
+  rejectMutation((value) => {
+    const node = value.frameworkSyntax!.nodes[0]!;
+    node.children.push(node.id);
+  });
+  rejectMutation((value) => {
+    const [first, second] = value.frameworkSyntax!.nodes;
+    assert.ok(first && second);
+    first.children = [second.id];
+    second.children = [first.id];
+  });
+  rejectMutation((value) => {
+    value.frameworkSyntax = { complete: true, nodes: [] };
+  });
+  rejectMutation((value) => {
+    value.frameworkSyntax!.complete = false;
+  });
+
+  const partial = JSON.parse(encodeFacts(facts)) as EncodedFacts;
+  partial.frameworkSyntax = {
+    complete: false,
+    nodes: [{
+      id: "syntax:1",
+      kind: "unknown",
+      range: { startLine: 1, endLine: 1, startColumn: 0, endColumn: 1 },
+      children: [],
+      arguments: [],
+      typeArguments: [],
+    }],
+  };
+  assert.equal(decodeFacts(JSON.stringify(partial), expected).kind, "hit");
+});
+
+test("ecmascript decorators link to their declared class and method owners", () => {
+  const result = extractParsedFacts({
+    language: "typescript",
+    filePath: "src/users.ts",
+    source: '@Controller("users") export class Users { @Get() list() {} }',
+    contentHash: "ecmascript-decorator-owners",
+    factsVersion: FACTS_VERSION,
+    factsSchemaVersion: FACTS_SCHEMA_VERSION,
+  });
+  assert.equal(result.kind, "facts");
+  if (result.kind !== "facts") return;
+
+  const syntax = result.facts.frameworkSyntax;
+  assert.ok(syntax);
+  for (const [annotationName, symbolName] of [["Controller", "Users"], ["Get", "list"]] as const) {
+    const annotation = syntax.nodes.find((node) => node.kind === "annotation" && node.name === annotationName);
+    assert.ok(annotation?.ownerSymbolId, annotationName);
+    assert.equal(result.facts.symbols.find((symbol) => symbol.localId === annotation.ownerSymbolId)?.name, symbolName);
+  }
+});
+
+test("objective syntax never emits self-linked children or arguments", () => {
+  const syntax = extractSyntax({
+    language: "typescript",
+    filePath: "src/props.ts",
+    source: "const value = 1; const props = { value };",
+  });
+
+  for (const node of syntax.nodes) {
+    assert.ok(!node.children.includes(node.id), `${node.id} child self-link`);
+    assert.ok(!node.arguments.some((argument) => argument.valueId === node.id), `${node.id} argument self-link`);
+  }
 });
 
 test("ecmascript materializes directive, receiver, type, property, spread, lambda return, and JSX links", () => {
@@ -206,6 +295,39 @@ test("Dart materializes named widget arguments, generic provider types, and buil
   assert.deepEqual(provider.arguments.map((argument) => argument.name), ["create", "child"]);
   const buildId = result.facts.symbols.find((symbol) => symbol.name === "build")?.localId;
   assert.ok(syntax.nodes.some((node) => node.kind === "return" && node.ownerSymbolId === buildId));
+});
+
+test("Dart preserves member selectors and invocation syntax without constructor guessing", () => {
+  const syntax = extractSyntax({
+    language: "dart",
+    filePath: "lib/navigation.dart",
+    source: "void navigate(BuildContext context, Route route, Widget widget) { Navigator.push(context, route); widget.title; Home(); new Home(); }",
+  });
+  const byId = new Map(syntax.nodes.map((node) => [node.id, node]));
+
+  const pushMember = syntax.nodes.find((node) => node.kind === "property" && node.name === "push");
+  assert.ok(pushMember?.receiverId);
+  assert.equal(byId.get(pushMember.receiverId)?.name, "Navigator");
+  const pushCall = syntax.nodes.find((node) => node.kind === "call" && node.name === "push");
+  assert.ok(pushCall?.receiverId);
+  assert.equal(pushCall.arguments.length, 2);
+  assert.equal(byId.get(pushCall.receiverId)?.id, pushMember.id);
+
+  const title = syntax.nodes.find((node) => node.kind === "property" && node.name === "title");
+  assert.ok(title?.receiverId);
+  assert.equal(byId.get(title.receiverId)?.name, "widget");
+  assert.ok(syntax.nodes.some((node) => node.kind === "call" && node.name === "Home"));
+  assert.ok(syntax.nodes.some((node) => node.kind === "construct" && node.name === "Home"));
+});
+
+test("objective syntax IDs and links repeat deterministically", () => {
+  const input = {
+    language: "tsx" as const,
+    filePath: "src/repeat.tsx",
+    source: '@Controller("users") class Users { view() { return <Page title="Users" />; } }',
+  };
+
+  assert.deepEqual(extractSyntax(input), extractSyntax(input));
 });
 
 test("materialization parses once, marks malformed syntax partial, and leaves unsupported families unavailable", () => {

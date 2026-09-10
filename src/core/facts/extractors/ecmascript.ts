@@ -101,7 +101,7 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
     const visit = (node: Parser.SyntaxNode): void => {
       const isCallable = ["function_declaration", "function_expression", "arrow_function", "method_definition"].includes(node.type);
       const isScope = ["program", "class_declaration", "function_declaration", "function_expression", "arrow_function", "method_definition"].includes(node.type);
-      const syntaxNode = syntax.observe(node, callableStack.at(-1)?.localId, scopeStack.at(-1));
+      syntax.observe(node, callableStack.at(-1)?.localId, scopeStack.at(-1));
       if (isScope) {
         const scope = { localId: next("scope"), kind: node.type, name: nameOf(node), parentId: scopeStack.at(-1), range: range(node) };
         containmentScopes.push(scope); scopeStack.push(scope.localId);
@@ -131,7 +131,15 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
         callable = { localId, name: `${node.type}@${node.startIndex}`, kind: "function", range: range(node), scopeId: scopeStack.at(-1), declaredQualifiedName: `${node.type}@${node.startIndex}` };
         symbols.push(callable);
       }
-      if (callable && syntaxNode) syntaxNode.ownerSymbolId = callable.localId;
+      if (callable) {
+        syntax.linkOwner(node, callable.localId);
+        if (node.type === "class_declaration" || node.type === "method_definition") {
+          const siblings = node.parent?.namedChildren ?? [];
+          for (let index = siblings.indexOf(node) - 1; index >= 0 && siblings[index]?.type === "decorator"; index -= 1) {
+            syntax.linkOwner(siblings[index]!, callable.localId);
+          }
+        }
+      }
       if (isCallable && callable) callableStack.push(callable);
       if (node.type === "import_statement") processImport(node);
       if (node.type === "export_statement") processExport(node);
