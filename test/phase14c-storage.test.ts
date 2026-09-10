@@ -118,7 +118,7 @@ test("writes and reloads a complete empty framework materialization", async () =
   store.close();
 
   const reopened = openFixture(root);
-  assert.deepEqual(reopened.loadFramework(repositoryId), {
+  assert.deepEqual(reopened.loadFramework(repositoryId, generationId), {
     ...materialization(),
     repositoryId,
     generationId,
@@ -252,7 +252,7 @@ test("rejects dangling endpoints, weak provenance and conflicting duplicates ato
       provenance: provenance(),
     }],
   });
-  assert.throws(() => store.writeCandidateFramework(generationId, invalidClassification), /invalid framework materialization|classification/i);
+  assert.throws(() => store.writeCandidateFramework(generationId, invalidClassification), /invalid framework materialization|accepted output|classification/i);
 
   const conflict = materialization({ entities: [route, { ...route, displayName: "/other" }] });
   assert.throws(() => store.writeCandidateFramework(generationId, conflict), /duplicate|conflict|invalid framework materialization/i);
