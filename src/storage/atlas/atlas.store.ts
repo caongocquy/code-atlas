@@ -21,7 +21,29 @@ import type {
   IndexMetadata,
   LexicalFileUpdate,
   LexicalSearchRow,
+  FrameworkQueryInputs,
 } from "./atlas.types.js";
+import {
+  decodeFrameworkAcceptedOutput,
+  frameworkEntityKey,
+  frameworkSubjectKey,
+} from "../../core/framework/framework-identity.js";
+import type {
+  DetectionResult,
+  FrameworkClassification,
+  FrameworkConfigFact,
+  FrameworkCoverage,
+  FrameworkDependency,
+  FrameworkDiagnostic,
+  FrameworkEntity,
+  FrameworkEntityRef,
+  FrameworkId,
+  FrameworkMaterialization,
+  FrameworkProvenance,
+  FrameworkRelationship,
+  FrameworkSnapshot,
+  FrameworkSubjectRef,
+} from "../../core/framework/framework.types.js";
 import type {
   GraphResolutionFile,
   ResolutionCoverage,
@@ -35,6 +57,324 @@ import { withProvenance } from "../../core/graph/resolver/provenance.js";
 import { isSymbolIdentityKey } from "../../core/graph/resolver/identities.js";
 
 export const DEFAULT_ATLAS_DB_PATH = ".codeatlas/atlas.db";
+
+const MAX_FRAMEWORK_ITEMS = 100_000;
+const MAX_FRAMEWORK_REFS = 32;
+const MAX_FRAMEWORK_STRING_LENGTH = 4_096;
+const MAX_FRAMEWORK_RECORD_JSON_LENGTH = 256 * 1024;
+const MAX_FRAMEWORK_STATE_JSON_LENGTH = 2 * 1024 * 1024;
+const FRAMEWORK_IDS: readonly FrameworkId[] = ["react", "next", "nestjs", "spring", "flutter"];
+const FRAMEWORK_RELATION_KINDS: readonly FrameworkRelationship["relationKind"][] = [
+  "component_usage",
+  "route_binding",
+  "layout_binding",
+  "controller_route",
+  "module_provider",
+  "dependency_injection",
+  "bean_relationship",
+  "widget_composition",
+  "navigation_binding",
+];
+
+type JsonRecord = Record<string, unknown>;
+
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasExactKeys(value: JsonRecord, keys: readonly string[]): boolean {
+  const expected = new Set(keys);
+  return Object.keys(value).every((key) => expected.has(key))
+    && keys.every((key) => Object.prototype.hasOwnProperty.call(value, key));
+}
+
+function isBoundedString(value: unknown, maxLength = MAX_FRAMEWORK_STRING_LENGTH): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= maxLength;
+}
+
+function isSafeRelativePath(value: unknown, allowEmpty = false): value is string {
+  if (typeof value !== "string" || value.length > MAX_FRAMEWORK_STRING_LENGTH) return false;
+  if (!allowEmpty && value.length === 0) return false;
+  if (value.startsWith("/") || /^[A-Za-z]:[\\/]/.test(value) || value.includes("\\")) return false;
+  return value.split("/").every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
+}
+
+function stableClone(value: unknown): unknown {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new TypeError("Framework JSON contains a non-finite number");
+    return value;
+  }
+  if (Array.isArray(value)) return value.map(stableClone);
+  if (isRecord(value)) {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stableClone(value[key])]));
+  }
+  throw new TypeError("Framework JSON contains an unsupported value");
+}
+
+function stableJson(value: unknown, maxLength = MAX_FRAMEWORK_RECORD_JSON_LENGTH): string {
+  let serialized: string | undefined;
+  try {
+    serialized = JSON.stringify(stableClone(value));
+  } catch (error) {
+    throw new TypeError(`Invalid framework JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!serialized || serialized.length > maxLength) throw new RangeError("Framework JSON payload is oversize");
+  return serialized;
+}
+
+function parseJson(value: string, maxLength = MAX_FRAMEWORK_RECORD_JSON_LENGTH): unknown {
+  if (value.length > maxLength) throw new RangeError("Framework JSON payload is oversize");
+  return JSON.parse(value) as unknown;
+}
+
+function sortedUniqueStrings(value: unknown, label: string, allowEmpty = false): string[] {
+  if (!Array.isArray(value) || value.length > MAX_FRAMEWORK_REFS) throw new TypeError(`${label} must contain at most ${MAX_FRAMEWORK_REFS} items`);
+  const values = value.map((item) => {
+    if (typeof item !== "string" || item.length > MAX_FRAMEWORK_STRING_LENGTH || (!allowEmpty && item.length === 0)) {
+      throw new TypeError(`${label} contains an invalid string`);
+    }
+    return item;
+  });
+  if (new Set(values).size !== values.length) throw new TypeError(`${label} contains duplicates`);
+  return values.sort((left, right) => left.localeCompare(right));
+}
+
+function normalizeEvidenceRef(value: unknown, framework: FrameworkId): FrameworkProvenance["refs"][number] {
+  const decoded = decodeFrameworkAcceptedOutput({
+    outputKind: "classification",
+    subject: { kind: "language", nodeId: "framework-diagnostic-subject" },
+    classificationKind: "execution_boundary",
+    classificationValue: "client",
+    provenance: {
+      origin: "framework_inferred",
+      framework,
+      adapterId: "storage-validation",
+      adapterVersion: "1",
+      strategy: "storage-validation",
+      confidence: "exact",
+      evidenceIds: ["storage-validation"],
+      refs: [value],
+    },
+  });
+  if (!decoded) throw new TypeError("Invalid framework evidence reference");
+  return decoded.provenance.refs[0]!;
+}
+
+function normalizeEvidenceLists(framework: FrameworkId, evidenceIds: unknown, refs: unknown): { evidenceIds: string[]; refs: FrameworkProvenance["refs"] } {
+  const normalizedEvidenceIds = sortedUniqueStrings(evidenceIds, "evidenceIds");
+  if (!Array.isArray(refs) || refs.length > MAX_FRAMEWORK_REFS) throw new TypeError("refs must contain at most 32 items");
+  const normalizedRefs = refs.map((ref) => normalizeEvidenceRef(ref, framework));
+  const refKeys = normalizedRefs.map((ref) => stableJson(ref));
+  if (new Set(refKeys).size !== refKeys.length) throw new TypeError("refs contains duplicates");
+  normalizedRefs.sort((left, right) => stableJson(left).localeCompare(stableJson(right)));
+  return { evidenceIds: normalizedEvidenceIds, refs: normalizedRefs };
+}
+
+function normalizeProvenance(value: unknown): FrameworkProvenance {
+  if (!isRecord(value)) throw new TypeError("Invalid framework provenance");
+  const decoded = decodeFrameworkAcceptedOutput({
+    outputKind: "classification",
+    subject: { kind: "language", nodeId: "framework-provenance-subject" },
+    classificationKind: "execution_boundary",
+    classificationValue: "client",
+    provenance: value,
+  });
+  if (!decoded) throw new TypeError("Invalid framework provenance");
+  const lists = normalizeEvidenceLists(decoded.provenance.framework, decoded.provenance.evidenceIds, decoded.provenance.refs);
+  return {
+    origin: "framework_inferred",
+    framework: decoded.provenance.framework,
+    adapterId: decoded.provenance.adapterId,
+    adapterVersion: decoded.provenance.adapterVersion,
+    strategy: decoded.provenance.strategy,
+    confidence: decoded.provenance.confidence,
+    evidenceIds: lists.evidenceIds,
+    refs: lists.refs,
+  };
+}
+
+function normalizeEntity(value: unknown): FrameworkEntity {
+  if (!isRecord(value) || !hasExactKeys(value, ["ref", "displayName", "provenance"]) || !isBoundedString(value.displayName)) {
+    throw new TypeError("Invalid framework entity");
+  }
+  const ref = value.ref as FrameworkEntityRef;
+  const key = frameworkEntityKey(ref);
+  void key;
+  const provenance = normalizeProvenance(value.provenance);
+  if (provenance.framework !== ref.framework) throw new TypeError("Framework entity provenance does not match its framework");
+  const result = { ref: { framework: ref.framework, kind: ref.kind, logicalKey: ref.logicalKey }, displayName: value.displayName, provenance };
+  stableJson(result);
+  return result;
+}
+
+function normalizeSubject(value: unknown): FrameworkSubjectRef {
+  if (!isRecord(value) || typeof value.kind !== "string") throw new TypeError("Invalid framework subject");
+  if (value.kind === "language" && hasExactKeys(value, ["kind", "nodeId"]) && isBoundedString(value.nodeId)) {
+    const result: FrameworkSubjectRef = { kind: "language", nodeId: value.nodeId };
+    frameworkSubjectKey(result);
+    return result;
+  }
+  if (value.kind === "framework" && hasExactKeys(value, ["kind", "entity"])) {
+    const entity = value.entity as FrameworkEntityRef;
+    frameworkEntityKey(entity);
+    const result: FrameworkSubjectRef = { kind: "framework", entity: { framework: entity.framework, kind: entity.kind, logicalKey: entity.logicalKey } };
+    frameworkSubjectKey(result);
+    return result;
+  }
+  throw new TypeError("Invalid framework subject");
+}
+
+function normalizeAcceptedOutput(value: unknown): FrameworkRelationship | FrameworkClassification {
+  const decoded = decodeFrameworkAcceptedOutput(value);
+  if (!decoded) throw new TypeError("Invalid framework accepted output");
+  const provenance = normalizeProvenance(decoded.provenance);
+  if (decoded.outputKind === "relationship") {
+    if (!FRAMEWORK_RELATION_KINDS.includes(decoded.relationKind)) throw new TypeError("Invalid framework relationship kind");
+    const result: FrameworkRelationship = {
+      outputKind: "relationship",
+      source: normalizeSubject(decoded.source),
+      target: normalizeSubject(decoded.target),
+      relationKind: decoded.relationKind,
+      provenance,
+    };
+    stableJson(result);
+    return result;
+  }
+  if (decoded.classificationKind !== "execution_boundary" || (decoded.classificationValue !== "client" && decoded.classificationValue !== "server")) {
+    throw new TypeError("Invalid framework classification kind or value");
+  }
+  const result: FrameworkClassification = {
+    outputKind: "classification",
+    subject: normalizeSubject(decoded.subject),
+    classificationKind: decoded.classificationKind,
+    classificationValue: decoded.classificationValue,
+    provenance,
+  };
+  stableJson(result);
+  return result;
+}
+
+function isFrameworkId(value: unknown): value is FrameworkId {
+  return typeof value === "string" && FRAMEWORK_IDS.includes(value as FrameworkId);
+}
+
+function normalizeEvidenceMetadata(framework: FrameworkId, evidenceIds: unknown, refs: unknown): { evidenceIds: string[]; refs: FrameworkProvenance["refs"] } {
+  return normalizeEvidenceLists(framework, evidenceIds, refs);
+}
+
+function normalizeConfigValue(value: unknown, depth = 0): unknown {
+  if (depth > 16 || value === undefined || typeof value === "function" || typeof value === "symbol") throw new TypeError("Invalid framework config value");
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (Array.isArray(value)) return value.map((item) => normalizeConfigValue(item, depth + 1));
+  if (isRecord(value)) return Object.fromEntries(Object.keys(value).sort().map((key) => [key, normalizeConfigValue(value[key], depth + 1)]));
+  throw new TypeError("Invalid framework config value");
+}
+
+function normalizeConfig(value: unknown): FrameworkConfigFact {
+  if (!isRecord(value) || !hasExactKeys(value, ["relativePath", "scope", "inputKey", "kind", "values", "complete"])
+    || !isSafeRelativePath(value.relativePath) || !isBoundedString(value.scope) || !isBoundedString(value.inputKey)
+    || !["package", "next", "maven", "gradle", "pubspec"].includes(String(value.kind)) || typeof value.complete !== "boolean" || !isRecord(value.values)) {
+    throw new TypeError("Invalid framework config fact");
+  }
+  const result = { relativePath: value.relativePath, scope: value.scope, inputKey: value.inputKey, kind: value.kind as FrameworkConfigFact["kind"], values: normalizeConfigValue(value.values) as FrameworkConfigFact["values"], complete: value.complete };
+  stableJson(result);
+  return result;
+}
+
+function normalizeDetection(value: unknown): DetectionResult {
+  if (!isRecord(value) || !hasExactKeys(value, ["framework", "scope", "configured", "observed", "capabilities", "refs", "complete"])
+    || !isFrameworkId(value.framework) || !isBoundedString(value.scope) || typeof value.configured !== "boolean" || typeof value.observed !== "boolean" || typeof value.complete !== "boolean") {
+    throw new TypeError("Invalid framework detection");
+  }
+  const metadata = normalizeEvidenceMetadata(value.framework, ["detection"], value.refs);
+  const capabilities = sortedUniqueStrings(value.capabilities, "capabilities", false);
+  const result: DetectionResult = { framework: value.framework, scope: value.scope, configured: value.configured, observed: value.observed, capabilities, refs: metadata.refs, complete: value.complete };
+  stableJson(result);
+  return result;
+}
+
+function normalizeDependency(value: unknown): FrameworkDependency {
+  if (!isRecord(value) || !hasExactKeys(value, ["framework", "scope", "ownerPath", "inputKeys", "lookupKeys", "complete"])
+    || !isFrameworkId(value.framework) || !isBoundedString(value.scope) || !isSafeRelativePath(value.ownerPath) || typeof value.complete !== "boolean") {
+    throw new TypeError("Invalid framework dependency");
+  }
+  const result: FrameworkDependency = { framework: value.framework, scope: value.scope, ownerPath: value.ownerPath, inputKeys: sortedUniqueStrings(value.inputKeys, "inputKeys"), lookupKeys: sortedUniqueStrings(value.lookupKeys, "lookupKeys"), complete: value.complete };
+  stableJson(result);
+  return result;
+}
+
+function normalizeDiagnostic(value: unknown): FrameworkDiagnostic {
+  const codes = ["framework_construct_unsupported", "framework_target_ambiguous", "framework_target_unknown", "framework_budget_exhausted", "framework_config_incomplete", "framework_adapter_failed", "framework_entity_identity_collision", "framework_subject_ambiguous", "framework_subject_unknown", "framework_classification_conflict"] as const;
+  const outcomes = ["ambiguous", "unknown", "unsupported", "budget_exhausted", "adapter_failed"] as const;
+  if (!isRecord(value) || !hasExactKeys(value, ["code", "outcome", "framework", "capability", "relativePath", "strategy", "evidenceIds", "refs", "reason"])
+    || !codes.includes(value.code as typeof codes[number]) || !outcomes.includes(value.outcome as typeof outcomes[number]) || !isFrameworkId(value.framework)
+    || !isBoundedString(value.capability) || !isSafeRelativePath(value.relativePath, true) || !isBoundedString(value.strategy) || !isBoundedString(value.reason)) {
+    throw new TypeError("Invalid framework diagnostic");
+  }
+  if (value.code === "framework_adapter_failed" && value.outcome !== "adapter_failed") throw new TypeError("Adapter failure diagnostic has an invalid outcome");
+  const metadata = normalizeEvidenceMetadata(value.framework, value.evidenceIds, value.refs);
+  const result: FrameworkDiagnostic = { code: value.code as FrameworkDiagnostic["code"], outcome: value.outcome as FrameworkDiagnostic["outcome"], framework: value.framework, capability: value.capability, relativePath: value.relativePath, strategy: value.strategy, evidenceIds: metadata.evidenceIds, refs: metadata.refs, reason: value.reason };
+  stableJson(result);
+  return result;
+}
+
+function normalizeCoverage(value: unknown): FrameworkCoverage {
+  if (!isRecord(value) || !hasExactKeys(value, ["framework", "capability", "relativePath", "strategy", "outputKind", "kind", "applicable", "supported", "attempted", "resolved", "ambiguous", "unknown", "unsupported", "budgetExhausted", "weakDropped"])
+    || !isFrameworkId(value.framework) || !isBoundedString(value.capability) || !isSafeRelativePath(value.relativePath, true) || !isBoundedString(value.strategy)
+    || (value.outputKind !== "relationship" && value.outputKind !== "classification")) throw new TypeError("Invalid framework coverage");
+  const validKind = value.outputKind === "relationship" ? FRAMEWORK_RELATION_KINDS.includes(value.kind as FrameworkRelationship["relationKind"]) : value.kind === "execution_boundary";
+  if (!validKind) throw new TypeError("Invalid framework coverage kind");
+  const counts = ["applicable", "supported", "attempted", "resolved", "ambiguous", "unknown", "unsupported", "budgetExhausted", "weakDropped"] as const;
+  for (const count of counts) if (!Number.isInteger(value[count]) || (value[count] as number) < 0) throw new TypeError("Framework coverage counts must be non-negative integers");
+  const result = { framework: value.framework, capability: value.capability, relativePath: value.relativePath, strategy: value.strategy, outputKind: value.outputKind, kind: value.kind, ...Object.fromEntries(counts.map((count) => [count, value[count]])) } as FrameworkCoverage;
+  stableJson(result);
+  return result;
+}
+
+function dedupeRecords<T>(records: readonly T[], key: (record: T) => string, label: string): T[] {
+  const byKey = new Map<string, { record: T; json: string }>();
+  for (const record of records) {
+    const recordKey = key(record);
+    const json = stableJson(record);
+    const existing = byKey.get(recordKey);
+    if (existing && existing.json !== json) throw new TypeError(`Conflicting duplicate framework ${label}`);
+    if (!existing) byKey.set(recordKey, { record, json });
+  }
+  return [...byKey.values()].sort((left, right) => key(left.record).localeCompare(key(right.record))).map((entry) => entry.record);
+}
+
+function normalizeMaterialization(value: unknown, languageNodeIds: ReadonlySet<string>): FrameworkMaterialization {
+  if (!isRecord(value) || !hasExactKeys(value, ["frameworkResolutionVersion", "entities", "relationships", "classifications", "diagnostics", "coverage", "config", "detections", "dependencies", "complete"])
+    || !isBoundedString(value.frameworkResolutionVersion) || typeof value.complete !== "boolean") throw new TypeError("Invalid framework materialization");
+  const arrays = ["entities", "relationships", "classifications", "diagnostics", "coverage", "config", "detections", "dependencies"] as const;
+  for (const name of arrays) if (!Array.isArray(value[name]) || value[name].length > MAX_FRAMEWORK_ITEMS) throw new RangeError("Framework materialization has too many records");
+
+  const entities = dedupeRecords((value.entities as unknown[]).map(normalizeEntity), (record) => frameworkEntityKey(record.ref), "entities");
+  const entityKeys = new Set(entities.map((record) => frameworkEntityKey(record.ref)));
+  const relationshipOutputs = (value.relationships as unknown[]).map(normalizeAcceptedOutput);
+  if (relationshipOutputs.some((record) => record.outputKind !== "relationship")) throw new TypeError("Framework relationships contain a classification");
+  const relationships = dedupeRecords(relationshipOutputs as FrameworkRelationship[], (record) => stableJson([frameworkSubjectKey(record.source), frameworkSubjectKey(record.target), record.relationKind]), "relationships");
+  const classificationOutputs = (value.classifications as unknown[]).map(normalizeAcceptedOutput);
+  if (classificationOutputs.some((record) => record.outputKind !== "classification")) throw new TypeError("Framework classifications contain a relationship");
+  const classifications = dedupeRecords(classificationOutputs as FrameworkClassification[], (record) => stableJson([frameworkSubjectKey(record.subject), record.classificationKind]), "classifications");
+  const checkSubject = (subject: FrameworkSubjectRef): void => {
+    if (subject.kind === "language" && !languageNodeIds.has(subject.nodeId)) throw new TypeError("Framework output has a dangling language node");
+    if (subject.kind === "framework" && !entityKeys.has(frameworkEntityKey(subject.entity))) throw new TypeError("Framework output has a dangling framework entity");
+  };
+  for (const relationship of relationships) { checkSubject(relationship.source); checkSubject(relationship.target); }
+  for (const classification of classifications) checkSubject(classification.subject);
+
+  const diagnostics = dedupeRecords((value.diagnostics as unknown[]).map(normalizeDiagnostic), (record) => stableJson([record.code, record.outcome, record.framework, record.capability, record.relativePath, record.strategy]), "diagnostics");
+  const coverage = dedupeRecords((value.coverage as unknown[]).map(normalizeCoverage), (record) => stableJson([record.framework, record.capability, record.relativePath, record.strategy, record.outputKind, record.kind]), "coverage");
+  const config = dedupeRecords((value.config as unknown[]).map(normalizeConfig), (record) => stableJson([record.relativePath, record.scope, record.inputKey, record.kind]), "config");
+  const detections = dedupeRecords((value.detections as unknown[]).map(normalizeDetection), (record) => stableJson([record.framework, record.scope]), "detections");
+  const dependencies = dedupeRecords((value.dependencies as unknown[]).map(normalizeDependency), (record) => stableJson([record.framework, record.scope, record.ownerPath]), "dependencies");
+  const result: FrameworkMaterialization = { frameworkResolutionVersion: value.frameworkResolutionVersion, entities, relationships, classifications, diagnostics, coverage, config, detections, dependencies, complete: value.complete };
+  stableJson(result, MAX_FRAMEWORK_STATE_JSON_LENGTH);
+  return result;
+}
 
 type RepositoryRow = {
   id: string;
@@ -158,8 +498,10 @@ function restoreResolution(row: StoredResolution): GraphEdge["resolution"] | und
 
 export class AtlasStore {
   private readonly database: DatabaseSync;
+  private readonly readOnly: boolean;
 
   constructor(databasePath = DEFAULT_ATLAS_DB_PATH, options: { readOnly?: boolean } = {}) {
+    this.readOnly = options.readOnly === true;
     if (!options.readOnly) ensureDatabaseDirectory(databasePath);
 
     const database = new DatabaseSync(
@@ -476,6 +818,24 @@ export class AtlasStore {
   }
 
   loadGraph(repoId: string): CodeGraph {
+    return this.loadGraphInternal(repoId);
+  }
+
+  loadFramework(repositoryId: string, generationId?: string): FrameworkSnapshot | undefined {
+    return this.readTransaction(() => this.loadFrameworkInternal(repositoryId, generationId));
+  }
+
+  loadFrameworkQueryInputs(repositoryId: string): FrameworkQueryInputs {
+    return this.readTransaction(() => {
+      const framework = this.loadFrameworkInternal(repositoryId);
+      return {
+        graph: this.loadGraphInternal(repositoryId),
+        framework,
+      };
+    });
+  }
+
+  private loadGraphInternal(repoId: string): CodeGraph {
     const indexState = this.getRepositoryIndexState(repoId);
     if (indexState) {
       return indexState.activeGenerationId
@@ -889,6 +1249,93 @@ export class AtlasStore {
         }
       }
       void fileHashes;
+      this.database.exec("COMMIT;");
+    } catch (error) {
+      this.database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  writeCandidateFramework(generationId: string, materialization: FrameworkMaterialization): void {
+    if (this.readOnly) throw new Error("AtlasStore is read-only");
+    this.database.exec("BEGIN IMMEDIATE;");
+    try {
+      const generation = this.generationRepository(generationId);
+      const languageNodeRows = this.database.prepare(
+        "SELECT id FROM generation_symbols WHERE repository_id = ? AND generation_id = ?",
+      ).all(generation.repository_id, generationId) as Array<{ id: string }>;
+      const normalized = normalizeMaterialization(materialization, new Set(languageNodeRows.map((row) => row.id)));
+
+      for (const table of [
+        "generation_framework_entities",
+        "generation_framework_relationships",
+        "generation_framework_classifications",
+        "generation_framework_diagnostics",
+        "generation_framework_coverage",
+        "generation_framework_state",
+      ]) {
+        this.database.prepare(`DELETE FROM ${table} WHERE repository_id = ? AND generation_id = ?`).run(generation.repository_id, generationId);
+      }
+
+      const insertEntity = this.database.prepare(
+        `INSERT INTO generation_framework_entities
+         (repository_id, generation_id, entity_key, framework, kind, logical_key, payload_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      );
+      for (const entity of normalized.entities) {
+        const entityKey = frameworkEntityKey(entity.ref);
+        insertEntity.run(generation.repository_id, generationId, entityKey, entity.ref.framework, entity.ref.kind, entity.ref.logicalKey, stableJson(entity));
+      }
+
+      const insertRelationship = this.database.prepare(
+        `INSERT INTO generation_framework_relationships
+         (repository_id, generation_id, output_key, payload_json)
+         VALUES (?, ?, ?, ?)`,
+      );
+      for (const relationship of normalized.relationships) {
+        insertRelationship.run(generation.repository_id, generationId, stableJson([frameworkSubjectKey(relationship.source), frameworkSubjectKey(relationship.target), relationship.relationKind]), stableJson(relationship));
+      }
+
+      const insertClassification = this.database.prepare(
+        `INSERT INTO generation_framework_classifications
+         (repository_id, generation_id, subject_key, classification_kind, payload_json)
+         VALUES (?, ?, ?, ?, ?)`,
+      );
+      for (const classification of normalized.classifications) {
+        insertClassification.run(generation.repository_id, generationId, frameworkSubjectKey(classification.subject), classification.classificationKind, stableJson(classification));
+      }
+
+      const insertDiagnostic = this.database.prepare(
+        `INSERT INTO generation_framework_diagnostics
+         (repository_id, generation_id, diagnostic_key, payload_json)
+         VALUES (?, ?, ?, ?)`,
+      );
+      for (const diagnostic of normalized.diagnostics) {
+        insertDiagnostic.run(generation.repository_id, generationId, stableJson([diagnostic.code, diagnostic.outcome, diagnostic.framework, diagnostic.capability, diagnostic.relativePath, diagnostic.strategy]), stableJson(diagnostic));
+      }
+
+      const insertCoverage = this.database.prepare(
+        `INSERT INTO generation_framework_coverage
+         (repository_id, generation_id, dimension_key, payload_json)
+         VALUES (?, ?, ?, ?)`,
+      );
+      for (const coverage of normalized.coverage) {
+        insertCoverage.run(generation.repository_id, generationId, stableJson([coverage.framework, coverage.capability, coverage.relativePath, coverage.strategy, coverage.outputKind, coverage.kind]), stableJson(coverage));
+      }
+
+      this.database.prepare(
+        `INSERT INTO generation_framework_state
+         (repository_id, generation_id, framework_resolution_version, config_json, detections_json, dependencies_json, complete)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        generation.repository_id,
+        generationId,
+        normalized.frameworkResolutionVersion,
+        stableJson(normalized.config, MAX_FRAMEWORK_STATE_JSON_LENGTH),
+        stableJson(normalized.detections, MAX_FRAMEWORK_STATE_JSON_LENGTH),
+        stableJson(normalized.dependencies, MAX_FRAMEWORK_STATE_JSON_LENGTH),
+        normalized.complete ? 1 : 0,
+      );
       this.database.exec("COMMIT;");
     } catch (error) {
       this.database.exec("ROLLBACK;");
@@ -1864,6 +2311,107 @@ export class AtlasStore {
       nodes: nodes.map((row) => ({ id: row.id, type: row.type as GraphNodeType, name: row.name, qualifiedName: row.qualified_name ?? undefined, file: row.file_path, startLine: row.start_line ?? undefined, endLine: row.end_line ?? undefined })),
       edges: edges.map((row) => ({ from: row.from_symbol_id, to: row.to_symbol_id, type: row.type as GraphEdgeType, ...(row.resolution_method ? { resolutionMethod: row.resolution_method as GraphEdge["resolutionMethod"] } : {}), ...(row.evidence_kind ? { evidenceKind: row.evidence_kind } : {}), ...(row.confidence !== null ? { confidence: row.confidence } : {}), ...(row.resolution_file && row.resolution_line !== null ? { resolutionSource: { file: row.resolution_file, line: row.resolution_line } } : {}), ...(restoreResolution(row) ? { resolution: restoreResolution(row) } : {}) })),
     };
+  }
+
+  private loadFrameworkInternal(repositoryId: string, requestedGenerationId?: string): FrameworkSnapshot | undefined {
+    const frameworkTables = [
+      "generation_framework_entities",
+      "generation_framework_relationships",
+      "generation_framework_classifications",
+      "generation_framework_diagnostics",
+      "generation_framework_coverage",
+      "generation_framework_state",
+    ];
+    if (frameworkTables.some((table) => !this.hasTable(table))) return undefined;
+    const generationId = requestedGenerationId ?? this.getActiveGenerationId(repositoryId);
+    if (!generationId) return undefined;
+    const generation = this.database.prepare(
+      "SELECT id FROM index_generations WHERE id = ? AND repository_id = ?",
+    ).get(generationId, repositoryId) as { id: string } | undefined;
+    if (!generation) return undefined;
+    try {
+      const state = this.database.prepare(
+        `SELECT framework_resolution_version, config_json, detections_json, dependencies_json, complete
+         FROM generation_framework_state WHERE repository_id = ? AND generation_id = ?`,
+      ).get(repositoryId, generationId) as { framework_resolution_version: string; config_json: string; detections_json: string; dependencies_json: string; complete: number } | undefined;
+      if (!state || state.complete !== 1 || !isBoundedString(state.framework_resolution_version)) return undefined;
+
+      const entityRows = this.database.prepare(
+        `SELECT entity_key, payload_json FROM generation_framework_entities
+         WHERE repository_id = ? AND generation_id = ? ORDER BY entity_key`,
+      ).all(repositoryId, generationId) as Array<{ entity_key: string; payload_json: string }>;
+      const relationshipRows = this.database.prepare(
+        `SELECT output_key, payload_json FROM generation_framework_relationships
+         WHERE repository_id = ? AND generation_id = ? ORDER BY output_key`,
+      ).all(repositoryId, generationId) as Array<{ output_key: string; payload_json: string }>;
+      const classificationRows = this.database.prepare(
+        `SELECT subject_key, classification_kind, payload_json FROM generation_framework_classifications
+         WHERE repository_id = ? AND generation_id = ? ORDER BY subject_key, classification_kind`,
+      ).all(repositoryId, generationId) as Array<{ subject_key: string; classification_kind: string; payload_json: string }>;
+      const diagnosticRows = this.database.prepare(
+        `SELECT diagnostic_key, payload_json FROM generation_framework_diagnostics
+         WHERE repository_id = ? AND generation_id = ? ORDER BY diagnostic_key`,
+      ).all(repositoryId, generationId) as Array<{ diagnostic_key: string; payload_json: string }>;
+      const coverageRows = this.database.prepare(
+        `SELECT dimension_key, payload_json FROM generation_framework_coverage
+         WHERE repository_id = ? AND generation_id = ? ORDER BY dimension_key`,
+      ).all(repositoryId, generationId) as Array<{ dimension_key: string; payload_json: string }>;
+
+      const entities = entityRows.map((row) => {
+        const entity = normalizeEntity(parseJson(row.payload_json));
+        if (frameworkEntityKey(entity.ref) !== row.entity_key) throw new TypeError("Corrupt framework entity key");
+        return entity;
+      });
+      const relationships = relationshipRows.map((row) => {
+        const relationship = normalizeAcceptedOutput(parseJson(row.payload_json));
+        if (relationship.outputKind !== "relationship") throw new TypeError("Corrupt framework relationship payload");
+        const key = stableJson([frameworkSubjectKey(relationship.source), frameworkSubjectKey(relationship.target), relationship.relationKind]);
+        if (key !== row.output_key) throw new TypeError("Corrupt framework relationship key");
+        return relationship;
+      });
+      const classifications = classificationRows.map((row) => {
+        const classification = normalizeAcceptedOutput(parseJson(row.payload_json));
+        if (classification.outputKind !== "classification") throw new TypeError("Corrupt framework classification payload");
+        if (frameworkSubjectKey(classification.subject) !== row.subject_key || classification.classificationKind !== row.classification_kind) throw new TypeError("Corrupt framework classification key");
+        return classification;
+      });
+      const diagnostics = diagnosticRows.map((row) => {
+        const diagnostic = normalizeDiagnostic(parseJson(row.payload_json));
+        if (stableJson([diagnostic.code, diagnostic.outcome, diagnostic.framework, diagnostic.capability, diagnostic.relativePath, diagnostic.strategy]) !== row.diagnostic_key) throw new TypeError("Corrupt framework diagnostic key");
+        return diagnostic;
+      });
+      const coverage = coverageRows.map((row) => {
+        const item = normalizeCoverage(parseJson(row.payload_json));
+        if (stableJson([item.framework, item.capability, item.relativePath, item.strategy, item.outputKind, item.kind]) !== row.dimension_key) throw new TypeError("Corrupt framework coverage key");
+        return item;
+      });
+      const config = parseJson(state.config_json, MAX_FRAMEWORK_STATE_JSON_LENGTH);
+      const detections = parseJson(state.detections_json, MAX_FRAMEWORK_STATE_JSON_LENGTH);
+      const dependencies = parseJson(state.dependencies_json, MAX_FRAMEWORK_STATE_JSON_LENGTH);
+      const languageNodeIds = new Set((this.database.prepare(
+        "SELECT id FROM generation_symbols WHERE repository_id = ? AND generation_id = ?",
+      ).all(repositoryId, generationId) as Array<{ id: string }>).map((row) => row.id));
+      const normalized = normalizeMaterialization({ frameworkResolutionVersion: state.framework_resolution_version, entities, relationships, classifications, diagnostics, coverage, config, detections, dependencies, complete: true }, languageNodeIds);
+      return { repositoryId, generationId, ...normalized };
+    } catch {
+      return undefined;
+    }
+  }
+
+  private readTransaction<T>(read: () => T): T {
+    this.database.exec("BEGIN;");
+    try {
+      const result = read();
+      this.database.exec("COMMIT;");
+      return result;
+    } catch (error) {
+      try {
+        this.database.exec("ROLLBACK;");
+      } catch {
+        // Preserve the original read/decode error.
+      }
+      throw error;
+    }
   }
 
   close(): void {
