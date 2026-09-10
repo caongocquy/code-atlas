@@ -7,6 +7,8 @@ export type IndexWorkCounters = {
   filesResolved: number;
   importersInvalidated: number;
   fullResolutionFallbacks: number;
+  frameworkFilesResolved: number;
+  frameworkFilesReused: number;
 };
 
 export function createIndexWorkCounters(): IndexWorkCounters {
@@ -19,6 +21,8 @@ export function createIndexWorkCounters(): IndexWorkCounters {
     filesResolved: 0,
     importersInvalidated: 0,
     fullResolutionFallbacks: 0,
+    frameworkFilesResolved: 0,
+    frameworkFilesReused: 0,
   };
 }
 

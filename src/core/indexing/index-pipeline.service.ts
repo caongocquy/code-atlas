@@ -43,6 +43,7 @@ import { createResolutionScope } from "./invalidation-planner.js";
 import type { IndexPipelineOptions, IndexingChanges, IndexRunOutcome, IndexFailure, IndexedSourceUnit, PublishedIndexRun } from "./indexing.types.js";
 import { materializeFrameworkConfig, type FrameworkConfigInput } from "../framework/framework-config.js";
 import { analyzeFramework, builtinFrameworkAdapters, detectFrameworks } from "../framework/framework-registry.js";
+import { planFrameworkInvalidation } from "../framework/framework-invalidation.js";
 import type { FrameworkAnalysisContext, FrameworkConfigFact, FrameworkConfigValue } from "../framework/framework.types.js";
 
 const RESOLVER_BUDGETS = {
@@ -492,13 +493,23 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       graph: graph.graph,
       config: frameworkConfig,
     };
+    const frameworkInvalidation = planFrameworkInvalidation({
+      paths: [...currentFiles.keys()],
+      changedInputKeys: new Set(changes.changedFiles),
+      changedLookupKeys: new Set(changes.changedFiles),
+      previous: store.loadFramework(repoId),
+      frameworkResolutionVersion: CURRENT_INDEX_VERSION_DOMAINS.frameworkResolutionVersion!,
+      topologyComplete: !requiresRepositoryResolution(plan),
+    });
+    recordIndexWork(counters, "frameworkFilesResolved", frameworkInvalidation.analyzePaths.length);
+    recordIndexWork(counters, "frameworkFilesReused", frameworkInvalidation.reusePaths.length);
     const detections = detectFrameworks(frameworkContextBase, builtinFrameworkAdapters);
     const frameworkMaterialization = analyzeFramework({
       ...frameworkContextBase,
       generationId: generation.id,
       frameworkResolutionVersion: CURRENT_INDEX_VERSION_DOMAINS.frameworkResolutionVersion!,
       detections,
-      analyzePaths: new Set(candidateInput.scope.paths),
+      analyzePaths: new Set(frameworkInvalidation.analyzePaths),
       maxObservations: 10_000,
     } satisfies FrameworkAnalysisContext, builtinFrameworkAdapters);
     store.writeCandidateFramework(generation.id, frameworkMaterialization);
