@@ -1,4 +1,4 @@
-import { canonicalizeFrameworkEntity } from "../framework-registry.js";
+import { frameworkEntityKey } from "../framework-identity.js";
 import type {
   DetectionResult, FrameworkAnalysisContext, FrameworkCanonicalRoute, FrameworkCanonicalization, FrameworkEvidence,
   FrameworkEvidenceRef, FrameworkSemanticAdapter, FrameworkSubjectRef,
@@ -8,12 +8,13 @@ const refsFor = (relativePath: string, inputKey: string): FrameworkEvidenceRef[]
 
 export function canonicalizeNextRoute(input: FrameworkCanonicalRoute): FrameworkCanonicalization {
   if (input.framework !== "next") return { kind: "unresolved", code: "framework_construct_unsupported", reason: "not a Next route" };
-  return canonicalizeFrameworkEntity({
-    ...input,
-    scope: input.scope.replaceAll("\\", "/"),
-    router: input.router.replaceAll("\\", "/"),
-    path: input.path.replaceAll("\\", "/"),
-  });
+  const scope = input.scope.replaceAll("\\", "/");
+  const router = input.router.replaceAll("\\", "/");
+  const conditions = [...new Set(input.conditions)].sort();
+  if (!scope || !router || scope.startsWith("/") || router.startsWith("/") || scope.split("/").includes("..") || router.split("/").includes("..")) return { kind: "unresolved", code: "framework_construct_unsupported", reason: "route scope or router is not canonical" };
+  const ref = { framework: "next" as const, kind: input.kind, logicalKey: JSON.stringify([scope, router, input.path.replaceAll("\\", "/"), input.method === null ? null : input.method.toUpperCase(), conditions, input.owner]) };
+  try { frameworkEntityKey(ref); return { kind: "canonical", ref }; }
+  catch { return { kind: "unresolved", code: "framework_construct_unsupported", reason: "route identity is not canonical" }; }
 }
 
 function detect(ctx: Parameters<FrameworkSemanticAdapter["detect"]>[0]): readonly DetectionResult[] {
