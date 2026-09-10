@@ -1348,6 +1348,7 @@ export class AtlasStore {
     requireLexical?: boolean;
     semanticEnabled?: boolean;
     graphStaged?: boolean;
+    frameworkStaged?: boolean;
     lexicalStaged?: boolean;
     semanticStaged?: boolean;
     deletedFiles?: string[];
@@ -1365,6 +1366,15 @@ export class AtlasStore {
       if (options.requireLexical && !options.lexicalStaged && !this.database.prepare("SELECT 1 FROM generation_lexical_documents WHERE generation_id = ? LIMIT 1").get(generationId)) throw new Error("Candidate lexical index is incomplete");
       if (options.semanticEnabled && !options.semanticStaged && !this.database.prepare("SELECT 1 FROM generation_semantic_vectors WHERE generation_id = ? LIMIT 1").get(generationId)) throw new Error("Candidate semantic index is incomplete");
       const versions = JSON.parse(generation.versions_json) as IndexVersionDomains;
+      if (versions.frameworkResolutionVersion) {
+        if (options.frameworkStaged !== true) throw new Error("Candidate framework materialization is missing");
+        const frameworkState = this.database.prepare(
+          "SELECT framework_resolution_version, complete FROM generation_framework_state WHERE repository_id = ? AND generation_id = ?",
+        ).get(generation.repository_id, generationId) as { framework_resolution_version: string; complete: number } | undefined;
+        if (!frameworkState || frameworkState.complete !== 1 || frameworkState.framework_resolution_version !== versions.frameworkResolutionVersion) {
+          throw new Error("Candidate framework materialization is incomplete");
+        }
+      }
       for (const file of options.deletedFiles ?? []) {
         for (const capability of ["graph", "lexical", "semantic"] as const) this.deleteCapabilityState(generation.repository_id, file, capability);
         this.deleteOrphanFile(generation.repository_id, file);
@@ -1378,15 +1388,16 @@ export class AtlasStore {
       this.database.prepare(
         `INSERT INTO repository_index_state
          (repository_id, active_generation_id, active_schema_version, active_facts_version,
-          active_facts_schema_version, active_resolution_version, active_derived_version,
-          active_provenance_metadata)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          active_facts_schema_version, active_framework_resolution_version, active_resolution_version,
+          active_derived_version, active_provenance_metadata)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(repository_id) DO UPDATE SET active_generation_id = excluded.active_generation_id,
            active_schema_version = excluded.active_schema_version, active_facts_version = excluded.active_facts_version,
            active_facts_schema_version = excluded.active_facts_schema_version,
+           active_framework_resolution_version = excluded.active_framework_resolution_version,
            active_resolution_version = excluded.active_resolution_version, active_derived_version = excluded.active_derived_version,
            active_provenance_metadata = excluded.active_provenance_metadata`,
-      ).run(generation.repository_id, generationId, versions.schemaVersion, versions.factsVersion, versions.factsSchemaVersion ?? null, versions.resolutionVersion, versions.derivedVersion, JSON.stringify({ semanticEnabled: options.semanticEnabled ?? false }));
+      ).run(generation.repository_id, generationId, versions.schemaVersion, versions.factsVersion, versions.factsSchemaVersion ?? null, versions.frameworkResolutionVersion ?? null, versions.resolutionVersion, versions.derivedVersion, JSON.stringify({ semanticEnabled: options.semanticEnabled ?? false }));
       this.database.exec("COMMIT;");
     } catch (error) {
       this.database.exec("ROLLBACK;");

@@ -194,7 +194,7 @@ test("persists entities, relationships, classifications and query inputs", async
     detections: [detection],
     dependencies: [dependency],
   }));
-  store.publishCandidateGeneration(generationId);
+  store.publishCandidateGeneration(generationId, { frameworkStaged: true });
 
   const inputs = store.loadFrameworkQueryInputs(repositoryId);
   assert.equal(inputs.graph.nodes.length, 2);
@@ -268,7 +268,7 @@ test("rejects missing, committed and read-only candidate framework writes", asyn
   const { repositoryId, generationId } = beginCandidate(store, root);
   assert.throws(() => store.writeCandidateFramework("missing", materialization()), /candidate generation/i);
   store.writeCandidateFramework(generationId, materialization());
-  store.publishCandidateGeneration(generationId);
+  store.publishCandidateGeneration(generationId, { frameworkStaged: true });
   assert.throws(() => store.writeCandidateFramework(generationId, materialization()), /candidate generation/i);
   store.close();
 

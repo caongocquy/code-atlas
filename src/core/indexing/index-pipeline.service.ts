@@ -42,7 +42,8 @@ import { createCandidateResolutionInput } from "./resolution-scope.js";
 import { createResolutionScope } from "./invalidation-planner.js";
 import type { IndexPipelineOptions, IndexingChanges, IndexRunOutcome, IndexFailure, IndexedSourceUnit, PublishedIndexRun } from "./indexing.types.js";
 import { materializeFrameworkConfig, type FrameworkConfigInput } from "../framework/framework-config.js";
-import type { FrameworkConfigFact, FrameworkConfigValue } from "../framework/framework.types.js";
+import { analyzeFramework, builtinFrameworkAdapters, detectFrameworks } from "../framework/framework-registry.js";
+import type { FrameworkAnalysisContext, FrameworkConfigFact, FrameworkConfigValue } from "../framework/framework.types.js";
 
 const RESOLVER_BUDGETS = {
   candidateExpansions: 1000,
@@ -484,6 +485,23 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
     if (plan.fullGraphResolution && !graphCompatible) recordIndexWork(counters, "fullResolutionFallbacks");
     const reuseResolutionPaths = plan.reasons.includes("resolution_version_changed") ? [] : plan.reusePaths;
     store.writeCandidateGraph(generation.id, graph.graph, changes.fileHashes, graphCompatible ? undefined : persistedResolution, reuseResolutionPaths);
+    const frameworkFacts = candidateInput.allUnits.map((unit) => ({ relativePath: unit.relativePath, facts: unit.facts }));
+    const frameworkContextBase = {
+      repositoryId: repoId,
+      facts: frameworkFacts,
+      graph: graph.graph,
+      config: frameworkConfig,
+    };
+    const detections = detectFrameworks(frameworkContextBase, builtinFrameworkAdapters);
+    const frameworkMaterialization = analyzeFramework({
+      ...frameworkContextBase,
+      generationId: generation.id,
+      frameworkResolutionVersion: CURRENT_INDEX_VERSION_DOMAINS.frameworkResolutionVersion!,
+      detections,
+      analyzePaths: new Set(candidateInput.scope.paths),
+      maxObservations: 10_000,
+    } satisfies FrameworkAnalysisContext, builtinFrameworkAdapters);
+    store.writeCandidateFramework(generation.id, frameworkMaterialization);
     const lexical: LexicalFileUpdate[] = units.map((unit) => ({ file: unit.relativePath, fileHash: unit.facts.contentHash, documents: toLexicalDocumentsFromFacts(repoId, unit) }));
     store.writeCandidateLexicalDocuments(generation.id, lexical);
     const semanticStartedAt = performance.now();
@@ -539,7 +557,7 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       ...plan.removedPaths,
       ...changes.deletedFiles.filter(isModuleConfigPath),
     ])];
-    store.publishCandidateGeneration(generation.id, { requireGraph: true, requireLexical: true, semanticEnabled: semanticCandidate !== undefined || semanticPreserved, graphStaged: true, lexicalStaged: true, semanticStaged: semanticCandidate !== undefined || semanticPreserved, deletedFiles, fileStates, versions: { graph: GRAPH_INDEX_VERSION, lexical: LEXICAL_INDEX_VERSION, ...(semanticCandidate ? { semantic: VECTOR_INDEX_VERSION } : {}) } });
+    store.publishCandidateGeneration(generation.id, { requireGraph: true, requireLexical: true, semanticEnabled: semanticCandidate !== undefined || semanticPreserved, graphStaged: true, frameworkStaged: true, lexicalStaged: true, semanticStaged: semanticCandidate !== undefined || semanticPreserved, deletedFiles, fileStates, versions: { graph: GRAPH_INDEX_VERSION, lexical: LEXICAL_INDEX_VERSION, ...(semanticCandidate ? { semantic: VECTOR_INDEX_VERSION } : {}) } });
 
     const totalMs = performance.now() - startedAt;
     const graphCurrent = operation === "sync" && plan.parsePaths.length === 0 && plan.removedPaths.length === 0;
