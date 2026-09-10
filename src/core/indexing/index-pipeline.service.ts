@@ -493,11 +493,17 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       graph: graph.graph,
       config: frameworkConfig,
     };
+    const previousFramework = store.loadFramework(repoId);
+    const changedConfigPaths = new Set(changes.changedFiles.filter((file) => frameworkConfig.some((item) => item.relativePath === file)));
+    const changedInputKeys = new Set([
+      ...(previousFramework?.config ?? []).filter((item) => changedConfigPaths.has(item.relativePath)).map((item) => item.inputKey),
+      ...frameworkConfig.filter((item) => changedConfigPaths.has(item.relativePath)).map((item) => item.inputKey),
+    ]);
     const frameworkInvalidation = planFrameworkInvalidation({
       paths: [...currentFiles.keys()],
-      changedInputKeys: new Set(changes.changedFiles),
+      changedInputKeys,
       changedLookupKeys: new Set(changes.changedFiles),
-      previous: store.loadFramework(repoId),
+      previous: previousFramework,
       frameworkResolutionVersion: CURRENT_INDEX_VERSION_DOMAINS.frameworkResolutionVersion!,
       topologyComplete: !requiresRepositoryResolution(plan),
     });
