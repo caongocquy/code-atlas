@@ -56,7 +56,7 @@ export const nestjsAdapter: FrameworkSemanticAdapter = {
           }
         }
       }
-      for (const parameter of materialized.facts.parameters) {
+      for (const parameter of materialized.facts.parameters ?? []) {
         if (!parameter.typeText || !parameter.ownerSymbolId) continue;
         const owners = graphNodes.filter((node) => node.id === parameter.ownerSymbolId || ((node.startLine ?? 0) <= parameter.range.startLine && (node.endLine ?? Number.MAX_SAFE_INTEGER) >= parameter.range.endLine));
         const providers = graphNodes.filter((node) => node.name === parameter.typeText);

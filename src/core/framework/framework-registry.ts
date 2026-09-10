@@ -6,6 +6,7 @@ import type {
 } from "./framework.types.js";
 import { frameworkEntityKey, frameworkSubjectKey } from "./framework-identity.js";
 import { reactNextAdapter } from "./adapters/react-next.js";
+import { nestjsAdapter } from "./adapters/nestjs.js";
 
 function sorted<T>(values: readonly T[], key: (value: T) => string): T[] {
   return [...values].sort((left, right) => key(left).localeCompare(key(right)));
@@ -116,4 +117,4 @@ export function analyzeFramework(ctx: FrameworkAnalysisContext, adapters: readon
   return { ...materialized, diagnostics: [...materialized.diagnostics, ...diagnostics].sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))) };
 }
 
-export const builtinFrameworkAdapters: readonly FrameworkSemanticAdapter[] = [reactNextAdapter];
+export const builtinFrameworkAdapters: readonly FrameworkSemanticAdapter[] = [nestjsAdapter, reactNextAdapter];
