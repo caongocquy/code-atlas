@@ -117,7 +117,7 @@ function stableJson(value: unknown, maxLength = MAX_FRAMEWORK_RECORD_JSON_LENGTH
   try {
     serialized = JSON.stringify(stableClone(value));
   } catch (error) {
-    throw new TypeError(`Invalid framework JSON: ${error instanceof Error ? error.message : String(error)}`);
+    throw new TypeError(`Invalid framework JSON: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   }
   if (!serialized || serialized.length > maxLength) throw new RangeError("Framework JSON payload is oversize");
   return serialized;
