@@ -402,6 +402,7 @@ function createCurrentSchema(database: DatabaseSync): void {
       FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
     );
 
+    DROP INDEX IF EXISTS idx_generation_framework_entities_tuple;
     CREATE INDEX IF NOT EXISTS idx_generation_symbols_active
       ON generation_symbols (repository_id, generation_id, file_path);
     CREATE INDEX IF NOT EXISTS idx_generation_edges_active
@@ -412,8 +413,6 @@ function createCurrentSchema(database: DatabaseSync): void {
       ON generation_lexical_documents (repository_id, generation_id, file);
     CREATE INDEX IF NOT EXISTS idx_generation_framework_entities_generation
       ON generation_framework_entities (repository_id, generation_id);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_generation_framework_entities_tuple
-      ON generation_framework_entities (repository_id, generation_id, framework, kind, logical_key);
     CREATE INDEX IF NOT EXISTS idx_generation_framework_relationships_generation
       ON generation_framework_relationships (repository_id, generation_id);
     CREATE INDEX IF NOT EXISTS idx_generation_framework_classifications_generation
@@ -426,6 +425,39 @@ function createCurrentSchema(database: DatabaseSync): void {
       ON generation_framework_state (repository_id, generation_id);
   `);
 
+}
+
+function rebuildFileCapabilityStateForReranker(database: DatabaseSync): void {
+  database.exec(`
+    CREATE TABLE file_capability_state_migrating (
+      repository_id TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      capability TEXT NOT NULL CHECK (capability IN ('graph', 'lexical', 'semantic', 'reranker', 'metrics')),
+      file_hash TEXT,
+      version TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('ready', 'disabled', 'not_configured', 'unavailable', 'error', 'stale')),
+      generation TEXT,
+      provider_identity TEXT,
+      item_count INTEGER NOT NULL DEFAULT 0 CHECK (item_count >= 0),
+      last_error TEXT,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (repository_id, file_path, capability),
+      FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+    );
+
+    INSERT INTO file_capability_state_migrating (
+      repository_id, file_path, capability, file_hash, version, state,
+      generation, provider_identity, item_count, last_error, updated_at
+    )
+    SELECT repository_id, file_path, capability, file_hash, version, state,
+           generation, provider_identity, item_count, last_error, updated_at
+    FROM file_capability_state;
+
+    DROP TABLE file_capability_state;
+    ALTER TABLE file_capability_state_migrating RENAME TO file_capability_state;
+    CREATE INDEX idx_capability_repo
+      ON file_capability_state (repository_id, capability);
+  `);
 }
 
 export function initializeAtlasSchema(database: DatabaseSync): void {
@@ -511,6 +543,9 @@ export function migrateAtlasSchema(database: DatabaseSync): void {
       if (!columns.some((item) => item.name === column)) {
         database.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
       }
+    }
+    if (row.version === "1") {
+      rebuildFileCapabilityStateForReranker(database);
     }
     database.exec(`
       UPDATE file_capability_state

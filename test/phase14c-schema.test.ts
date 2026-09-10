@@ -28,7 +28,6 @@ const FRAMEWORK_TABLES = [
 
 const FRAMEWORK_INDEXES = [
   "idx_generation_framework_entities_generation",
-  "idx_generation_framework_entities_tuple",
   "idx_generation_framework_relationships_generation",
   "idx_generation_framework_classifications_generation",
   "idx_generation_framework_diagnostics_generation",
@@ -250,6 +249,11 @@ function tableColumns(database: DatabaseSync, table: string): string[] {
   return (database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name);
 }
 
+function indexColumns(database: DatabaseSync, index: string): string[] {
+  const escapedIndex = index.replaceAll('"', '""');
+  return (database.prepare(`PRAGMA index_info("${escapedIndex}")`).all() as Array<{ name: string }>).map((row) => row.name);
+}
+
 test("new schema initialization rolls back metadata and all DDL after a conflict", () => {
   const database = new DatabaseSync(":memory:");
   database.exec("CREATE VIEW generation_framework_entities AS SELECT 1 AS conflict;");
@@ -345,6 +349,34 @@ test("writable schema 1 and schema 2 migrations finish at schema 3 exactly once"
   }
 });
 
+test("schema 1 migration makes reranker capability state writable", async () => {
+  await withFixture("1", ({ dbPath }) => {
+    const store = new AtlasStore(dbPath);
+    try {
+      store.setFileCapabilityState("repo", "src/index.ts", "reranker", {
+        version: "reranker-1",
+        state: "ready",
+        itemCount: 1,
+        fileHash: "file-hash",
+        providerIdentity: "reranker@test",
+      });
+
+      const state = store.getFileCapabilityState("repo", "src/index.ts", "reranker");
+      assert.equal(state?.repositoryId, "repo");
+      assert.equal(state?.file, "src/index.ts");
+      assert.equal(state?.fileHash, "file-hash");
+      assert.equal(state?.capability, "reranker");
+      assert.equal(state?.version, "reranker-1");
+      assert.equal(state?.state, "ready");
+      assert.equal(state?.providerIdentity, "reranker@test");
+      assert.equal(state?.itemCount, 1);
+      assert.match(state?.updatedAt ?? "", /^\d{4}-\d{2}-\d{2}T/);
+    } finally {
+      store.close();
+    }
+  });
+});
+
 test("unknown schema versions are refused without read-only mutation", async () => {
   const fixture = await createFixture("1");
   try {
@@ -375,12 +407,19 @@ test("framework entity tuples are unique and every generation table has an index
   const database = new DatabaseSync(":memory:");
   database.exec("PRAGMA foreign_keys = ON;");
   initializeAtlasSchema(database);
+  database.exec("CREATE UNIQUE INDEX idx_generation_framework_entities_tuple ON generation_framework_entities (repository_id, generation_id, framework, kind, logical_key)");
+  initializeAtlasSchema(database);
   database.exec(`
     INSERT INTO repositories VALUES ('repo', 'repo:key', '.', 'repo', 'created', 'updated');
     INSERT INTO index_generations VALUES ('generation', 'repo', NULL, 'committed', '{}', 'created');
     INSERT INTO generation_framework_entities VALUES ('repo', 'generation', 'entity-a', 'next', 'route', '["app","router","/users","GET",[],null]', '{}');
   `);
   assert.throws(() => database.exec("INSERT INTO generation_framework_entities VALUES ('repo', 'generation', 'entity-b', 'next', 'route', '[\"app\",\"router\",\"/users\",\"GET\",[],null]', '{}')"));
+  const tupleIndexes = (database.prepare("PRAGMA index_list(generation_framework_entities)").all() as Array<{ name: string; unique: number }>)
+    .filter((index) => index.unique === 1)
+    .filter((index) => indexColumns(database, index.name).join("|") === "repository_id|generation_id|framework|kind|logical_key");
+  assert.equal(tupleIndexes.length, 1);
+  assert.equal(database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_generation_framework_entities_tuple'").get(), undefined);
   for (const index of FRAMEWORK_INDEXES) {
     assert.equal(database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?").get(index) !== undefined, true, index);
   }
