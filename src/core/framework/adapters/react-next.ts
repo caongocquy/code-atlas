@@ -1,7 +1,7 @@
 import { canonicalizeFrameworkEntity } from "../framework-registry.js";
 import type {
-  DetectionResult, FrameworkCanonicalRoute, FrameworkCanonicalization, FrameworkEvidenceRef,
-  FrameworkSemanticAdapter,
+  DetectionResult, FrameworkAnalysisContext, FrameworkCanonicalRoute, FrameworkCanonicalization, FrameworkEvidence,
+  FrameworkEvidenceRef, FrameworkSemanticAdapter, FrameworkSubjectRef,
 } from "../framework.types.js";
 
 const refsFor = (relativePath: string, inputKey: string): FrameworkEvidenceRef[] => [{ relativePath, inputKey }];
@@ -28,10 +28,38 @@ function detect(ctx: Parameters<FrameworkSemanticAdapter["detect"]>[0]): readonl
   ];
 }
 
+function analyze(ctx: FrameworkAnalysisContext): { evidence: readonly FrameworkEvidence[]; dependencies: readonly { framework: "react" | "next"; scope: string; ownerPath: string; inputKeys: readonly string[]; lookupKeys: readonly string[]; complete: boolean }[] } {
+  const evidence: FrameworkEvidence[] = [];
+  const dependencies = [] as { framework: "react" | "next"; scope: string; ownerPath: string; inputKeys: readonly string[]; lookupKeys: readonly string[]; complete: boolean }[];
+  for (const materialized of ctx.facts) {
+    const syntax = materialized.facts.frameworkSyntax;
+    if (!syntax) continue;
+    const localNodes = ctx.graph.nodes.filter((node) => node.file === materialized.relativePath);
+    const inputKey = `facts:${materialized.relativePath}`;
+    const jsxNodes = syntax.nodes.filter((node) => node.kind === "jsx" && typeof node.name === "string" && node.name.length > 0);
+    const lookupKeys = jsxNodes.map((node) => `jsx:${node.name}`).sort();
+    dependencies.push({ framework: "react", scope: "root", ownerPath: materialized.relativePath, inputKeys: [inputKey], lookupKeys, complete: syntax.complete });
+    for (const jsx of jsxNodes) {
+      if (!jsx.name || /^[a-z]/.test(jsx.name)) continue;
+      const targetName = jsx.name.split(".").at(-1);
+      const targets = localNodes.filter((node) => node.name === targetName).map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id }));
+      const source = localNodes.filter((node) => (node.startLine ?? 0) <= jsx.range.startLine && (node.endLine ?? Number.MAX_SAFE_INTEGER) >= jsx.range.endLine)
+        .map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id }));
+      evidence.push({
+        evidenceId: `react-jsx:${materialized.relativePath}:${jsx.id}`,
+        framework: "react", adapterId: "react-next", adapterVersion: "1.0.0", strategy: "jsx-component-usage", capability: "react.component_usage",
+        relativePath: materialized.relativePath, origin: "framework_inferred", confidence: "exact", refs: refsFor(materialized.relativePath, inputKey), entities: [], applicable: true, supported: true, attempted: true, state: "candidate",
+        outputKind: "relationship", relationKind: "component_usage", sourceCandidates: source, targetCandidates: targets,
+      });
+    }
+  }
+  return { evidence, dependencies };
+}
+
 export const reactNextAdapter: FrameworkSemanticAdapter = {
   id: "react-next",
   version: "1.0.0",
   frameworks: ["react", "next"],
   detect,
-  analyze: () => ({ evidence: [], dependencies: [] }),
+  analyze,
 };
