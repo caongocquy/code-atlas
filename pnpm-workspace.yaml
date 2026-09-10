@@ -1,8 +1,10 @@
 allowBuilds:
+  '@driftlog/tree-sitter-dart': true
   esbuild: true
   onnxruntime-node: true
   protobufjs: true
   sharp: true
   tree-sitter: true
   tree-sitter-javascript: true
+  tree-sitter-kotlin: true
   tree-sitter-typescript: true
