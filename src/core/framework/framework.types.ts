@@ -50,6 +50,12 @@ export type FrameworkOutcome =
   | "unsupported"
   | "budget_exhausted";
 
+export type FrameworkInfrastructureFailure = "adapter_failed";
+
+export type FrameworkDiagnosticOutcome =
+  | Exclude<FrameworkOutcome, "resolved">
+  | FrameworkInfrastructureFailure;
+
 export interface FrameworkEvidenceRef {
   relativePath: string;
   inputKey: string;
@@ -133,13 +139,11 @@ export type FrameworkEvidence = FrameworkEvidenceBase & (
     }
 );
 
-export interface FrameworkCoverage {
+interface FrameworkCoverageBase {
   framework: FrameworkId;
   capability: string;
   relativePath: string;
   strategy: string;
-  outputKind: "relationship" | "classification";
-  kind: FrameworkRelationKind | FrameworkClassificationKind;
   applicable: number;
   supported: number;
   attempted: number;
@@ -151,9 +155,14 @@ export interface FrameworkCoverage {
   weakDropped: number;
 }
 
+export type FrameworkCoverage = FrameworkCoverageBase & (
+  | { outputKind: "relationship"; kind: FrameworkRelationKind }
+  | { outputKind: "classification"; kind: FrameworkClassificationKind }
+);
+
 export interface FrameworkDiagnostic {
   code: FrameworkDiagnosticCode;
-  outcome: Exclude<FrameworkOutcome, "resolved">;
+  outcome: FrameworkDiagnosticOutcome;
   framework: FrameworkId;
   capability: string;
   relativePath: string;

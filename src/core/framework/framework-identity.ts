@@ -8,8 +8,12 @@ import type {
   FrameworkRelationKind,
   FrameworkSubjectRef,
 } from "./framework.types.js";
+import type { SourceRangeFact } from "../facts/facts.types.js";
 
 const FRAMEWORK_IDS: readonly FrameworkId[] = ["react", "next", "nestjs", "spring", "flutter"];
+const MAX_PROVENANCE_ITEMS = 32;
+const MAX_PROVENANCE_STRING_LENGTH = 256;
+const MAX_EVIDENCE_PATH_LENGTH = 1024;
 const RELATION_KINDS: readonly FrameworkRelationKind[] = [
   "component_usage",
   "route_binding",
@@ -26,23 +30,55 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
+function isNonEmptyString(value: unknown, maxLength = Number.POSITIVE_INFINITY): value is string {
+  return typeof value === "string" && value.trim().length > 0 && value.length <= maxLength;
 }
 
 function isRepositoryRelativePath(value: unknown): value is string {
-  if (!isNonEmptyString(value)) return false;
+  if (!isNonEmptyString(value, MAX_EVIDENCE_PATH_LENGTH)) return false;
   const normalized = value.replaceAll("\\", "/");
   return !normalized.startsWith("/")
     && !/^[A-Za-z]:\//.test(normalized)
     && !normalized.split("/").includes("..");
 }
 
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function isCanonicalLogicalKey(value: unknown): value is string {
+  if (!isNonEmptyString(value)) return false;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value) as unknown;
+  } catch {
+    return false;
+  }
+
+  if (!Array.isArray(parsed) || parsed.length !== 6) return false;
+  const [scope, router, path, method, conditions, owner] = parsed;
+  if (!isRepositoryRelativePath(scope)
+    || !isRepositoryRelativePath(router)
+    || !isNonEmptyString(path)
+    || !(method === null || isNonEmptyString(method))
+    || !Array.isArray(conditions)
+    || !conditions.every((item) => typeof item === "string")
+    || !(owner === null || isNonEmptyString(owner))) {
+    return false;
+  }
+
+  const sortedConditions = [...conditions].sort();
+  return conditions.every((condition, index) => condition === sortedConditions[index])
+    && new Set(conditions).size === conditions.length
+    && JSON.stringify(parsed) === value;
+}
+
 function isFrameworkEntityRef(value: unknown): value is FrameworkEntityRef {
   return isRecord(value)
     && FRAMEWORK_IDS.includes(value.framework as FrameworkId)
     && (value.kind === "route" || value.kind === "layout")
-    && isNonEmptyString(value.logicalKey);
+    && isCanonicalLogicalKey(value.logicalKey);
 }
 
 function isSubjectRef(value: unknown): value is FrameworkSubjectRef {
@@ -51,26 +87,66 @@ function isSubjectRef(value: unknown): value is FrameworkSubjectRef {
   return value.kind === "framework" && isFrameworkEntityRef(value.entity);
 }
 
+function isSourceRange(value: unknown): value is SourceRangeFact {
+  const startLine = isRecord(value) ? value.startLine : undefined;
+  const endLine = isRecord(value) ? value.endLine : undefined;
+  if (!isRecord(value)
+    || !isNonNegativeInteger(startLine)
+    || !isNonNegativeInteger(endLine)
+    || startLine < 1
+    || endLine < startLine) {
+    return false;
+  }
+
+  const startColumn = value.startColumn;
+  const endColumn = value.endColumn;
+  if ((startColumn !== undefined && !isNonNegativeInteger(startColumn))
+    || (endColumn !== undefined && !isNonNegativeInteger(endColumn))) {
+    return false;
+  }
+
+  return startLine !== endLine
+    || startColumn === undefined
+    || endColumn === undefined
+    || endColumn >= startColumn;
+}
+
 function isEvidenceRef(value: unknown): value is FrameworkEvidenceRef {
   return isRecord(value)
     && isRepositoryRelativePath(value.relativePath)
-    && isNonEmptyString(value.inputKey)
-    && (value.localId === undefined || isNonEmptyString(value.localId))
-    && (value.range === undefined || isRecord(value.range));
+    && isNonEmptyString(value.inputKey, MAX_PROVENANCE_STRING_LENGTH)
+    && (value.localId === undefined || isNonEmptyString(value.localId, MAX_PROVENANCE_STRING_LENGTH))
+    && (value.range === undefined || isSourceRange(value.range));
+}
+
+function evidenceRefKey(ref: FrameworkEvidenceRef): string {
+  const range = ref.range;
+  return JSON.stringify([
+    ref.relativePath,
+    ref.inputKey,
+    ref.localId ?? null,
+    range === undefined ? null : [range.startLine, range.endLine, range.startColumn ?? null, range.endColumn ?? null],
+  ]);
 }
 
 function isProvenance(value: unknown): value is FrameworkProvenance {
   return isRecord(value)
     && value.origin === "framework_inferred"
     && FRAMEWORK_IDS.includes(value.framework as FrameworkId)
-    && isNonEmptyString(value.adapterId)
-    && isNonEmptyString(value.adapterVersion)
-    && isNonEmptyString(value.strategy)
+    && isNonEmptyString(value.adapterId, MAX_PROVENANCE_STRING_LENGTH)
+    && isNonEmptyString(value.adapterVersion, MAX_PROVENANCE_STRING_LENGTH)
+    && isNonEmptyString(value.strategy, MAX_PROVENANCE_STRING_LENGTH)
     && (value.confidence === "exact" || value.confidence === "strong")
     && Array.isArray(value.evidenceIds)
-    && value.evidenceIds.every(isNonEmptyString)
+    && value.evidenceIds.length > 0
+    && value.evidenceIds.length <= MAX_PROVENANCE_ITEMS
+    && value.evidenceIds.every((id) => isNonEmptyString(id, MAX_PROVENANCE_STRING_LENGTH))
+    && new Set(value.evidenceIds).size === value.evidenceIds.length
     && Array.isArray(value.refs)
-    && value.refs.every(isEvidenceRef);
+    && value.refs.length > 0
+    && value.refs.length <= MAX_PROVENANCE_ITEMS
+    && value.refs.every(isEvidenceRef)
+    && new Set(value.refs.map((ref) => evidenceRefKey(ref))).size === value.refs.length;
 }
 
 function parsePayload(payload: unknown): unknown {

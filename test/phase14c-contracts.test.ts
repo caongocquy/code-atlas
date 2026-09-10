@@ -8,7 +8,9 @@ import {
 } from "../src/core/framework/framework-identity.js";
 import type {
   FrameworkClassification,
+  FrameworkCoverage,
   FrameworkDiagnosticCode,
+  FrameworkDiagnostic,
   FrameworkEntity,
   FrameworkEntityRef,
   FrameworkProvenance,
@@ -24,15 +26,19 @@ const entityRef = (scope: string): FrameworkEntityRef => ({
   logicalKey: JSON.stringify([scope, "app", "/users", "GET", [], null]),
 });
 
-const provenance = (confidence: "exact" | "strong" | "weak"): FrameworkProvenance => ({
+const provenance = (
+  confidence: "exact" | "strong" | "weak",
+  refs: FrameworkProvenance["refs"] = [{ relativePath: "app/users/page.tsx", inputKey: "facts:1" }],
+  evidenceIds: FrameworkProvenance["evidenceIds"] = ["evidence:1"],
+): FrameworkProvenance => ({
   origin: "framework_inferred",
   framework: "next",
   adapterId: "next-conventions",
   adapterVersion: "1.0.0",
   strategy: "app-router-page",
   confidence: confidence as "exact" | "strong",
-  evidenceIds: ["evidence:1"],
-  refs: [{ relativePath: "app/users/page.tsx", inputKey: "facts:1" }],
+  evidenceIds,
+  refs,
 });
 
 const languageNode: GraphNode = {
@@ -64,6 +70,24 @@ test("framework entity keys preserve application scope", () => {
     frameworkEntityKey(entityRef("app-a")),
     JSON.stringify(["next", "route", JSON.stringify(["app-a", "app", "/users", "GET", [], null])]),
   );
+});
+
+test("framework entity keys reject malformed and noncanonical logical tuples", () => {
+  const malformedKeys = [
+    "not-json",
+    JSON.stringify(["app-a", "app", "/users", "GET", ["z", "a"], null]),
+    '["app-a", "app", "/users", "GET", [], null]',
+    JSON.stringify(["app-a", "app", "/users", "GET", [], null, "extra"]),
+    JSON.stringify(["../app-a", "app", "/users", "GET", [], null]),
+    JSON.stringify(["app-a", "../app", "/users", "GET", [], null]),
+  ];
+
+  for (const logicalKey of malformedKeys) {
+    assert.throws(
+      () => frameworkEntityKey({ framework: "next", kind: "route", logicalKey }),
+      TypeError,
+    );
+  }
 });
 
 test("framework subject keys are deterministic and variant-safe", () => {
@@ -127,6 +151,45 @@ test("weak provenance cannot cross the accepted-output decoding boundary", () =>
   );
 });
 
+test("accepted provenance rejects empty or oversized evidence and invalid ranges", () => {
+  const relationship = {
+    outputKind: "relationship",
+    source: { kind: "language", nodeId: "node:1" },
+    target: { kind: "language", nodeId: "node:2" },
+    relationKind: "component_usage",
+    provenance: provenance("exact"),
+  };
+
+  assert.equal(
+    decodeFrameworkAcceptedOutput({ ...relationship, provenance: provenance("exact", [], []) }),
+    undefined,
+  );
+  assert.equal(
+    decodeFrameworkAcceptedOutput({
+      ...relationship,
+      provenance: provenance(
+        "exact",
+        Array.from({ length: 33 }, (_, index) => ({
+          relativePath: `app/${index}.tsx`,
+          inputKey: `facts:${index}`,
+        })),
+      ),
+    }),
+    undefined,
+  );
+  assert.equal(
+    decodeFrameworkAcceptedOutput({
+      ...relationship,
+      provenance: provenance("exact", [{
+        relativePath: "app/users/page.tsx",
+        inputKey: "facts:1",
+        range: { startLine: 0, endLine: 1 },
+      }]),
+    }),
+    undefined,
+  );
+});
+
 test("framework projection is additive to the language graph", () => {
   const entity: FrameworkEntity = {
     ref: entityRef("app-a"),
@@ -160,9 +223,68 @@ test("framework projection is additive to the language graph", () => {
   assert.equal(projection.classifications.length, 0);
 });
 
-test("diagnostic vocabulary includes unresolved framework subjects", () => {
-  const code: FrameworkDiagnosticCode = "framework_subject_unknown";
-  assert.equal(code, "framework_subject_unknown");
+test("diagnostic vocabulary covers semantic and infrastructure outcomes", () => {
+  const codes: readonly FrameworkDiagnosticCode[] = [
+    "framework_construct_unsupported",
+    "framework_target_ambiguous",
+    "framework_target_unknown",
+    "framework_budget_exhausted",
+    "framework_config_incomplete",
+    "framework_adapter_failed",
+    "framework_entity_identity_collision",
+    "framework_subject_ambiguous",
+    "framework_subject_unknown",
+    "framework_classification_conflict",
+  ];
+  assert.equal(new Set(codes).size, 10);
+
+  const adapterFailure: FrameworkDiagnostic = {
+    code: "framework_adapter_failed",
+    outcome: "adapter_failed",
+    framework: "next",
+    capability: "app-router",
+    relativePath: "app/users/page.tsx",
+    strategy: "next-conventions",
+    evidenceIds: ["evidence:1"],
+    refs: [{ relativePath: "app/users/page.tsx", inputKey: "facts:1" }],
+    reason: "adapter infrastructure failed",
+  };
+  assert.equal(adapterFailure.outcome, "adapter_failed");
+});
+
+test("coverage kind is paired with its output kind", () => {
+  const relationshipCoverage: FrameworkCoverage = {
+    framework: "next",
+    capability: "route-binding",
+    relativePath: "app/users/page.tsx",
+    strategy: "app-router-page",
+    outputKind: "relationship",
+    kind: "route_binding",
+    applicable: 1,
+    supported: 1,
+    attempted: 1,
+    resolved: 1,
+    ambiguous: 0,
+    unknown: 0,
+    unsupported: 0,
+    budgetExhausted: 0,
+    weakDropped: 0,
+  };
+  const classificationCoverage: FrameworkCoverage = {
+    ...relationshipCoverage,
+    outputKind: "classification",
+    kind: "execution_boundary",
+  };
+  // @ts-expect-error A relationship kind cannot be paired with classification output.
+  const invalidClassificationCoverage: FrameworkCoverage = {
+    ...relationshipCoverage,
+    outputKind: "classification",
+    kind: "route_binding",
+  };
+  void invalidClassificationCoverage;
+
+  assert.equal(relationshipCoverage.kind, "route_binding");
+  assert.equal(classificationCoverage.kind, "execution_boundary");
 });
 
 test("identity rejects empty logical keys", () => {
