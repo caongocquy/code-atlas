@@ -230,6 +230,7 @@ function relationResult(
     limit,
     capabilityState: context.capabilityState,
     mayBeIncomplete: context.mayBeIncomplete,
+    ...(context.framework?.reliability ? { reliability: context.framework.reliability } : {}),
   };
 }
 
@@ -342,6 +343,7 @@ export function createMcpServer(): McpServer {
       candidatesTruncated: resolution.candidates.length > MAX_CANDIDATES,
       capabilityState: context.capabilityState,
       mayBeIncomplete: context.mayBeIncomplete,
+      ...(context.framework?.reliability ? { reliability: context.framework.reliability } : {}),
     };
   }));
 
@@ -374,6 +376,7 @@ export function createMcpServer(): McpServer {
       coverage: { mayBeIncomplete: context.mayBeIncomplete },
     }),
     capabilityState: context.capabilityState,
+    ...(context.framework?.reliability ? { reliability: context.framework.reliability } : {}),
   })));
 
   const changeSourceShape = {
@@ -496,6 +499,7 @@ export function createMcpServer(): McpServer {
       coverage: { mayBeIncomplete: context.mayBeIncomplete },
     }),
     capabilityState: context.capabilityState,
+    ...(context.framework?.reliability ? { reliability: context.framework.reliability } : {}),
   })));
 
   registerJsonTool(server, "inspect_retrieval", "Inspect lexical, optional semantic, rerank, graph, and context stages.", z.object({
