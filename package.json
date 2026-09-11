@@ -24,6 +24,14 @@
     "repository analysis",
     "mcp"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/caongocquy/code-atlas.git"
+  },
+  "homepage": "https://github.com/caongocquy/code-atlas#readme",
+  "bugs": {
+    "url": "https://github.com/caongocquy/code-atlas/issues"
+  },
   "author": "",
   "license": "ISC",
   "packageManager": "pnpm@11.22.0",
