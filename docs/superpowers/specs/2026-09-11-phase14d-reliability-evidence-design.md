@@ -72,15 +72,15 @@ incremental behavior deterministic, limits MCP payloads, preserves current
 APIs, and gives Phase 15 a stable reliability contract. Its cost is one
 explicit aggregation/version boundary that every consumer must use.
 
-| Concern | A | B | C |
-|---|---|---|---|
-| Storage cost | high | low/medium | medium |
-| API stability | highest risk | best locally | controlled additive change |
-| Incremental invalidation | broad | consumer-specific | contribution-owned |
-| MCP payload | large | small | compact summary plus opt-in detail |
-| Query ergonomics | simple but heavy | inconsistent | consistent projection |
-| Phase 15 compatibility | strong | variable | strong |
-| Duplication risk | low | high | low |
+| Concern                  | A                | B                 | C                                  |
+| ------------------------ | ---------------- | ----------------- | ---------------------------------- |
+| Storage cost             | high             | low/medium        | medium                             |
+| API stability            | highest risk     | best locally      | controlled additive change         |
+| Incremental invalidation | broad            | consumer-specific | contribution-owned                 |
+| MCP payload              | large            | small             | compact summary plus opt-in detail |
+| Query ergonomics         | simple but heavy | inconsistent      | consistent projection              |
+| Phase 15 compatibility   | strong           | variable          | strong                             |
+| Duplication risk         | low              | high              | low                                |
 
 ## 5. EvidenceOrigin
 
@@ -111,11 +111,11 @@ observation:
 ```ts
 interface EvidenceRef {
   origin: EvidenceOrigin;
-  sourcePath?: string;      // canonical repository-relative path
-  inputKey: string;         // candidate input identity
-  localId?: string;         // parser/fact/adapter-local stable id
+  sourcePath?: string; // canonical repository-relative path
+  inputKey: string; // candidate input identity
+  localId?: string; // parser/fact/adapter-local stable id
   range?: SourceRangeFact;
-  ownerKey: string;         // semantic contribution owner
+  ownerKey: string; // semantic contribution owner
 }
 ```
 
@@ -163,25 +163,29 @@ Removing one owner removes only that owner’s contribution. The output remains
 accepted only if the remaining contributions independently satisfy the normal
 resolution gate.
 
-## 9. Reliability state
+## 9. Reliability outcome and orthogonal conditions
 
-Reliability is a finite deterministic state, not a generic probability:
+Reliability separates the semantic outcome of analysis from completeness and
+freshness. These dimensions are related, but they are not interchangeable and
+must not be collapsed into one enum.
 
 ```ts
-type ReliabilityState =
+type ReliabilityOutcome =
   | "accepted"
   | "ambiguous"
   | "unknown"
   | "unsupported"
-  | "budget_exhausted"
-  | "stale"
-  | "incomplete";
+  | "budget_exhausted";
 ```
 
 `accepted` means the normal exact/strong gate passed for the represented
 output. It does not imply the entire repository or relevant universe is
-complete. `stale` and `incomplete` are orthogonal aggregate conditions that
-must remain visible even when an old accepted output is reused.
+complete or current. A reused output may therefore remain `accepted` while
+`stale: true` or `complete: false`.
+
+`stale` is an orthogonal freshness condition. `complete` is an orthogonal
+analysis-universe condition. Neither changes the semantic outcome by itself,
+and neither may be inferred from the outcome name.
 
 There is no generic float confidence in this design. Existing bounded
 confidence values such as exact/strong/weak remain strategy-specific gates;
@@ -203,39 +207,79 @@ Cold diagnostic-only materialization must preserve incomplete state when it
 cannot establish the relevant universe. Reusing a prior output cannot upgrade
 that state by itself.
 
-## 11. Authority
+## 11. Authority and relevant-universe scope
 
 Authority answers whether a consumer may treat the result as a reliable answer
-for its stated universe. An accepted edge/entity/classification may be
-authoritative for that output while the aggregate remains incomplete.
+for one explicitly identified relevant universe. An accepted
+edge/entity/classification may be authoritative for that output while a broader
+repository aggregate remains incomplete.
 
-The projection exposes separate fields:
+Every authority decision therefore requires a canonical scope. The scope is
+semantic/query identity, not checkout identity, and must be stable across
+worktrees and incremental generations.
 
 ```ts
+interface ReliabilityScope {
+  scopeKey: string; // canonical identity of the relevant universe
+  capability: string;
+  outputKind?: string;
+  framework?: string;
+  language?: string;
+  selectorKey?: string; // canonical query/subject selector when applicable
+}
+
+interface EvidenceSummary {
+  total: number;
+  origins: readonly EvidenceOrigin[];
+}
+
+interface ReliabilityDetail {
+  evidence?: readonly EvidenceRef[];
+  diagnostics?: readonly DiagnosticRef[];
+  detailTruncated: boolean;
+  evidenceReturned?: number;
+  evidenceTotal?: number;
+  diagnosticsReturned?: number;
+  diagnosticsTotal?: number;
+}
+
 interface ReliabilityProjection {
-  state: ReliabilityState;
+  scope: ReliabilityScope;
+  outcome: ReliabilityOutcome;
   complete: boolean;
+  stale: boolean;
   authoritative: boolean;
   authoritativeNegative: boolean;
-  evidence: readonly EvidenceRef[];
-  diagnostics: readonly DiagnosticRef[];
   coverage: CoverageSummary;
+  diagnosticCodes: readonly string[];
+  evidenceSummary: EvidenceSummary;
+  detail?: ReliabilityDetail;
 }
 ```
 
+The aggregator owns construction and canonicalization of `ReliabilityScope`.
+Consumers may supply a query selector, but they may not invent independent
+authority semantics. Repository status, graph queries, framework queries, CLI,
+and MCP all call the same aggregator with a canonical relevant-universe scope.
+
 No field may infer another field by name alone. In particular, `complete` does
-not imply `authoritative`, and `accepted` does not imply repository-wide
-authority.
+not imply `authoritative`, `stale: false` does not imply complete, and
+`outcome: "accepted"` does not imply repository-wide authority.
 
 ## 12. Authoritative-negative rule
 
-Absence is authoritative only when the relevant candidate universe is known
-complete, current, and fully supported for the requested capability. If
-materialization is incomplete, stale, ambiguous, unknown, unsupported, or
-budget-exhausted, absence is uncertainty—not a negative fact.
+Absence is authoritative only when the canonical `ReliabilityScope` for the
+request is known complete, current, and fully supported for the requested
+capability. If materialization is incomplete or stale, or the scoped outcome is
+ambiguous, unknown, unsupported, or budget-exhausted, absence is uncertainty—not
+a negative fact.
 
-Query, status, CLI, and MCP must expose this through
-`authoritativeNegative: false` and the relevant state/diagnostics. No
+`authoritativeNegative` is therefore meaningful only together with its scope.
+A `true` value for one capability/selector universe must never be reused as a
+negative claim for another universe.
+
+Query, status, CLI, and MCP must expose `authoritativeNegative: false` together
+with the relevant outcome, completeness, freshness, diagnostics, and scope. No
 downstream projection may turn an incomplete result into “not present”.
 
 ## 13. Coverage model
@@ -342,29 +386,37 @@ entities and reliability metadata. A result may include a language node,
 framework entity, relationship, classification, or diagnostic state without
 coercing one into another.
 
-The projection must preserve subject/target identity, evidence refs, state,
-coverage, and authority. Classification results have no artificial target and
-are never self-edges. Symbol-only consumers receive the existing projection
-unless they explicitly request framework/reliability detail.
+The projection must preserve subject/target identity, canonical reliability
+scope, outcome, completeness, freshness, coverage, and authority. Detailed
+evidence refs are optional/bounded detail rather than mandatory payload.
+Classification results have no artificial target and are never self-edges.
+Symbol-only consumers receive the existing projection unless they explicitly
+request framework/reliability detail.
 
 ## 19. CLI and repository status
 
 CLI/status output will summarize configured, observed, supported, complete,
-stale, and authoritative-negative state separately. It must not report “no
-results” as a definitive negative when the relevant reliability projection is
-incomplete or stale.
+stale, and authoritative-negative state separately for an explicit canonical
+reliability scope. It must not report “no results” as a definitive negative
+when the relevant reliability projection is incomplete or stale.
 
-Human output may compact diagnostics; JSON output must retain stable codes,
-state, authority, and coverage fields. TTY formatting must not change the
-underlying deterministic values.
+Human output may compact diagnostics; JSON output must retain the canonical
+scope key, stable diagnostic codes, outcome, completeness, freshness, authority,
+and coverage fields. TTY formatting must not change the underlying deterministic
+values.
 
 ## 20. MCP wire contract
 
 MCP responses add an optional compact reliability projection. Existing result
-fields remain backward compatible. The default response includes state,
-complete, authoritative, authoritativeNegative, summary coverage, and stable
-diagnostic codes. Evidence refs and full diagnostics are opt-in or bounded by
-the existing response budget.
+fields remain backward compatible. The default response includes canonical
+scope identity, outcome, complete, stale, authoritative, authoritativeNegative,
+summary coverage, evidence summary, and stable diagnostic codes. Full evidence
+refs and full diagnostics are opt-in or bounded detail.
+
+Response-detail truncation is transport metadata only. It sets
+`detailTruncated` and returned/total counts when detail is requested; it must not
+change `outcome`, `complete`, `stale`, `authoritative`, or
+`authoritativeNegative`.
 
 MCP serialization uses sorted arrays and stable keys. It never emits a guessed
 negative merely because an empty result array was returned. Initialize and
@@ -384,12 +436,24 @@ not create WAL/SHM files, mutate generations, or publish candidates.
 ## 22. Performance and budget
 
 Evidence refs are compact, deduplicated, and source-owned. Aggregation should
-operate on normalized contributions rather than rescanning source text. Public
-responses use bounded diagnostic/evidence detail and deterministic truncation
-with an explicit budget-exhausted state when applicable.
+operate on normalized contributions rather than rescanning source text.
 
-No performance optimization may drop the evidence needed to explain an
-ambiguous, unknown, unsupported, stale, or incomplete result. Reuse must not
+Two budget classes are distinct and must never be conflated:
+
+- **analysis budget:** limits semantic analysis/resolution work. Exhausting this
+  budget produces `outcome: "budget_exhausted"` and propagates incomplete
+  semantics where the relevant universe cannot be established;
+- **response-detail budget:** limits how many evidence/diagnostic details are
+  serialized to a consumer. Exhausting this budget only sets detail-truncation
+  metadata and returned/total counts. It never changes reliability semantics.
+
+Public responses use deterministic detail truncation. The compact projection
+(evidence summary, diagnostic codes, outcome, completeness, freshness,
+authority, coverage, and scope) must remain available even when detail is
+truncated.
+
+No performance optimization may drop the summary information needed to explain
+an ambiguous, unknown, unsupported, stale, or incomplete result. Reuse must not
 trade away correctness for fewer adapter calls.
 
 ## 23. Phase 15 compatibility
@@ -403,22 +467,23 @@ arrays.
 
 ## 24. Conformance matrix
 
-| Area | Required conformance |
-|---|---|
-| Origin | Every evidence item has one of the four `EvidenceOrigin` values |
-| Identity | Entity/output keys exclude checkout path, generation, and traversal order |
-| Ownership | Recompute/delete removes only owned contributions |
-| Merge | Compatible evidence merges; conflicts become deterministic ambiguity |
-| Coverage | Terminal buckets are mutually consistent; conflict is not resolved |
-| Completeness | Adapter failure, budget, unknown, unsupported, stale reuse propagate |
-| Authority | Incomplete relevant universe disables authoritative negatives |
-| Incremental | Normalized incremental result equals clean rebuild |
-| Diagnostics | Stable, deduplicated, and removed after owner recomputation fixes issue |
-| Query | Framework entities are typed; classifications have no fake target |
-| Status | Configured, observed, supported, complete, and stale remain distinct |
-| MCP | Additive compact projection, stable serialization, no guessed negatives |
-| Read-only | Queries/status/MCP do not write WAL/SHM or publish state |
-| Budget | Bounded detail never hides uncertainty or conflict state |
+| Area              | Required conformance                                                                                                          |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Origin            | Every evidence item has one of the four `EvidenceOrigin` values                                                               |
+| Identity          | Entity/output keys exclude checkout path, generation, and traversal order                                                     |
+| Reliability scope | Scope keys are canonical, checkout-independent, and specific to the relevant capability/query universe                        |
+| Ownership         | Recompute/delete removes only owned contributions                                                                             |
+| Merge             | Compatible evidence merges; conflicts become deterministic ambiguity                                                          |
+| Coverage          | Terminal buckets are mutually consistent; conflict is not resolved                                                            |
+| Completeness      | Adapter failure, budget, unknown, unsupported, stale reuse propagate                                                          |
+| Scope/Authority   | Every authority decision has a canonical relevant-universe scope; incomplete scoped universe disables authoritative negatives |
+| Incremental       | Normalized incremental result equals clean rebuild                                                                            |
+| Diagnostics       | Stable, deduplicated, and removed after owner recomputation fixes issue                                                       |
+| Query             | Framework entities are typed; classifications have no fake target                                                             |
+| Status            | Configured, observed, supported, outcome, complete, and stale remain distinct                                                 |
+| MCP               | Additive compact scoped projection, stable serialization, bounded optional detail, no guessed negatives                       |
+| Read-only         | Queries/status/MCP do not write WAL/SHM or publish state                                                                      |
+| Budget            | Analysis-budget exhaustion affects reliability; response-detail truncation does not                                           |
 
 ## 25. Acceptance criteria
 
@@ -431,8 +496,10 @@ demonstrate:
 3. no double counting across reused and recomputed contributions;
 4. correct deletion, rename, dependency expansion, and framework-version
    invalidation;
-5. coverage and diagnostics that agree with reliability state;
-6. authoritative-negative safety under every incomplete/stale condition;
+5. coverage and diagnostics that agree with reliability outcome, completeness,
+   and freshness;
+6. authoritative-negative safety under every incomplete/stale condition and a
+   canonical relevant-universe scope for every authority decision;
 7. backward-compatible query, CLI/status, and MCP projections;
 8. read-only operations with no WAL/SHM side effects;
 9. conformance tests for every row in the matrix; and
@@ -442,13 +509,18 @@ demonstrate:
 
 - Which existing AtlasStore contribution tables can carry ownership without a
   migration, and which require a reliability schema version?
-- Should bounded evidence detail be requested by an explicit query/MCP option
-  or selected by an existing response budget?
+- Should bounded reliability detail be requested by an explicit query/MCP option
+  or selected by an existing response-detail budget? Either choice must use the
+  same `ReliabilityDetail` truncation metadata and must not alter reliability
+  semantics.
 - Which existing language resolver diagnostic fields can be normalized directly
   to `EvidenceRef` without changing Phase14B storage?
-- What is the smallest additive JSON shape that preserves current MCP clients?
-- Which repository-status callers need an explicit “relevant universe” key to
-  calculate authoritative negatives safely?
+- What is the smallest additive JSON shape that preserves current MCP clients
+  while carrying the canonical scope identity and compact projection?
+- Which existing query/status callers already expose enough selector/capability
+  information to construct the canonical `ReliabilityScope` without breaking
+  their public API? The requirement for a scope is settled by this design; only
+  caller mapping is deferred to planning.
 
 These questions are intentionally deferred to the implementation plan. No
 production behavior is changed by this document.
