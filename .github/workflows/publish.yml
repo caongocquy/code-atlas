@@ -59,7 +59,7 @@ jobs:
             echo "Tag $tag_version does not match package.json $package_version" >&2
             exit 1
           }
-          [[ "$package_name" == "code-atlas" ]] || {
+          [[ "$package_name" == "@showdar2112/code-atlas" ]] || {
             echo "Unexpected package name: $package_name" >&2
             exit 1
           }
@@ -110,7 +110,7 @@ jobs:
           for (const file of required) {
             if (!files.has(file)) throw new Error(`Missing package file: ${file}`);
           }
-          if (pack.name !== "code-atlas") throw new Error(`Unexpected packed name: ${pack.name}`);
+          if (pack.name !== "@showdar2112/code-atlas") throw new Error(`Unexpected packed name: ${pack.name}`);
           console.log(JSON.stringify({ name: pack.name, version: pack.version, files: pack.entryCount }));
           NODE
 
@@ -147,7 +147,7 @@ jobs:
           query_file="$RUNNER_TEMP/code-atlas-npm-query.json"
           error_file="$RUNNER_TEMP/code-atlas-npm-query.err"
           set +e
-          npm view "code-atlas@$VERSION" version --json > "$query_file" 2> "$error_file"
+          npm view "@showdar2112/code-atlas@$VERSION" version --json > "$query_file" 2> "$error_file"
           query_status=$?
           set -e
           if [[ "$query_status" -eq 0 ]]; then
@@ -157,7 +157,7 @@ jobs:
               exit 1
             }
             echo "published=false" >> "$GITHUB_OUTPUT"
-            echo "code-atlas@$VERSION already exists; skipping duplicate publish"
+            echo "@showdar2112/code-atlas@$VERSION already exists; skipping duplicate publish"
           elif grep -qiE 'E404|404 Not Found' "$error_file"; then
             npm publish --access public --provenance
             echo "published=true" >> "$GITHUB_OUTPUT"

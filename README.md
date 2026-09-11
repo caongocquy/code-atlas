@@ -12,14 +12,14 @@ CLI.
 Understand structure and blast radius before making a change—without requiring a
 model download.
 
-[![npm version](https://img.shields.io/npm/v/code-atlas.svg)](https://www.npmjs.com/package/code-atlas)
+[![npm version](https://img.shields.io/npm/v/@showdar2112%2Fcode-atlas.svg)](https://www.npmjs.com/package/@showdar2112/code-atlas)
 [![Node.js >=22](https://img.shields.io/badge/node-%3E%3D22-339933.svg)](https://nodejs.org/)
 [![MCP](https://img.shields.io/badge/MCP-compatible-6f42c1.svg)](https://modelcontextprotocol.io/)
 
 ## Quick start
 
 ```bash
-npm install -g code-atlas
+npm install -g @showdar2112/code-atlas
 
 cd my-project
 code-atlas init
@@ -411,10 +411,11 @@ pnpm lint
 pnpm run ui:typecheck
 ```
 
-The package can also be installed globally with pnpm:
+The npm package is `@showdar2112/code-atlas`; it installs the `code-atlas`
+command. The package can also be installed globally with pnpm:
 
 ```bash
-pnpm add -g code-atlas
+pnpm add -g @showdar2112/code-atlas
 ```
 
 ## Roadmap
