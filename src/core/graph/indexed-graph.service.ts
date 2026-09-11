@@ -8,6 +8,7 @@ import {
 } from "../repository/repository-identity.js";
 import type { CodeGraph } from "./types.js";
 import { projectFrameworkGraph } from "./query/framework-query.service.js";
+import { CURRENT_INDEX_VERSION_DOMAINS } from "../repository/index-version.js";
 import type { FrameworkQueryProjection } from "./query/framework-query.types.js";
 
 export type IndexedGraph = {
@@ -44,13 +45,14 @@ async function loadIndexedGraphInternal(inputPath: string, readOnly: boolean): P
       throw new Error("Repository graph is not indexed.");
     }
     const frameworkInputs = store.loadFrameworkQueryInputs(repository.id);
+    const framework = projectFrameworkGraph(frameworkInputs.graph, frameworkInputs.framework, CURRENT_INDEX_VERSION_DOMAINS.frameworkResolutionVersion);
     return {
       repoPath,
       repoId: repository.id,
-      graph: store.loadGraph(repository.id),
+      graph: frameworkInputs.graph,
       capabilityState: status.graph.status === "stale" ? "stale" : "ready",
-      mayBeIncomplete: status.graph.resolutionCoverage.mayBeIncomplete || status.graph.status === "stale",
-      framework: projectFrameworkGraph(frameworkInputs.graph, frameworkInputs.framework),
+      mayBeIncomplete: status.graph.resolutionCoverage.mayBeIncomplete || status.graph.status === "stale" || framework.mayBeIncomplete,
+      framework,
     };
   } finally {
     store.close();

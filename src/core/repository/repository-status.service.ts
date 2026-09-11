@@ -16,6 +16,7 @@ import type { EmbeddingProvider } from "../semantic/embedding-provider.js";
 import type { VectorStore } from "../semantic/vector-store.js";
 import type { RerankerProvider } from "../retrieval/reranker-provider.js";
 import { emptyResolutionCoverage, type ResolutionCoverage } from "../graph/resolution.types.js";
+import { summarizeFrameworkCoverage, type FrameworkStatus } from "../framework/framework-coverage.js";
 import {
   embeddingProviderIdentity,
   hasVectorStoreGeneration,
@@ -30,6 +31,7 @@ import {
   scanRepo,
 } from "./repository-files.js";
 import { detectChangeDetectionMode } from "../indexing/change-detector.js";
+import { CURRENT_INDEX_VERSION_DOMAINS } from "./index-version.js";
 import type { LanguageId } from "../graph/parsers/types.js";
 import {
   getLanguageAdapter,
@@ -84,6 +86,7 @@ export type RepositoryStatus = {
     needsRebuild: boolean;
     updatedAt?: string;
   };
+  framework: FrameworkStatus;
 };
 
 export type RepositoryStatusProviders = {
@@ -157,6 +160,7 @@ async function emptyStatus(
       status: "not_indexed",
       needsRebuild: false,
     },
+    framework: summarizeFrameworkCoverage(undefined, ""),
   };
 }
 
@@ -409,6 +413,8 @@ export async function getRepositoryStatus(
       capabilities.semantic.state,
       providers.vectorStore,
     );
+    const frameworkSnapshot = store.loadFramework(repoId);
+    const frameworkVersion = CURRENT_INDEX_VERSION_DOMAINS.frameworkResolutionVersion ?? "";
 
     return {
       changeDetection,
@@ -420,6 +426,7 @@ export async function getRepositoryStatus(
       capabilities,
       vector,
       graph,
+      framework: summarizeFrameworkCoverage(frameworkSnapshot, frameworkVersion),
     };
   } finally {
     store.close();

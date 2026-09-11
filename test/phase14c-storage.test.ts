@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { mkdtemp, rm } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -103,6 +103,21 @@ async function withFixture(run: (root: string) => void | Promise<void>): Promise
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+}
+
+async function snapshotDbFiles(databasePath: string): Promise<Readonly<Record<string, string>>> {
+  const snapshot: Record<string, string> = {};
+  for (const suffix of ["", "-wal", "-shm"]) {
+    const filePath = `${databasePath}${suffix}`;
+    try {
+      const metadata = await stat(filePath);
+      const entry = await lstat(filePath);
+      snapshot[suffix || "db"] = `${metadata.mtimeMs}:${entry.size}:${(await readFile(filePath)).toString("base64")}`;
+    } catch {
+      snapshot[suffix || "db"] = "missing";
+    }
+  }
+  return snapshot;
 }
 
 test("writes and reloads a complete empty framework materialization", async () => withFixture((root) => {
@@ -279,6 +294,52 @@ test("rejects missing, committed and read-only candidate framework writes", asyn
   assert.throws(() => readOnly.writeCandidateFramework(second.generationId, materialization()), /read-only|readonly/i);
   assert.equal(readOnly.loadFramework(repositoryId, second.generationId), undefined);
   readOnly.close();
+}));
+
+test("read-only framework query inputs preserve database and sidecar bytes", async () => withFixture(async (root) => {
+  const databasePath = path.join(root, "atlas.db");
+  const store = new AtlasStore(databasePath);
+  const { repositoryId, generationId } = beginCandidate(store, root);
+  store.writeCandidateFramework(generationId, materialization());
+  store.publishCandidateGeneration(generationId, { frameworkStaged: true });
+  store.close();
+
+  const before = await snapshotDbFiles(databasePath);
+  const readOnly = new AtlasStore(databasePath, { readOnly: true });
+  const inputs = readOnly.loadFrameworkQueryInputs(repositoryId);
+  assert.equal(inputs.framework?.complete, true);
+  readOnly.close();
+  assert.deepEqual(await snapshotDbFiles(databasePath), before);
+}));
+
+test("persists distinct diagnostics sharing a coarse source tuple", async () => withFixture((root) => {
+  const store = openFixture(root);
+  const { repositoryId, generationId } = beginCandidate(store, root);
+  const base: FrameworkDiagnostic = {
+    code: "framework_target_unknown",
+    outcome: "unknown",
+    framework: "next",
+    capability: "next.routes",
+    relativePath: "app/users/page.tsx",
+    strategy: "route",
+    evidenceIds: ["evidence:1"],
+    refs: [{ relativePath: "app/users/page.tsx", inputKey: "facts:1" }],
+    reason: "source target missing",
+  };
+  store.writeCandidateFramework(generationId, materialization({ diagnostics: [base, { ...base, evidenceIds: ["evidence:2"], reason: "target ambiguous" }] }));
+  store.publishCandidateGeneration(generationId, { frameworkStaged: true });
+  assert.equal(store.loadFramework(repositoryId, generationId)?.diagnostics.length, 2);
+  store.close();
+}));
+
+test("rejects internally inconsistent framework coverage counters", async () => withFixture((root) => {
+  const store = openFixture(root);
+  const { generationId } = beginCandidate(store, root);
+  const invalid: FrameworkCoverage = {
+    framework: "next", capability: "next.routes", relativePath: "app/page.tsx", strategy: "route", outputKind: "relationship", kind: "route_binding", applicable: 1, supported: 2, attempted: 0, resolved: 1, ambiguous: 0, unknown: 0, unsupported: 0, budgetExhausted: 0, weakDropped: 0,
+  };
+  assert.throws(() => store.writeCandidateFramework(generationId, materialization({ coverage: [invalid] })), /coverage/i);
+  store.close();
 }));
 
 test("legacy graph-only reads return an undefined framework snapshot", async () => withFixture((root) => {

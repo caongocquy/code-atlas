@@ -1,7 +1,9 @@
 import type { FrameworkSnapshot } from "./framework.types.js";
 
 export interface FrameworkInvalidationInput {
+  /** Paths whose facts/config/lookup state changed; allPaths is the rebuild universe. */
   paths: readonly string[];
+  allPaths: readonly string[];
   changedInputKeys: ReadonlySet<string>;
   changedLookupKeys: ReadonlySet<string>;
   previous?: FrameworkSnapshot;
@@ -19,7 +21,8 @@ export interface FrameworkInvalidationPlan {
 const sorted = (values: Iterable<string>): string[] => [...new Set(values)].sort();
 
 export function planFrameworkInvalidation(input: FrameworkInvalidationInput): FrameworkInvalidationPlan {
-  const paths = sorted(input.paths);
+  const changedPaths = sorted(input.paths);
+  const paths = sorted(input.allPaths);
   const previous = input.previous;
   const reasons: string[] = [];
   if (!previous) reasons.push("missing_framework_snapshot");
@@ -30,12 +33,12 @@ export function planFrameworkInvalidation(input: FrameworkInvalidationInput): Fr
   for (const dependency of previous?.dependencies ?? []) {
     const inputChanged = dependency.inputKeys.some((key) => input.changedInputKeys.has(key));
     const lookupChanged = dependency.lookupKeys.some((key) => input.changedLookupKeys.has(key));
-    if (inputChanged || lookupChanged || input.paths.includes(dependency.ownerPath)) changedOwners.add(dependency.ownerPath);
+    if (inputChanged || lookupChanged || changedPaths.includes(dependency.ownerPath)) changedOwners.add(dependency.ownerPath);
   }
   if (changedOwners.size > 0) reasons.push("framework_dependency_changed");
 
   const widened = reasons.some((reason) => reason !== "framework_dependency_changed");
-  const analyzePaths = widened ? paths : sorted(changedOwners);
+  const analyzePaths = widened ? paths : sorted([...changedPaths, ...changedOwners]);
   const analyzeSet = new Set(analyzePaths);
   return {
     analyzePaths,

@@ -42,7 +42,7 @@ import { createCandidateResolutionInput } from "./resolution-scope.js";
 import { createResolutionScope } from "./invalidation-planner.js";
 import type { IndexPipelineOptions, IndexingChanges, IndexRunOutcome, IndexFailure, IndexedSourceUnit, PublishedIndexRun } from "./indexing.types.js";
 import { materializeFrameworkConfig, type FrameworkConfigInput } from "../framework/framework-config.js";
-import { analyzeFramework, builtinFrameworkAdapters, detectFrameworks } from "../framework/framework-registry.js";
+import { analyzeFramework, builtinFrameworkAdapters, detectFrameworks, expandFrameworkAnalyzePaths } from "../framework/framework-registry.js";
 import { planFrameworkInvalidation } from "../framework/framework-invalidation.js";
 import type { FrameworkAnalysisContext, FrameworkConfigFact, FrameworkConfigValue } from "../framework/framework.types.js";
 
@@ -55,6 +55,33 @@ const RESOLVER_BUDGETS = {
   expressionNodes: 1000,
   propagationRounds: 1000,
 } as const;
+
+export function frameworkChangedLookupKeys(
+  previous: { dependencies: readonly { lookupKeys: readonly string[] }[] } | undefined,
+  facts: readonly { relativePath: string; facts: ParsedFactsBlob }[],
+  changes: Pick<IndexingChanges, "changedFiles" | "deletedFiles">,
+  previousGraph?: Pick<CodeGraph, "nodes">,
+): ReadonlySet<string> {
+  const keys = new Set(changes.changedFiles);
+  const names = new Set(
+    facts
+      .filter((unit) => changes.changedFiles.includes(unit.relativePath))
+      .flatMap((unit) => [
+        ...unit.facts.symbols.map((symbol) => symbol.name),
+        ...(unit.facts.frameworkSyntax?.nodes ?? []).flatMap((node) => node.name ? [node.name] : []),
+        ...unit.facts.parameters.flatMap((parameter) => parameter.typeText ? [parameter.typeText] : []),
+      ]),
+  );
+  for (const node of previousGraph?.nodes ?? []) {
+    if (changes.deletedFiles.includes(node.file)) names.add(node.name);
+  }
+  for (const dependency of previous?.dependencies ?? []) {
+    for (const key of dependency.lookupKeys) {
+      if ([...names].some((name) => key.endsWith(`:${name}`) || key.split(":").at(-1)?.split(".").at(-1) === name)) keys.add(key);
+    }
+  }
+  return keys;
+}
 
 export function buildPipelineResolverContext(input: {
   generationId: string;
@@ -500,22 +527,25 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       ...frameworkConfig.filter((item) => changedConfigPaths.has(item.relativePath)).map((item) => item.inputKey),
     ]);
     const frameworkInvalidation = planFrameworkInvalidation({
-      paths: [...currentFiles.keys()],
+      paths: [...new Set([...changes.changedFiles, ...changes.deletedFiles])],
+      allPaths: [...new Set([...currentFiles.keys(), ...changes.deletedFiles])],
       changedInputKeys,
-      changedLookupKeys: new Set(changes.changedFiles),
+      changedLookupKeys: frameworkChangedLookupKeys(previousFramework, frameworkFacts, changes, previousGraph),
       previous: previousFramework,
       frameworkResolutionVersion: CURRENT_INDEX_VERSION_DOMAINS.frameworkResolutionVersion!,
       topologyComplete: !requiresRepositoryResolution(plan),
     });
-    recordIndexWork(counters, "frameworkFilesResolved", frameworkInvalidation.analyzePaths.length);
-    recordIndexWork(counters, "frameworkFilesReused", frameworkInvalidation.reusePaths.length);
+    const frameworkAnalyzePaths = expandFrameworkAnalyzePaths(previousFramework, new Set(frameworkInvalidation.analyzePaths));
+    recordIndexWork(counters, "frameworkFilesResolved", frameworkAnalyzePaths.size);
+    recordIndexWork(counters, "frameworkFilesReused", Math.max(0, frameworkInvalidation.reusePaths.length - Math.max(0, frameworkAnalyzePaths.size - frameworkInvalidation.analyzePaths.length)));
     const detections = detectFrameworks(frameworkContextBase, builtinFrameworkAdapters);
     const frameworkMaterialization = analyzeFramework({
       ...frameworkContextBase,
       generationId: generation.id,
       frameworkResolutionVersion: CURRENT_INDEX_VERSION_DOMAINS.frameworkResolutionVersion!,
       detections,
-      analyzePaths: new Set(frameworkInvalidation.analyzePaths),
+      analyzePaths: frameworkAnalyzePaths,
+      previousFramework,
       maxObservations: 10_000,
     } satisfies FrameworkAnalysisContext, builtinFrameworkAdapters);
     store.writeCandidateFramework(generation.id, frameworkMaterialization);

@@ -23,9 +23,16 @@ export interface FrameworkFixture {
   close(): Promise<void>;
 }
 
-export function normalizeFramework(snapshot: FrameworkSnapshot): unknown {
+export function normalizeFramework(snapshot: FrameworkSnapshot, language?: CodeGraph): unknown {
   const { repositoryId: _repositoryId, generationId: _generationId, ...stable } = snapshot;
-  return stable;
+  if (!language) return stable;
+  const nodes = new Map(language.nodes.map((node) => [node.id, { type: node.type, name: node.name, qualifiedName: node.qualifiedName, file: node.file, startLine: node.startLine, endLine: node.endLine }]));
+  const subject = (value: { kind: "language"; nodeId: string } | { kind: "framework"; entity: unknown }): unknown => value.kind === "language" ? { kind: "language", node: nodes.get(value.nodeId) ?? value.nodeId } : value;
+  return {
+    ...stable,
+    relationships: snapshot.relationships.map((item) => ({ ...item, source: subject(item.source), target: subject(item.target) })),
+    classifications: snapshot.classifications.map((item) => ({ ...item, subject: subject(item.subject) })),
+  };
 }
 
 export async function createFrameworkFixture(

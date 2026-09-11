@@ -1,4 +1,5 @@
 import { frameworkEntityKey } from "../framework-identity.js";
+import { resolveImportCandidates } from "../../graph/imports.js";
 import type {
   DetectionResult, FrameworkAnalysisContext, FrameworkCanonicalRoute, FrameworkCanonicalization, FrameworkEvidence,
   FrameworkEvidenceRef, FrameworkSemanticAdapter, FrameworkSubjectRef,
@@ -8,11 +9,11 @@ const refsFor = (relativePath: string, inputKey: string): FrameworkEvidenceRef[]
 
 export function canonicalizeNextRoute(input: FrameworkCanonicalRoute): FrameworkCanonicalization {
   if (input.framework !== "next") return { kind: "unresolved", code: "framework_construct_unsupported", reason: "not a Next route" };
-  const scope = input.scope.replaceAll("\\", "/");
-  const router = input.router.replaceAll("\\", "/");
+  const scope = input.scope;
+  const router = input.router;
   const conditions = [...new Set(input.conditions)].sort();
-  if (!scope || !router || scope.startsWith("/") || router.startsWith("/") || scope.split("/").includes("..") || router.split("/").includes("..")) return { kind: "unresolved", code: "framework_construct_unsupported", reason: "route scope or router is not canonical" };
-  const ref = { framework: "next" as const, kind: input.kind, logicalKey: JSON.stringify([scope, router, input.path.replaceAll("\\", "/"), input.method === null ? null : input.method.toUpperCase(), conditions, input.owner]) };
+  if (!scope || !router || scope.includes("\\") || router.includes("\\") || input.path.includes("\\") || scope.startsWith("/") || router.startsWith("/") || scope.split("/").includes("..") || router.split("/").includes("..")) return { kind: "unresolved", code: "framework_construct_unsupported", reason: "route scope or router is not canonical" };
+  const ref = { framework: "next" as const, kind: input.kind, logicalKey: JSON.stringify([scope, router, input.path, input.method === null ? null : input.method.toUpperCase(), conditions, input.owner]) };
   try { frameworkEntityKey(ref); return { kind: "canonical", ref }; }
   catch { return { kind: "unresolved", code: "framework_construct_unsupported", reason: "route identity is not canonical" }; }
 }
@@ -43,8 +44,17 @@ function analyze(ctx: FrameworkAnalysisContext): { evidence: readonly FrameworkE
     for (const jsx of jsxNodes) {
       if (!jsx.name || /^[a-z]/.test(jsx.name)) continue;
       const targetName = jsx.name.split(".").at(-1);
-      const targets = localNodes.filter((node) => node.name === targetName).map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id }));
-      const source = localNodes.filter((node) => (node.startLine ?? 0) <= jsx.range.startLine && (node.endLine ?? Number.MAX_SAFE_INTEGER) >= jsx.range.endLine)
+      const receiver = jsx.name.includes(".") ? jsx.name.split(".")[0] : jsx.name;
+      const binding = (materialized.facts.imports ?? []).find((item) => item.localName === receiver || item.localName === targetName);
+      const importerIds = localNodes.filter((node) => node.type === "file").map((node) => node.id);
+      const importedFileIds = new Set(ctx.graph.edges.filter((edge) => edge.type === "imports" && importerIds.includes(edge.from)).map((edge) => edge.to));
+      const resolvedTargetName = binding && !jsx.name.includes(".") && binding.localName === targetName && binding.importedName !== "default" ? binding.importedName : targetName;
+      const importedFiles = binding ? new Set(resolveImportCandidates(materialized.relativePath, binding.moduleSpecifier)) : new Set<string>();
+      const targetNodes = binding
+        ? ctx.graph.nodes.filter((node) => node.type !== "file" && node.name === resolvedTargetName && Boolean(node.qualifiedName) && (binding.importedName === undefined || binding.importedName === "*" || binding.importedName === resolvedTargetName || binding.importedName === "default") && ctx.graph.edges.some((edge) => edge.type === "contains" && edge.to === node.id && importedFileIds.has(edge.from) && importedFiles.has(ctx.graph.nodes.find((file) => file.id === edge.from)?.file ?? "")))
+        : localNodes.filter((node) => node.type !== "file" && node.name === targetName);
+      const targets = targetNodes.map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id }));
+      const source = localNodes.filter((node) => node.type !== "file" && (node.startLine ?? 0) <= jsx.range.startLine && (node.endLine ?? Number.MAX_SAFE_INTEGER) >= jsx.range.endLine)
         .map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id }));
       evidence.push({
         evidenceId: `react-jsx:${materialized.relativePath}:${jsx.id}`,
@@ -53,16 +63,16 @@ function analyze(ctx: FrameworkAnalysisContext): { evidence: readonly FrameworkE
         outputKind: "relationship", relationKind: "component_usage", sourceCandidates: source, targetCandidates: targets,
       });
     }
-    const nextFile = materialized.relativePath.replaceAll("\\", "/");
+    const nextFile = materialized.relativePath;
     const routeMatch = /^(?:app|pages)\/(.*)\/(page|layout|route)\.(?:tsx?|jsx?)$/.exec(nextFile)
       ?? /^(?:app|pages)\/(page|layout|route)\.(?:tsx?|jsx?)$/.exec(nextFile);
     if (routeMatch) {
       const router = nextFile.startsWith("app/") ? "app" : "pages";
       const fileKind = routeMatch[2] ?? routeMatch[1];
-      const routeSegments = (routeMatch[2] ? routeMatch[1] : "").split("/").filter(Boolean).filter((segment) => !/^\([^)]*\)$/.test(segment));
-      const routePath = `/${routeSegments.join("/")}`.replace(/\/+/g, "/");
+      const routeSegments = (routeMatch[2] ? routeMatch[1] : "").split("/").filter((segment) => !/^\([^)]*\)$/.test(segment));
+      const routePath = routeSegments.length === 1 && routeSegments[0] === "" ? "/" : `/${routeSegments.join("/")}`;
       const kind = fileKind === "layout" ? "layout" as const : "route" as const;
-      const canonical = canonicalizeNextRoute({ framework: "next", scope: "root", router, kind, path: routePath === "/" ? "/" : routePath, method: fileKind === "route" ? null : null, conditions: [], owner: null });
+      const canonical = canonicalizeNextRoute({ framework: "next", scope: "root", router, kind, path: routePath === "/" ? "/" : routePath, method: null, conditions: [], owner: kind === "layout" ? nextFile : null });
       if (canonical.kind === "canonical") {
         const entity = { ref: canonical.ref, displayName: routePath, declarationKey: `route:${nextFile}`, confidence: "exact" as const, refs: refsFor(nextFile, inputKey) };
         const fileNodes = localNodes.filter((node) => node.type === "file").map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id }));

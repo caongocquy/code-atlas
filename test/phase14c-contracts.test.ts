@@ -6,11 +6,13 @@ import {
   frameworkEntityKey,
   frameworkSubjectKey,
 } from "../src/core/framework/framework-identity.js";
+import { analyzeFramework } from "../src/core/framework/framework-registry.js";
 import type {
   FrameworkClassification,
   FrameworkCoverage,
   FrameworkDiagnosticCode,
   FrameworkDiagnostic,
+  FrameworkEvidence,
   FrameworkEntity,
   FrameworkEvidenceRef,
   FrameworkEntityRef,
@@ -84,6 +86,10 @@ test("framework entity keys reject malformed and noncanonical logical tuples", (
     JSON.stringify(["app\\a", "app", "/users", "GET", [], null]),
     JSON.stringify(["app/.", "app", "/users", "GET", [], null]),
     JSON.stringify(["app//a", "app", "/users", "GET", [], null]),
+    JSON.stringify(["app-a", "app", "/users//id", "GET", [], null]),
+    JSON.stringify(["app-a", "app", "/users/./id", "GET", [], null]),
+    JSON.stringify(["app-a", "app", "/users/../id", "GET", [], null]),
+    JSON.stringify(["app-a", "app", "/users\\id", "GET", [], null]),
   ];
 
   for (const logicalKey of malformedKeys) {
@@ -334,6 +340,53 @@ test("identity rejects empty logical keys", () => {
     () => frameworkSubjectKey({ kind: "language", nodeId: "" }),
     TypeError,
   );
+});
+
+test("adapter infrastructure failures produce incomplete materialization", () => {
+  const result = analyzeFramework({
+    repositoryId: "repo",
+    generationId: "generation",
+    frameworkResolutionVersion: "1.0.0",
+    detections: [],
+    analyzePaths: new Set(),
+    maxObservations: 1,
+    config: [],
+    graph: { nodes: [], edges: [] },
+    facts: [],
+  }, [{
+    id: "throwing",
+    version: "1.0.0",
+    frameworks: ["next"],
+    detect: () => [],
+    analyze: () => { throw new Error("boom"); },
+  }]);
+
+  assert.equal(result.complete, false);
+  assert.equal(result.diagnostics.some((item) => item.code === "framework_adapter_failed"), true);
+});
+
+test("adapter dependencies are merged deterministically", () => {
+  const result = analyzeFramework({ repositoryId: "repo", generationId: "generation", frameworkResolutionVersion: "1.0.0", detections: [], analyzePaths: new Set(), maxObservations: 1, config: [], graph: { nodes: [], edges: [] }, facts: [] }, [{
+    id: "dependencies",
+    version: "1.0.0",
+    frameworks: ["next"],
+    detect: () => [],
+    analyze: () => ({ evidence: [], dependencies: [
+      { framework: "next", scope: "root", ownerPath: "app/page.tsx", inputKeys: ["b", "a"], lookupKeys: ["z"], complete: true },
+      { framework: "next", scope: "root", ownerPath: "app/page.tsx", inputKeys: ["a"], lookupKeys: ["y"], complete: false },
+    ] }),
+  }]);
+
+  assert.deepEqual(result.dependencies, [{ framework: "next", scope: "root", ownerPath: "app/page.tsx", inputKeys: ["a", "b"], lookupKeys: ["y", "z"], complete: false }]);
+});
+
+test("framework observation budget is global and observable", () => {
+  const evidence = (id: string): FrameworkEvidence => ({
+    evidenceId: id, framework: "next", adapterId: "budget", adapterVersion: "1.0.0", strategy: "budget", capability: "next.routes", relativePath: "app/page.tsx", origin: "framework_inferred", confidence: "exact", refs: [{ relativePath: "app/page.tsx", inputKey: "facts:app/page.tsx" }], entities: [], applicable: true, supported: true, attempted: true, state: "candidate", outputKind: "relationship", relationKind: "route_binding", sourceCandidates: [], targetCandidates: [],
+  });
+  const result = analyzeFramework({ repositoryId: "repo", generationId: "generation", frameworkResolutionVersion: "1.0.0", detections: [], analyzePaths: new Set(), maxObservations: 1, config: [], graph: { nodes: [], edges: [] }, facts: [] }, [{ id: "budget", version: "1.0.0", frameworks: ["next"], detect: () => [], analyze: () => ({ evidence: [evidence("one"), evidence("two")], dependencies: [] }) }]);
+  assert.equal(result.diagnostics.some((item) => item.code === "framework_budget_exhausted"), true);
+  assert.equal(result.complete, false);
 });
 
 // @ts-expect-error Framework entities are not language GraphNodes.

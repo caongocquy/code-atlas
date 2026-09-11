@@ -66,6 +66,7 @@ export interface FrameworkEvidenceRef {
 export interface FrameworkProvenance {
   origin: "framework_inferred";
   framework: FrameworkId;
+  capability?: string;
   adapterId: string;
   adapterVersion: string;
   strategy: string;
@@ -238,6 +239,7 @@ export interface FrameworkAnalysisContext extends FrameworkDetectionContext {
   frameworkResolutionVersion: string;
   detections: readonly DetectionResult[];
   analyzePaths: ReadonlySet<string>;
+  previousFramework?: FrameworkSnapshot;
   maxObservations: number;
 }
 

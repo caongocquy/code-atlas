@@ -14,7 +14,7 @@ test("recovers explicit Nest module provider ownership", () => {
     facts: [{ relativePath: "app.ts", facts: {
       imports: [{ moduleSpecifier: "@nestjs/common" }],
       frameworkSyntax: { complete: true, nodes: [
-        { id: "module-annotation", kind: "annotation", name: "Module", range: { startLine: 1, endLine: 2 }, children: ["module-object"], arguments: [], typeArguments: [] },
+        { id: "module-annotation", kind: "annotation", name: "Module", ownerSymbolId: "module", range: { startLine: 1, endLine: 2 }, children: ["module-object"], arguments: [], typeArguments: [] },
         { id: "module-object", kind: "object", range: { startLine: 1, endLine: 2 }, children: ["providers"], arguments: [], typeArguments: [] },
         { id: "providers", kind: "property", name: "providers", range: { startLine: 1, endLine: 2 }, children: ["service-name"], arguments: [], typeArguments: [] },
         { id: "service-name", kind: "identifier", name: "Service", range: { startLine: 3, endLine: 3 }, children: [], arguments: [], typeArguments: [] },

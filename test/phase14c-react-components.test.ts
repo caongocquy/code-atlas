@@ -30,3 +30,19 @@ test("ignores intrinsic DOM tags", () => {
   });
   assert.equal(result.evidence.length, 0);
 });
+
+test("resolves an imported JSX component only when its graph target is unique", () => {
+  const context = {
+    repositoryId: "repo", generationId: "generation", frameworkResolutionVersion: "1.0.0", detections: [], analyzePaths: new Set(["App.tsx"]), maxObservations: 10,
+    config: [], graph: { nodes: [
+      { id: "app-file", type: "file", name: "App.tsx", file: "App.tsx" },
+      { id: "app", type: "function", name: "App", file: "App.tsx", startLine: 1, endLine: 3 },
+      { id: "button-file", type: "file", name: "components/Button.tsx", file: "components/Button.tsx" },
+      { id: "button", type: "function", name: "Button", qualifiedName: "./components/Button.Button", file: "components/Button.tsx", startLine: 1, endLine: 2 },
+    ], edges: [{ from: "app-file", to: "button-file", type: "imports" }, { from: "button-file", to: "button", type: "contains" }] },
+    facts: [{ relativePath: "App.tsx", facts: { imports: [{ moduleSpecifier: "./components/Button", localName: "UI", importedName: "Button" }], frameworkSyntax: { complete: true, nodes: [{ id: "jsx:1", kind: "jsx", name: "UI", range: { startLine: 2, endLine: 2 }, children: [], arguments: [], typeArguments: [] }] } } } as never],
+  } satisfies FrameworkAnalysisContext;
+  const result = resolveFrameworkEvidence(context, reactNextAdapter.analyze(context).evidence);
+  assert.equal(result.relationships[0]?.target.kind, "language");
+  assert.equal(result.relationships[0]?.target.kind === "language" && result.relationships[0].target.nodeId, "button");
+});

@@ -39,10 +39,15 @@ function isNonEmptyString(value: unknown, maxLength = Number.POSITIVE_INFINITY):
 
 function isRepositoryRelativePath(value: unknown): value is string {
   if (!isNonEmptyString(value, MAX_EVIDENCE_PATH_LENGTH)) return false;
-  const normalized = value.replaceAll("\\", "/");
-  return !normalized.startsWith("/")
-    && !/^[A-Za-z]:\//.test(normalized)
-    && !normalized.split("/").includes("..");
+  return !value.includes("\\")
+    && !value.startsWith("/")
+    && !/^[A-Za-z]:\//.test(value)
+    && value.split("/").every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
+}
+
+function isCanonicalRoutePath(value: unknown, framework: FrameworkId): value is string {
+  return isNonEmptyString(value)
+    && (framework === "flutter" || (!value.includes("\\") && !value.includes("//") && value.split("/").every((segment) => segment !== "." && segment !== "..")));
 }
 
 function isCanonicalRelativePath(value: unknown): value is string {
@@ -71,7 +76,7 @@ function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
-function isCanonicalLogicalKey(value: unknown): value is string {
+function isCanonicalLogicalKey(value: unknown, framework: FrameworkId): value is string {
   if (!isNonEmptyString(value)) return false;
 
   let parsed: unknown;
@@ -85,7 +90,7 @@ function isCanonicalLogicalKey(value: unknown): value is string {
   const [scope, router, path, method, conditions, owner] = parsed;
   if (!isCanonicalRelativePath(scope)
     || !isCanonicalRelativePath(router)
-    || !isNonEmptyString(path)
+    || !isCanonicalRoutePath(path, framework)
     || !(method === null || isNonEmptyString(method))
     || !Array.isArray(conditions)
     || !conditions.every((item) => typeof item === "string")
@@ -104,7 +109,7 @@ function isFrameworkEntityRef(value: unknown): value is FrameworkEntityRef {
     && hasOnlyKeys(value, ["framework", "kind", "logicalKey"])
     && FRAMEWORK_IDS.includes(value.framework as FrameworkId)
     && (value.kind === "route" || value.kind === "layout")
-    && isCanonicalLogicalKey(value.logicalKey);
+    && isCanonicalLogicalKey(value.logicalKey, value.framework as FrameworkId);
 }
 
 function isSubjectRef(value: unknown): value is FrameworkSubjectRef {
@@ -166,9 +171,10 @@ function evidenceRefKey(ref: FrameworkEvidenceRef): string {
 
 function isProvenance(value: unknown): value is FrameworkProvenance {
   return isRecord(value)
-    && hasOnlyKeys(value, ["origin", "framework", "adapterId", "adapterVersion", "strategy", "confidence", "evidenceIds", "refs"])
+    && hasOnlyKeys(value, ["origin", "framework", "capability", "adapterId", "adapterVersion", "strategy", "confidence", "evidenceIds", "refs"])
     && value.origin === "framework_inferred"
     && FRAMEWORK_IDS.includes(value.framework as FrameworkId)
+    && (value.capability === undefined || isNonEmptyString(value.capability, MAX_PROVENANCE_STRING_LENGTH))
     && isNonEmptyString(value.adapterId, MAX_PROVENANCE_STRING_LENGTH)
     && isNonEmptyString(value.adapterVersion, MAX_PROVENANCE_STRING_LENGTH)
     && isNonEmptyString(value.strategy, MAX_PROVENANCE_STRING_LENGTH)

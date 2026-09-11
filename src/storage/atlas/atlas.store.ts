@@ -185,6 +185,7 @@ function normalizeProvenance(value: unknown): FrameworkProvenance {
   return {
     origin: "framework_inferred",
     framework: decoded.provenance.framework,
+    ...(decoded.provenance.capability ? { capability: decoded.provenance.capability } : {}),
     adapterId: decoded.provenance.adapterId,
     adapterVersion: decoded.provenance.adapterVersion,
     strategy: decoded.provenance.strategy,
@@ -328,6 +329,7 @@ function normalizeCoverage(value: unknown): FrameworkCoverage {
   if (!validKind) throw new TypeError("Invalid framework coverage kind");
   const counts = ["applicable", "supported", "attempted", "resolved", "ambiguous", "unknown", "unsupported", "budgetExhausted", "weakDropped"] as const;
   for (const count of counts) if (!Number.isInteger(value[count]) || (value[count] as number) < 0) throw new TypeError("Framework coverage counts must be non-negative integers");
+  if ((value.supported as number) > (value.applicable as number) || (value.attempted as number) > (value.applicable as number) || (value.resolved as number) > (value.attempted as number) || (value.resolved as number) + (value.ambiguous as number) + (value.unknown as number) + (value.unsupported as number) + (value.budgetExhausted as number) > (value.attempted as number)) throw new TypeError("Framework coverage counters are inconsistent");
   const result = { framework: value.framework, capability: value.capability, relativePath: value.relativePath, strategy: value.strategy, outputKind: value.outputKind, kind: value.kind, ...Object.fromEntries(counts.map((count) => [count, value[count]])) } as FrameworkCoverage;
   stableJson(result);
   return result;
@@ -343,6 +345,10 @@ function dedupeRecords<T>(records: readonly T[], key: (record: T) => string, lab
     if (!existing) byKey.set(recordKey, { record, json });
   }
   return [...byKey.values()].sort((left, right) => key(left.record).localeCompare(key(right.record))).map((entry) => entry.record);
+}
+
+function frameworkDiagnosticKey(record: FrameworkDiagnostic): string {
+  return stableJson([record.code, record.outcome, record.framework, record.capability, record.relativePath, record.strategy, record.evidenceIds, record.refs, record.reason]);
 }
 
 function normalizeMaterialization(value: unknown, languageNodeIds: ReadonlySet<string>): FrameworkMaterialization {
@@ -366,7 +372,7 @@ function normalizeMaterialization(value: unknown, languageNodeIds: ReadonlySet<s
   for (const relationship of relationships) { checkSubject(relationship.source); checkSubject(relationship.target); }
   for (const classification of classifications) checkSubject(classification.subject);
 
-  const diagnostics = dedupeRecords((value.diagnostics as unknown[]).map(normalizeDiagnostic), (record) => stableJson([record.code, record.outcome, record.framework, record.capability, record.relativePath, record.strategy]), "diagnostics");
+  const diagnostics = dedupeRecords((value.diagnostics as unknown[]).map(normalizeDiagnostic), frameworkDiagnosticKey, "diagnostics");
   const coverage = dedupeRecords((value.coverage as unknown[]).map(normalizeCoverage), (record) => stableJson([record.framework, record.capability, record.relativePath, record.strategy, record.outputKind, record.kind]), "coverage");
   const config = dedupeRecords((value.config as unknown[]).map(normalizeConfig), (record) => stableJson([record.relativePath, record.scope, record.inputKey, record.kind]), "config");
   const detections = dedupeRecords((value.detections as unknown[]).map(normalizeDetection), (record) => stableJson([record.framework, record.scope]), "detections");
@@ -1059,6 +1065,18 @@ export class AtlasStore {
     return this.getRepositoryIndexState(repositoryId)?.activeGenerationId;
   }
 
+  getActiveGenerationVersions(repositoryId: string): IndexVersionDomains | undefined {
+    const generationId = this.getActiveGenerationId(repositoryId);
+    if (!generationId) return undefined;
+    const row = this.database.prepare("SELECT versions_json FROM index_generations WHERE id = ? AND repository_id = ?").get(generationId, repositoryId) as { versions_json: string } | undefined;
+    if (!row) return undefined;
+    try {
+      return JSON.parse(row.versions_json) as IndexVersionDomains;
+    } catch {
+      return undefined;
+    }
+  }
+
   hasV2RepositoryState(repositoryId: string): boolean {
     return this.getRepositoryIndexState(repositoryId) !== undefined;
   }
@@ -1311,7 +1329,7 @@ export class AtlasStore {
          VALUES (?, ?, ?, ?)`,
       );
       for (const diagnostic of normalized.diagnostics) {
-        insertDiagnostic.run(generation.repository_id, generationId, stableJson([diagnostic.code, diagnostic.outcome, diagnostic.framework, diagnostic.capability, diagnostic.relativePath, diagnostic.strategy]), stableJson(diagnostic));
+        insertDiagnostic.run(generation.repository_id, generationId, frameworkDiagnosticKey(diagnostic), stableJson(diagnostic));
       }
 
       const insertCoverage = this.database.prepare(
@@ -2345,7 +2363,9 @@ export class AtlasStore {
         `SELECT framework_resolution_version, config_json, detections_json, dependencies_json, complete
          FROM generation_framework_state WHERE repository_id = ? AND generation_id = ?`,
       ).get(repositoryId, generationId) as { framework_resolution_version: string; config_json: string; detections_json: string; dependencies_json: string; complete: number } | undefined;
-      if (!state || state.complete !== 1 || !isBoundedString(state.framework_resolution_version)) return undefined;
+      if (!state || !isBoundedString(state.framework_resolution_version)) return undefined;
+      const generationVersions = this.database.prepare("SELECT versions_json FROM index_generations WHERE id = ?").get(generationId) as { versions_json: string } | undefined;
+      const expectedFrameworkVersion = generationVersions ? (JSON.parse(generationVersions.versions_json) as IndexVersionDomains).frameworkResolutionVersion : undefined;
 
       const entityRows = this.database.prepare(
         `SELECT entity_key, payload_json FROM generation_framework_entities
@@ -2388,7 +2408,7 @@ export class AtlasStore {
       });
       const diagnostics = diagnosticRows.map((row) => {
         const diagnostic = normalizeDiagnostic(parseJson(row.payload_json));
-        if (stableJson([diagnostic.code, diagnostic.outcome, diagnostic.framework, diagnostic.capability, diagnostic.relativePath, diagnostic.strategy]) !== row.diagnostic_key) throw new TypeError("Corrupt framework diagnostic key");
+        if (frameworkDiagnosticKey(diagnostic) !== row.diagnostic_key) throw new TypeError("Corrupt framework diagnostic key");
         return diagnostic;
       });
       const coverage = coverageRows.map((row) => {
@@ -2402,7 +2422,7 @@ export class AtlasStore {
       const languageNodeIds = new Set((this.database.prepare(
         "SELECT id FROM generation_symbols WHERE repository_id = ? AND generation_id = ?",
       ).all(repositoryId, generationId) as Array<{ id: string }>).map((row) => row.id));
-      const normalized = normalizeMaterialization({ frameworkResolutionVersion: state.framework_resolution_version, entities, relationships, classifications, diagnostics, coverage, config, detections, dependencies, complete: true }, languageNodeIds);
+      const normalized = normalizeMaterialization({ frameworkResolutionVersion: state.framework_resolution_version, entities, relationships, classifications, diagnostics, coverage, config, detections, dependencies, complete: state.complete === 1 && (!expectedFrameworkVersion || expectedFrameworkVersion === state.framework_resolution_version) }, languageNodeIds);
       return { repositoryId, generationId, ...normalized };
     } catch {
       return undefined;

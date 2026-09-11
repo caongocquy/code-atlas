@@ -14,6 +14,6 @@ test("React/Next adapter is registered deterministically and preserves separate 
   const detections = detectFrameworks(context, builtinFrameworkAdapters);
   assert.deepEqual(detections.map((item) => item.framework), ["next", "react"]);
   const materialization = analyzeFramework({ ...context, generationId: "generation", frameworkResolutionVersion: "1.0.0", detections, analyzePaths: new Set(), maxObservations: 100 }, builtinFrameworkAdapters);
-  assert.equal(materialization.complete, true);
+  assert.equal(materialization.complete, false);
   assert.deepEqual(materialization.dependencies, []);
 });
