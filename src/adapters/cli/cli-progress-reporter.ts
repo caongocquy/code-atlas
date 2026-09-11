@@ -4,6 +4,7 @@ import {
   formatProgress,
   formatTaskTitle,
 } from "./cli-output.js";
+import { getTerminalCapabilities } from "./cli-presentation.js";
 import type { ProgressKind } from "../../core/progress/progress.types.js";
 import type {
   ProgressReporter,
@@ -65,12 +66,15 @@ export function createProgressTask(
 }
 
 export async function runProgressTasks(tasks: ListrTask[]): Promise<void> {
+  const capabilities = getTerminalCapabilities();
   await new Listr(tasks, {
-    renderer: "default",
+    renderer: capabilities.interactive || (process.env.LISTR_FORCE_TTY === "1" && process.env.CI !== "true")
+      ? "default"
+      : "simple",
     fallbackRenderer: "simple",
     rendererOptions: {
       formatOutput: "truncate",
-      clearOutput: true,
+      clearOutput: capabilities.interactive || process.env.LISTR_FORCE_TTY === "1",
       collapseSkips: true,
     },
     fallbackRendererOptions: {},

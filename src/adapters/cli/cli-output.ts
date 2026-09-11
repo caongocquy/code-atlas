@@ -5,7 +5,16 @@ import type { RepositoryStatus } from "../../core/repository/repository-status.s
 import type { RepositoryInitResult } from "../../core/repository/repository-init.service.js";
 import type { IntegrationChange, IntegrationStatus, LegacyIntegrationChange } from "../../core/integration/integration.types.js";
 import type { HookStatus } from "../../core/integration/integration.types.js";
-import type { PresentationRow } from "./cli-presentation.js";
+import {
+  getTerminalCapabilities,
+  renderHeader,
+  renderKeyValueRows,
+  renderNextActions,
+  renderResultBox,
+  renderSection,
+  renderStatusLine,
+  type PresentationRow,
+} from "./cli-presentation.js";
 
 const DEFAULT_BAR_WIDTH = 20;
 
@@ -125,29 +134,37 @@ export function formatSummary(
 
 export function formatIndexResult(result: IndexPipelineResult): string {
   const title = result.operation === "index" ? "Index complete" : "Sync complete";
-  const lines = [
-    `${cliTheme.success(cliIcons.success)} ${cliTheme.success(title)}`,
-    "",
-    `Repository     ${result.repoPath}`,
-    `Indexed files  ${result.graph.files}`,
-    `Symbols        ${result.graph.nodes}`,
-    `Relationships  ${result.graph.edges}`,
-    `Graph          ${capabilityStatus(result.graph.status)}`,
-    `Lexical        ${capabilityStatus(result.lexical.status)}`,
-    `Semantic       ${result.semantic ? capabilityStatus(result.semantic.status) : "- not configured"}`,
+  const capabilities = getTerminalCapabilities();
+  const repository: PresentationRow[] = [
+    { label: "Repository", value: result.repoPath, tone: "muted" },
+    { label: "Indexed files", value: result.graph.files },
+    { label: "Symbols", value: result.graph.nodes },
+    { label: "Relationships", value: result.graph.edges },
+  ];
+  const capabilityRows: PresentationRow[] = [
+    { label: "Graph", value: capabilityStatus(result.graph.status) },
+    { label: "Lexical", value: capabilityStatus(result.lexical.status) },
+    { label: "Semantic", value: result.semantic ? capabilityStatus(result.semantic.status) : "- not configured", tone: "muted" },
+  ];
+  const sections = [
+    renderHeader("CODEATLAS", "Local-first change intelligence", capabilities),
+    renderSection("Repository", renderKeyValueRows(repository, capabilities), capabilities),
+    renderSection("Capabilities", renderKeyValueRows(capabilityRows, capabilities), capabilities),
   ];
 
   if (result.operation === "sync") {
-    lines.push(`Changes        ${formatIncrementalSync(
-      result.changes.addedFiles.length,
-      result.changes.changedFiles.length,
-      result.changes.deletedFiles.length,
-    )}`);
-    lines.push(`Unchanged      ${result.graph.unchangedFiles}`);
+    sections.push(renderSection("Changes", [
+      formatIncrementalSync(
+        result.changes.addedFiles.length,
+        result.changes.changedFiles.length,
+        result.changes.deletedFiles.length,
+      ),
+      `Unchanged  ${result.graph.unchangedFiles}`,
+    ], capabilities));
   }
 
-  lines.push(`Duration       ${formatDuration(result.totalMs)}`);
-  return lines.join("\n");
+  sections.push(renderResultBox(title, [`Duration  ${formatDuration(result.totalMs)}`], "success", capabilities));
+  return sections.join("\n\n");
 }
 
 export function formatIndexFailure(operation: "index" | "sync", error: unknown): string {
@@ -167,30 +184,28 @@ export function formatCommandFailure(command: string, error: unknown): string {
 }
 
 export function formatRepositoryStatus(status: RepositoryStatus): string {
+  const capabilities = getTerminalCapabilities();
   const graph = status.graph.status === "ready"
-    ? `✓ ready    ${status.graph.nodes} symbols · ${status.graph.edges} relationships`
+    ? `ready    ${status.graph.nodes} symbols · ${status.graph.edges} relationships`
     : formatCapability(status.graph.status);
   const lexical = status.capabilities.lexical.state === "ready"
-    ? `✓ ready    ${status.capabilities.lexical.indexedFiles} files`
-    : `${statusMark(status.capabilities.lexical.state)} ${status.capabilities.lexical.state}`;
-  const semantic = formatCapability(status.capabilities.semantic.state);
-  const reranker = formatCapability(status.capabilities.reranker.state);
-
+    ? `ready    ${status.capabilities.lexical.indexedFiles} files`
+    : status.capabilities.lexical.state;
+  const complete = status.graph.status === "ready" && status.capabilities.lexical.state === "ready";
   return [
-    "CodeAtlas Status",
-    "",
-    `Repository   ${status.repository.path}`,
-    `Files        ${status.repository.sourceFiles}`,
-    "",
-    `Graph        ${graph}`,
-    `Lexical      ${lexical}`,
-    `Semantic     ${semantic}`,
-    `Reranker     ${reranker}`,
-    "",
-    ...(status.graph.status === "ready" && status.capabilities.lexical.state === "ready"
-      ? []
-      : ["Run:", "  code-atlas index"]),
-  ].join("\n");
+    renderHeader("CODEATLAS", "Repository status", capabilities),
+    renderSection("Repository", renderKeyValueRows([
+      { label: "Path", value: status.repository.path, tone: "muted" },
+      { label: "Files", value: status.repository.sourceFiles },
+    ], capabilities), capabilities),
+    renderSection("Capabilities", [
+      renderStatusLine("Graph", complete ? "ready" : status.graph.status, graph, capabilities),
+      renderStatusLine("Lexical", status.capabilities.lexical.state, lexical, capabilities),
+      renderStatusLine("Semantic", status.capabilities.semantic.state, formatCapability(status.capabilities.semantic.state), capabilities),
+      renderStatusLine("Reranker", status.capabilities.reranker.state, formatCapability(status.capabilities.reranker.state), capabilities),
+    ], capabilities),
+    ...(complete ? [] : [renderNextActions(["code-atlas index"], capabilities)]),
+  ].join("\n\n");
 }
 
 export function formatInitResult(
@@ -202,25 +217,32 @@ export function formatInitResult(
 ): string {
   const graph = status?.graph;
   const lexical = status?.capabilities.lexical;
-  return [
-    `${cliTheme.success(cliIcons.success)} ${cliTheme.success("CodeAtlas initialized")}`,
-    "",
-    `Repository   ${result.repoPath}`,
-    `Git          ${result.gitRepository ? "detected" : "not detected"}`,
-    "State        .codeatlas/",
-    `Index        ${indexed ? "ready" : "skipped (--no-index)"}`,
-    ...(status ? [
-      `Source files ${status.repository.sourceFiles}`,
-      ...(indexed ? [`Indexed files ${indexResult?.graph.files ?? graph?.indexedFiles ?? 0}`] : []),
-      `Symbols      ${graph?.nodes ?? 0}`,
-      `Relationships ${graph?.edges ?? 0}`,
-      `Graph        ${capabilityStatus(graph?.status ?? "not_indexed")}`,
-      `Lexical      ${capabilityStatus(lexical?.state ?? "not_indexed")}`,
-      `Guidance     ${guidanceChanged ? "updated" : "current"}`,
-    ] : []),
-    ...(indexResult ? [`Duration     ${formatDuration(indexResult.totalMs)}`] : []),
-    ...(!indexed ? ["", "Next:", "  code-atlas index"] : []),
-  ].join("\n");
+  const capabilities = getTerminalCapabilities();
+  const rows: PresentationRow[] = [
+    { label: "Repository", value: result.repoPath, tone: "muted" },
+    { label: "Git", value: result.gitRepository ? "detected" : "not detected" },
+    { label: "State", value: ".codeatlas/" },
+    { label: "Index", value: indexed ? "ready" : "skipped (--no-index)", tone: indexed ? "success" : "warning" },
+  ];
+  if (status) {
+    rows.push(
+      { label: "Source files", value: status.repository.sourceFiles },
+      ...(indexed ? [{ label: "Indexed files", value: indexResult?.graph.files ?? graph?.indexedFiles ?? 0 }] : []),
+      { label: "Symbols", value: graph?.nodes ?? 0 },
+      { label: "Relationships", value: graph?.edges ?? 0 },
+      { label: "Graph", value: capabilityStatus(graph?.status ?? "not_indexed") },
+      { label: "Lexical", value: capabilityStatus(lexical?.state ?? "not_indexed") },
+      { label: "Guidance", value: guidanceChanged ? "updated" : "current" },
+    );
+  }
+  const sections = [
+    renderHeader("CODEATLAS", "Local-first change intelligence", capabilities),
+    renderSection("Repository", renderKeyValueRows(rows, capabilities), capabilities),
+  ];
+  if (indexResult) sections.push(renderSection("Result", `Duration  ${formatDuration(indexResult.totalMs)}`, capabilities));
+  if (!indexed) sections.push(renderNextActions(["code-atlas index"], capabilities));
+  sections.push(renderResultBox("CodeAtlas initialized", [], indexed ? "success" : "warning", capabilities));
+  return sections.join("\n\n");
 }
 
 export function formatIntegrationChange(change: IntegrationChange | LegacyIntegrationChange): string {
