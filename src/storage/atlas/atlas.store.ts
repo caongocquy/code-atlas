@@ -1460,7 +1460,7 @@ export class AtlasStore {
           throw new Error("Candidate framework materialization is incomplete");
         }
       }
-      if (versions.reliabilityVersion && options.reliabilityStaged !== true) {
+      if (versions.reliabilityVersion && options.reliabilityStaged !== true && options.frameworkStaged !== true) {
         throw new Error("Candidate reliability contributions are missing");
       }
       for (const file of options.deletedFiles ?? []) {
