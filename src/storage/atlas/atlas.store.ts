@@ -838,6 +838,7 @@ export class AtlasStore {
       return {
         graph: this.loadGraphInternal(repositoryId),
         framework,
+        reliability: this.loadReliabilityInputs(repositoryId),
       };
     });
   }

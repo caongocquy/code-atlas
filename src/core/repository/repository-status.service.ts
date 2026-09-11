@@ -414,6 +414,7 @@ export async function getRepositoryStatus(
       providers.vectorStore,
     );
     const frameworkSnapshot = store.loadFramework(repoId);
+    const reliability = store.loadReliabilityInputs(repoId);
     const frameworkVersion = CURRENT_INDEX_VERSION_DOMAINS.frameworkResolutionVersion ?? "";
 
     return {
@@ -426,7 +427,7 @@ export async function getRepositoryStatus(
       capabilities,
       vector,
       graph,
-      framework: summarizeFrameworkCoverage(frameworkSnapshot, frameworkVersion),
+      framework: summarizeFrameworkCoverage(frameworkSnapshot, frameworkVersion, reliability, { capability: "framework_repository" }),
     };
   } finally {
     store.close();

@@ -6,6 +6,7 @@ import type {
   FrameworkRelationship,
 } from "../../framework/framework.types.js";
 import type { GraphEdge, GraphNode } from "../types.js";
+import type { ReliabilityProjection } from "../../reliability/reliability.types.js";
 
 export type FrameworkQueryNode =
   | { kind: "language"; node: GraphNode }
@@ -21,5 +22,6 @@ export interface FrameworkQueryProjection {
   classifications: readonly FrameworkClassification[];
   diagnostics: readonly FrameworkDiagnostic[];
   coverage: readonly FrameworkCoverage[];
+  reliability?: ReliabilityProjection;
   mayBeIncomplete: boolean;
 }

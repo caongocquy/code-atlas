@@ -8,6 +8,7 @@ import type {
 } from "../../core/facts/facts.types.js";
 import type { IndexGeneration, IndexManifest } from "../../core/indexing/index-manifest.js";
 import type { FrameworkSnapshot } from "../../core/framework/framework.types.js";
+import type { ReliabilityContribution } from "../../core/reliability/reliability.types.js";
 
 export type AtlasIndexAxis =
   | "schema"
@@ -133,4 +134,5 @@ export type AtlasIndexManifest = IndexManifest;
 export type FrameworkQueryInputs = {
   graph: import("../../core/graph/types.js").CodeGraph;
   framework: FrameworkSnapshot | undefined;
+  reliability: readonly ReliabilityContribution[];
 };

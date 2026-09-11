@@ -1,5 +1,8 @@
 import { frameworkEntityKey, frameworkSubjectKey } from "../../framework/framework-identity.js";
 import type { FrameworkSnapshot, FrameworkSubjectRef } from "../../framework/framework.types.js";
+import { aggregateReliability } from "../../reliability/reliability-aggregator.js";
+import { canonicalReliabilityScope } from "../../reliability/reliability-identity.js";
+import type { ReliabilityContribution, ReliabilityScopeInput } from "../../reliability/reliability.types.js";
 import type { CodeGraph, GraphNode } from "../types.js";
 import type { FrameworkQueryEdge, FrameworkQueryNode, FrameworkQueryProjection } from "./framework-query.types.js";
 
@@ -11,6 +14,19 @@ export function projectFrameworkGraph(graph: CodeGraph, snapshot: FrameworkSnaps
   nodes.push(...[...frameworkNodes.values()]);
   edges.push(...snapshot.relationships.map((relationship) => ({ kind: "framework" as const, relationship })));
   return { nodes: nodes.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))), edges: edges.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))), classifications: snapshot.classifications, diagnostics: snapshot.diagnostics, coverage: snapshot.coverage, mayBeIncomplete: (expectedFrameworkVersion !== undefined && snapshot.frameworkResolutionVersion !== expectedFrameworkVersion) || !snapshot.complete || snapshot.detections.some((item) => !item.complete || (item.configured && !item.observed)) || snapshot.detections.some((detection) => detection.observed && (detection.capabilities.length === 0 ? !snapshot.coverage.some((item) => item.framework === detection.framework && item.applicable > 0) : detection.capabilities.some((capability) => !snapshot.coverage.some((item) => item.framework === detection.framework && item.capability === capability && item.applicable > 0)))) || snapshot.config.some((item) => !item.complete) || snapshot.diagnostics.length > 0 || snapshot.coverage.some((item) => item.applicable > 0 && (item.supported < item.applicable || item.attempted < item.applicable || item.resolved + item.ambiguous + item.unknown + item.unsupported + item.budgetExhausted < item.attempted || item.attempted === 0 || (item.resolved === 0 && item.ambiguous === 0 && item.unknown === 0 && item.unsupported === 0 && item.budgetExhausted === 0) || item.unknown > 0 || item.ambiguous > 0 || item.unsupported > 0 || item.budgetExhausted > 0)) };
+}
+
+export function projectFrameworkGraphWithReliability(
+  graph: CodeGraph,
+  snapshot: FrameworkSnapshot | undefined,
+  contributions: readonly ReliabilityContribution[],
+  scopeInput: ReliabilityScopeInput,
+  expectedFrameworkVersion?: string,
+): FrameworkQueryProjection {
+  const projection = projectFrameworkGraph(graph, snapshot, expectedFrameworkVersion);
+  if (contributions.length === 0) return projection;
+  const reliability = aggregateReliability(contributions, canonicalReliabilityScope(scopeInput));
+  return { ...projection, reliability, mayBeIncomplete: projection.mayBeIncomplete || !reliability.complete || reliability.stale };
 }
 
 function subjectKey(subject: FrameworkSubjectRef): string {

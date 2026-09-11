@@ -7,7 +7,7 @@ import {
   getRepositoryIdentity,
 } from "../repository/repository-identity.js";
 import type { CodeGraph } from "./types.js";
-import { projectFrameworkGraph } from "./query/framework-query.service.js";
+import { projectFrameworkGraphWithReliability } from "./query/framework-query.service.js";
 import { CURRENT_INDEX_VERSION_DOMAINS } from "../repository/index-version.js";
 import type { FrameworkQueryProjection } from "./query/framework-query.types.js";
 
@@ -45,7 +45,7 @@ async function loadIndexedGraphInternal(inputPath: string, readOnly: boolean): P
       throw new Error("Repository graph is not indexed.");
     }
     const frameworkInputs = store.loadFrameworkQueryInputs(repository.id);
-    const framework = projectFrameworkGraph(frameworkInputs.graph, frameworkInputs.framework, CURRENT_INDEX_VERSION_DOMAINS.frameworkResolutionVersion);
+    const framework = projectFrameworkGraphWithReliability(frameworkInputs.graph, frameworkInputs.framework, frameworkInputs.reliability, { capability: "framework_repository" }, CURRENT_INDEX_VERSION_DOMAINS.frameworkResolutionVersion);
     return {
       repoPath,
       repoId: repository.id,
