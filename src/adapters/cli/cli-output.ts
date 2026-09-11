@@ -246,33 +246,39 @@ export function formatInitResult(
 }
 
 export function formatIntegrationChange(change: IntegrationChange | LegacyIntegrationChange): string {
+  const capabilities = getTerminalCapabilities();
   const status = change.status;
   const connecting = change.operation === "install" || change.operation === "connect";
   const configured = "codeAtlasMcpConfigured" in status ? status.codeAtlasMcpConfigured : status.state === "connected";
   const valid = "configurationValid" in status ? status.configurationValid : status.state !== "invalid_config" && status.state !== "stale";
   const guidanceConfigured = "strictGuidanceConfigured" in status && status.strictGuidanceConfigured === true;
   const heading = connecting ? `Connecting CodeAtlas to ${change.displayName}...` : `Disconnecting CodeAtlas from ${change.displayName}...`;
-  const lines = [heading, ""];
+  const lines = [renderHeader("CODEATLAS", heading, capabilities), ""];
   if (connecting) {
     lines.push(
-      `${check(configured)} MCP configured`,
-      `${check(guidanceConfigured)} AGENTS.md guidance configured`,
-      `${check(valid)} Configuration valid`,
+      renderStatusLine("MCP", configured ? "ready" : "warning", "configured", capabilities),
+      renderStatusLine("AGENTS.md", guidanceConfigured ? "ready" : "warning", "guidance configured", capabilities),
+      renderStatusLine("Config", valid ? "ready" : "warning", "valid", capabilities),
       "",
-      `${change.displayName} is ready to use CodeAtlas.`,
+      renderResultBox(`${change.displayName} is ready to use CodeAtlas`, [], "success", capabilities),
     );
   } else {
-    lines.push(`${configured ? "! MCP still configured" : "✓ MCP disconnected"}`);
+    lines.push(renderResultBox(configured ? "MCP still configured" : "MCP disconnected", [], configured ? "warning" : "success", capabilities));
   }
   return lines.join("\n");
 }
 
 export function formatIntegrationStatuses(statuses: IntegrationStatus[]): string {
+  const capabilities = getTerminalCapabilities();
   return [
-    "CodeAtlas Integrations",
-    "",
-    ...statuses.map((status) => `${statusMark(status.connection.state)} ${status.displayName}  ${status.connection.state}`),
-  ].join("\n");
+    renderHeader("CODEATLAS", "Integrations", capabilities),
+    renderSection("Connections", statuses.map((status) => renderStatusLine(
+      status.displayName,
+      status.connection.state,
+      status.connection.state,
+      capabilities,
+    ), capabilities), capabilities),
+  ].join("\n\n");
 }
 
 export function formatIntegrationBatch(
@@ -280,13 +286,14 @@ export function formatIntegrationBatch(
   results: Array<{ displayName: string; ok: boolean; error?: string }>,
   skipped: Array<{ displayName: string; reason: string }>,
 ): string {
+  const capabilities = getTerminalCapabilities();
   const lines = results.map((result) => result.ok
-    ? `✓ ${result.displayName} ${operation}`
-    : [`✗ ${result.displayName} failed`, `  Reason: ${result.error ?? "Unknown error"}`].join("\n"));
-  lines.push(...skipped.map((result) => `- ${result.displayName} skipped (${result.reason})`));
+    ? renderStatusLine(result.displayName, "success", operation, capabilities)
+    : renderStatusLine(result.displayName, "error", result.error ?? "Unknown error", capabilities));
+  lines.push(...skipped.map((result) => renderStatusLine(result.displayName, "warning", `skipped (${result.reason})`, capabilities)));
   const successes = results.filter((result) => result.ok).length;
   const failures = results.length - successes;
-  lines.push("", `${successes} ${operation} · ${failures} failed`);
+  lines.push("", renderResultBox(`${successes} ${operation} · ${failures} failed`, [], failures === 0 ? "success" : "warning", capabilities));
   return lines.join("\n");
 }
 
@@ -316,10 +323,6 @@ function statusMark(state: string): string {
   if (state === "error" || state === "invalid_config" || state === "stale") return "!";
   if (state === "not_configured" || state === "unavailable") return "-";
   return "○";
-}
-
-function check(value: boolean): string {
-  return value ? "✓" : "!";
 }
 
 function formatDuration(milliseconds: number): string {
