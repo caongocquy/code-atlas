@@ -21,7 +21,7 @@ test("publish workflow validates the exact tag and package contract", () => {
   assert.match(publish, /id-token:\s*write/);
   assert.match(publish, /\^v\[0-9\]\+\\\.\[0-9\]\+\\\.\[0-9\]\+\$/);
   assert.match(publish, /package_name.*@showdar2112\/code-atlas|== "@showdar2112\/code-atlas"/);
-  assert.match(publish, /dist\/cli\.js/);
+  assert.match(publish, /bin_path.*dist\/cli\.js/);
   assert.match(publish, /npm install --global pnpm@11\.22\.0/);
   assert.match(publish, /pnpm install --frozen-lockfile/);
   assert.doesNotMatch(publish, /npm publish.*NPM_TOKEN/);
@@ -29,7 +29,7 @@ test("publish workflow validates the exact tag and package contract", () => {
 
 test("public package metadata points to the canonical repository", () => {
   assert.equal(packageJson.name, "@showdar2112/code-atlas");
-  assert.equal(packageJson.version, "1.0.0");
+  assert.equal(packageJson.version, "1.0.1");
   assert.deepEqual(packageJson.bin, { "code-atlas": "dist/cli.js" });
   assert.deepEqual(packageJson.publishConfig, { access: "public" });
   assert.equal(packageJson.license, "ISC");
@@ -53,21 +53,22 @@ test("publish workflow validates package contents and real packed consumers", ()
   assert.match(publish, /init --no-index --no-guidance/);
   assert.match(publish, /status/);
   assert.match(publish, /JSON\.parse/);
-  assert.match(publish, /code-atlas-mcp|\"initialize\"/);
+  assert.match(publish, /code-atlas-mcp|"initialize"/);
 });
 
 test("publish workflow is duplicate-safe and fails closed on registry errors", () => {
-  assert.match(publish, /npm view \"@showdar2112\/code-atlas@\$VERSION\"/);
+  assert.match(publish, /npm view "@showdar2112\/code-atlas@\$VERSION"/);
   assert.match(publish, /@showdar2112\/code-atlas/);
   assert.match(publish, /already exists; skipping duplicate publish/);
   assert.match(publish, /npm publish --access public --provenance/);
-  assert.match(publish, /else[\s\S]*cat \"\$error_file\" >&2[\s\S]*exit \"\$query_status\"/);
+  assert.match(publish, /else[\s\S]*cat "\$error_file" >&2[\s\S]*exit "\$query_status"/);
 });
 
 test("release workflow requires npm first and safely handles duplicate releases", () => {
   assert.match(release, /needs: verify-npm/);
   assert.match(release, /contents:\s*write/);
-  assert.match(release, /npm view \"@showdar2112\/code-atlas@\$VERSION\"/);
+  assert.match(release, /npm view "@showdar2112\/code-atlas@\$VERSION"/);
+  assert.match(release, /bin\['code-atlas'\].*dist\/cli\.js/);
   assert.match(release, /releases\/tags\/\$TAG/);
   assert.match(release, /CodeAtlas \$TAG/);
   assert.match(release, /--verify-tag/);

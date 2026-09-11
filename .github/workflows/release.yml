@@ -38,7 +38,7 @@ jobs:
           version="${TAG#v}"
           [[ "$(node -p "require('./package.json').version")" == "$version" ]] || exit 1
           [[ "$(node -p "require('./package.json').name")" == "@showdar2112/code-atlas" ]] || exit 1
-          [[ "$(node -p "require('./package.json').bin['code-atlas']")" == "./dist/cli.js" ]] || exit 1
+          [[ "$(node -p "require('./package.json').bin['code-atlas']")" == "dist/cli.js" ]] || exit 1
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Verify exact npm version
