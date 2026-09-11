@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="511" viewBox="0 0 1180 511"><rect width="1180" height="511" rx="14" fill="#111827"/><circle cx="28" cy="28" r="6" fill="#fb7185"/><circle cx="48" cy="28" r="6" fill="#facc15"/><circle cx="68" cy="28" r="6" fill="#4ade80"/><text x="100" y="34" fill="#9ca3af" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="14">CodeAtlas</text><text x="28" y="78" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#22d3ee" font-weight="700">$</tspan><tspan fill="#e5e7eb"> affected-tests</tspan></text>
+<text x="28" y="105" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#e5e7eb">Affected tests</tspan></text>
+<text x="28" y="132" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"> </text>
+<text x="28" y="159" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#e5e7eb">  ✓ test/math.test.ts</tspan></text>
+<text x="28" y="186" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#e5e7eb">    import_dependency → src/math.ts</tspan></text>
+<text x="28" y="213" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"> </text>
+<text x="28" y="240" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#e5e7eb">Potential test gaps</tspan></text>
+<text x="28" y="267" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#e5e7eb">  ? src/main.ts:3 summarize — no indexed structural test evidence</tspan></text>
+<text x="28" y="294" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"> </text>
+<text x="28" y="321" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#e5e7eb">Summary</tspan></text>
+<text x="28" y="348" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#e5e7eb">  2 affected production symbols</tspan></text>
+<text x="28" y="375" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#e5e7eb">  1 with structural test evidence</tspan></text>
+<text x="28" y="402" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#e5e7eb">  1 without indexed test evidence</tspan></text>
+<text x="28" y="429" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"> </text>
+<text x="28" y="456" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#e5e7eb">⚠ Graph/test evidence may be incomplete.</tspan></text></svg>

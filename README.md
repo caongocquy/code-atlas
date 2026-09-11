@@ -5,14 +5,16 @@ calls, imports, execution paths, and change impact. It runs locally, builds a
 lightweight graph and lexical index, and exposes the result through MCP and the
 CLI.
 
+<p align="center">
+  <img src="docs/assets/readme/codeatlas-hero.png" alt="CodeAtlas local-first change intelligence" width="100%" />
+</p>
+
 Understand structure and blast radius before making a change—without requiring a
 model download.
 
 [![npm version](https://img.shields.io/npm/v/code-atlas.svg)](https://www.npmjs.com/package/code-atlas)
 [![Node.js >=22](https://img.shields.io/badge/node-%3E%3D22-339933.svg)](https://nodejs.org/)
 [![MCP](https://img.shields.io/badge/MCP-compatible-6f42c1.svg)](https://modelcontextprotocol.io/)
-
-![CodeAtlas local-first code intelligence](.github/assets/hero-codeatlas.svg)
 
 ## Quick start
 
@@ -28,6 +30,8 @@ code-atlas connect
 graph and lexical indexes, and refreshes the managed `AGENTS.md` guidance block.
 `connect` detects supported coding-agent installations and opens a selector in
 an interactive terminal.
+
+![Actual CodeAtlas init output](docs/assets/readme/cli-init.svg)
 
 The normal onboarding path needs no model runtime. To bootstrap without indexing
 and build the indexes later, use the advanced opt-out:
@@ -94,19 +98,14 @@ remote indexing service.
 Incomplete graph evidence is surfaced explicitly. CodeAtlas does not turn an
 uncertain negative result into a confident claim.
 
-## Terminal proof
+## Change intelligence
 
-These captures come from the current CLI in isolated temporary environments;
-machine-specific paths are normalized for documentation. Detection-dependent
-integration rows are shown exactly as observed in the capture.
+`inspect-change` maps the current Git diff to changed and affected symbols. The
+result reports risk and evidence quality, so incomplete graph coverage remains
+visible instead of becoming a confident guess. Use `impact` for a focused
+dependency walk and `affected-tests` to find structural test evidence and gaps.
 
-### Initialize and index
-
-![Actual CodeAtlas init output](.github/assets/terminal-init.svg)
-
-### Select a detected integration
-
-![Actual CodeAtlas connect selector](.github/assets/terminal-connect.svg)
+![Actual CodeAtlas inspect-change output](docs/assets/readme/cli-inspect-change.svg)
 
 ## Core capabilities
 
@@ -307,11 +306,29 @@ Trivial tasks do not need CodeAtlas boilerplate.
 
 ## How it works
 
-![CodeAtlas intelligence flow](.github/assets/flow-codeatlas.svg)
+Repository → Parsed Facts → Resolver + Graph → Queries → Coding Agent
+
+![CodeAtlas architecture and intelligence flow](docs/assets/readme/codeatlas-architecture.png)
 
 The graph and lexical indexes are shared core services. CLI, MCP, UI, and agent
 integration workflows consume those services rather than maintaining separate
 analysis paths.
+
+## Repository status / reliability
+
+`status` shows the repository path, indexed counts, capability readiness, and
+optional services that are not configured. It is the quickest way to check
+whether a result is ready to trust before asking for deeper analysis.
+
+![Actual CodeAtlas status output](docs/assets/readme/cli-status.svg)
+
+## Affected tests
+
+`affected-tests` uses indexed structural evidence to identify tests connected to
+changed production symbols. It also calls out potential test gaps when the
+available graph evidence is incomplete.
+
+![Actual CodeAtlas affected-tests output](docs/assets/readme/cli-affected-tests.svg)
 
 ## CLI reference
 
