@@ -1,4 +1,8 @@
 import type { EvidenceRef, ReliabilityContribution } from "./reliability.types.js";
+import { canonicalPath } from "./reliability-identity.js";
+import type { FrameworkEvidenceRef } from "../framework/framework.types.js";
+import type { ResolutionEvidence } from "../graph/resolution.types.js";
+import type { SourceRangeFact } from "../facts/facts.types.js";
 
 function rangeKey(range: EvidenceRef["range"]): string {
   return range === undefined
@@ -14,6 +18,42 @@ export function normalizeEvidenceRefs(refs: readonly EvidenceRef[]): readonly Ev
   const unique = new Map<string, EvidenceRef>();
   for (const ref of refs) unique.set(refKey(ref), ref);
   return [...unique.values()].sort((left, right) => refKey(left).localeCompare(refKey(right)));
+}
+
+export function fromFrameworkEvidenceRef(ref: FrameworkEvidenceRef, ownerKey: string): EvidenceRef {
+  return {
+    origin: "framework_inferred",
+    sourcePath: canonicalPath(ref.relativePath),
+    inputKey: ref.inputKey,
+    ...(ref.localId === undefined ? {} : { localId: ref.localId }),
+    ...(ref.range === undefined ? {} : { range: ref.range }),
+    ownerKey,
+  };
+}
+
+export function fromParsedFactRef(
+  sourcePath: string,
+  inputKey: string,
+  range: SourceRangeFact | undefined,
+  ownerKey: string,
+): EvidenceRef {
+  return {
+    origin: "extracted",
+    sourcePath: canonicalPath(sourcePath),
+    inputKey,
+    ...(range === undefined ? {} : { range }),
+    ownerKey,
+  };
+}
+
+export function fromResolutionEvidence(evidence: ResolutionEvidence, ownerKey: string): EvidenceRef {
+  return {
+    origin: "language_inferred",
+    sourcePath: canonicalPath(evidence.source.file),
+    inputKey: `resolution:${evidence.evidenceKind}:${evidence.resolutionMethod ?? "unknown"}`,
+    range: { startLine: evidence.source.line, endLine: evidence.source.line },
+    ownerKey,
+  };
 }
 
 function contributionKey(value: ReliabilityContribution): string {

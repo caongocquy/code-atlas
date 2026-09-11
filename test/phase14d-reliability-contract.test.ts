@@ -7,7 +7,12 @@ import {
   reliabilityScopeKey,
   reliabilityOwnerKey,
 } from "../src/core/reliability/reliability-identity.js";
-import { normalizeEvidenceRefs } from "../src/core/reliability/reliability-normalize.js";
+import {
+  normalizeEvidenceRefs,
+  fromFrameworkEvidenceRef,
+  fromParsedFactRef,
+  fromResolutionEvidence,
+} from "../src/core/reliability/reliability-normalize.js";
 
 test("normalizes evidence refs and scopes deterministically", () => {
   const refs = normalizeEvidenceRefs([
@@ -64,4 +69,27 @@ test("rejects absolute and traversal filesystem paths", () => {
   assert.equal(canonicalReliabilityScope({ capability: "x", selectorKey: "/route/users" }).selectorKey, "/route/users");
   assert.throws(() => reliabilityOwnerKey({ sourcePath: "../src/a.ts", inputKey: "facts" }), /canonical|relative/i);
   assert.throws(() => reliabilityOwnerKey({ sourcePath: "/tmp/repo/src/a.ts", inputKey: "facts" }), /canonical|relative/i);
+});
+
+test("maps existing evidence shapes to explicit reliability origins", () => {
+  const frameworkRef = fromFrameworkEvidenceRef({
+    relativePath: "src/routes.ts",
+    inputKey: "route:/users",
+    localId: "route-1",
+  }, "owner-framework");
+  const extractedRef = fromParsedFactRef("src/routes.ts", "facts:imports", {
+    startLine: 2,
+    endLine: 2,
+  }, "owner-facts");
+  const inferredRef = fromResolutionEvidence({
+    evidenceKind: "INFERRED",
+    resolutionMethod: "import_binding",
+    source: { file: "src/routes.ts", line: 4 },
+  }, "owner-resolution");
+
+  assert.equal(frameworkRef.origin, "framework_inferred");
+  assert.equal(extractedRef.origin, "extracted");
+  assert.equal(inferredRef.origin, "language_inferred");
+  assert.equal(frameworkRef.sourcePath, extractedRef.sourcePath);
+  assert.equal(inferredRef.range?.startLine, 4);
 });
