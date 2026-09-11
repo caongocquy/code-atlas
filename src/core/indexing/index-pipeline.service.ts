@@ -31,7 +31,7 @@ import { AtlasStore } from "../../storage/atlas/atlas.store.js";
 import { getRepositoryIdentity, canonicalRepositoryPath } from "../repository/repository-identity.js";
 import { createFileHash } from "../repository/file-hash.js";
 import { toLexicalDocumentsFromFacts } from "../lexical/lexical-index.service.js";
-import { CURRENT_INDEX_VERSION_DOMAINS } from "../repository/index-version.js";
+import { CURRENT_INDEX_VERSION_DOMAINS, RELIABILITY_VERSION } from "../repository/index-version.js";
 import { buildCandidateSymbolBindings, rebindCandidateEdges } from "../graph/build-file-updates.js";
 import { detectRepositoryChanges } from "./change-detector.js";
 import { createCandidateGeneration } from "./index-manifest.js";
@@ -45,6 +45,7 @@ import { materializeFrameworkConfig, type FrameworkConfigInput } from "../framew
 import { analyzeFramework, builtinFrameworkAdapters, detectFrameworks, expandFrameworkAnalyzePaths } from "../framework/framework-registry.js";
 import { planFrameworkInvalidation } from "../framework/framework-invalidation.js";
 import type { FrameworkAnalysisContext, FrameworkConfigFact, FrameworkConfigValue } from "../framework/framework.types.js";
+import { frameworkMaterializationContributions } from "../reliability/reliability-incremental.js";
 
 const RESOLVER_BUDGETS = {
   candidateExpansions: 1000,
@@ -472,7 +473,7 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
     const plan = planInvalidation({ repositoryFiles: [...currentFiles.keys()], currentFiles, previousBindings, directImporters, unsafeTopologyReasons, versions: CURRENT_INDEX_VERSION_DOMAINS, previousVersions: previousManifest?.versions });
     recordIndexWork(counters, "importersInvalidated", plan.importersInvalidated.length);
 
-    const generation = createCandidateGeneration(repoId, activeGenerationId, CURRENT_INDEX_VERSION_DOMAINS, bindings);
+    const generation = createCandidateGeneration(repoId, activeGenerationId, { ...CURRENT_INDEX_VERSION_DOMAINS, reliabilityVersion: RELIABILITY_VERSION }, bindings);
     store.beginCandidateGeneration(generation);
     store.writeCandidateManifest(generation.manifest);
     const scope = createResolutionScope(plan);
@@ -549,6 +550,7 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       maxObservations: 10_000,
     } satisfies FrameworkAnalysisContext, builtinFrameworkAdapters);
     store.writeCandidateFramework(generation.id, frameworkMaterialization);
+    store.stageReliabilityContributions(generation.id, frameworkMaterializationContributions(frameworkMaterialization));
     const lexical: LexicalFileUpdate[] = units.map((unit) => ({ file: unit.relativePath, fileHash: unit.facts.contentHash, documents: toLexicalDocumentsFromFacts(repoId, unit) }));
     store.writeCandidateLexicalDocuments(generation.id, lexical);
     const semanticStartedAt = performance.now();
@@ -604,7 +606,7 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       ...plan.removedPaths,
       ...changes.deletedFiles.filter(isModuleConfigPath),
     ])];
-    store.publishCandidateGeneration(generation.id, { requireGraph: true, requireLexical: true, semanticEnabled: semanticCandidate !== undefined || semanticPreserved, graphStaged: true, frameworkStaged: true, lexicalStaged: true, semanticStaged: semanticCandidate !== undefined || semanticPreserved, deletedFiles, fileStates, versions: { graph: GRAPH_INDEX_VERSION, lexical: LEXICAL_INDEX_VERSION, ...(semanticCandidate ? { semantic: VECTOR_INDEX_VERSION } : {}) } });
+    store.publishCandidateGeneration(generation.id, { requireGraph: true, requireLexical: true, semanticEnabled: semanticCandidate !== undefined || semanticPreserved, graphStaged: true, frameworkStaged: true, reliabilityStaged: true, lexicalStaged: true, semanticStaged: semanticCandidate !== undefined || semanticPreserved, deletedFiles, fileStates, versions: { graph: GRAPH_INDEX_VERSION, lexical: LEXICAL_INDEX_VERSION, ...(semanticCandidate ? { semantic: VECTOR_INDEX_VERSION } : {}) } });
 
     const totalMs = performance.now() - startedAt;
     const graphCurrent = operation === "sync" && plan.parsePaths.length === 0 && plan.removedPaths.length === 0;
