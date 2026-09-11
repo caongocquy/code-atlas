@@ -193,7 +193,7 @@ export function formatRepositoryStatus(status: RepositoryStatus): string {
     : status.capabilities.lexical.state;
   const complete = status.graph.status === "ready" && status.capabilities.lexical.state === "ready";
   return [
-    renderHeader("CODEATLAS", "Repository status", capabilities),
+    renderHeader("CodeAtlas Status", undefined, capabilities),
     renderSection("Repository", renderKeyValueRows([
       { label: "Path", value: status.repository.path, tone: "muted" },
       { label: "Files", value: status.repository.sourceFiles },
