@@ -402,6 +402,20 @@ function createCurrentSchema(database: DatabaseSync): void {
       FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS generation_reliability_contributions (
+      repository_id TEXT NOT NULL,
+      generation_id TEXT NOT NULL,
+      contribution_key TEXT NOT NULL,
+      owner_key TEXT NOT NULL,
+      scope_key TEXT NOT NULL,
+      output_key TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      PRIMARY KEY (repository_id, generation_id, contribution_key),
+      UNIQUE (repository_id, generation_id, owner_key, scope_key, output_key),
+      FOREIGN KEY (generation_id) REFERENCES index_generations(id) ON DELETE CASCADE,
+      FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+    );
+
     DROP INDEX IF EXISTS idx_generation_framework_entities_tuple;
     CREATE INDEX IF NOT EXISTS idx_generation_symbols_active
       ON generation_symbols (repository_id, generation_id, file_path);
@@ -423,6 +437,8 @@ function createCurrentSchema(database: DatabaseSync): void {
       ON generation_framework_coverage (repository_id, generation_id);
     CREATE INDEX IF NOT EXISTS idx_generation_framework_state_generation
       ON generation_framework_state (repository_id, generation_id);
+    CREATE INDEX IF NOT EXISTS idx_generation_reliability_owner
+      ON generation_reliability_contributions (repository_id, generation_id, owner_key);
   `);
 
 }

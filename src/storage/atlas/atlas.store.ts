@@ -53,6 +53,7 @@ import type { CodeGraph, GraphEdge, GraphEdgeType, GraphNode, GraphNodeType } fr
 import type { RepositoryIdentity } from "../../core/repository/repository-identity.js";
 import type { IndexedFileState } from "../../core/repository/indexed-file-state.js";
 import type { VectorPoint, VectorSearchResult } from "../../core/semantic/vector-store.js";
+import type { ReliabilityContribution } from "../../core/reliability/reliability.types.js";
 import { withProvenance } from "../../core/graph/resolver/provenance.js";
 import { isSymbolIdentityKey } from "../../core/graph/resolver/identities.js";
 
@@ -1361,6 +1362,70 @@ export class AtlasStore {
     }
   }
 
+  stageReliabilityContributions(generationId: string, contributions: readonly ReliabilityContribution[]): void {
+    if (this.readOnly) throw new Error("AtlasStore is read-only");
+    this.database.exec("BEGIN IMMEDIATE;");
+    try {
+      const generation = this.generationRepository(generationId);
+      const rows = new Map<string, ReliabilityContribution>();
+      for (const contribution of contributions) {
+        const contributionKey = JSON.stringify([contribution.scope.scopeKey, contribution.outputKey, contribution.ownerKey]);
+        const existing = rows.get(contributionKey);
+        if (existing && stableJson(existing) !== stableJson(contribution)) {
+          throw new TypeError("Conflicting duplicate reliability contribution");
+        }
+        rows.set(contributionKey, contribution);
+      }
+
+      this.database.prepare(
+        "DELETE FROM generation_reliability_contributions WHERE repository_id = ? AND generation_id = ?",
+      ).run(generation.repository_id, generationId);
+      const insert = this.database.prepare(
+        `INSERT INTO generation_reliability_contributions
+         (repository_id, generation_id, contribution_key, owner_key, scope_key, output_key, payload_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      );
+      for (const [contributionKey, contribution] of rows) {
+        insert.run(
+          generation.repository_id,
+          generationId,
+          contributionKey,
+          contribution.ownerKey,
+          contribution.scope.scopeKey,
+          contribution.outputKey,
+          stableJson(contribution),
+        );
+      }
+      this.database.exec("COMMIT;");
+    } catch (error) {
+      this.database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  loadReliabilityContributions(repositoryId: string, generationId?: string): readonly ReliabilityContribution[] {
+    const selectedGenerationId = generationId ?? this.getActiveGenerationId(repositoryId);
+    if (!selectedGenerationId || !this.hasTable("generation_reliability_contributions")) return [];
+    const rows = this.database.prepare(
+      `SELECT contribution_key, owner_key, scope_key, output_key, payload_json
+       FROM generation_reliability_contributions
+       WHERE repository_id = ? AND generation_id = ?
+       ORDER BY contribution_key`,
+    ).all(repositoryId, selectedGenerationId) as Array<{ contribution_key: string; owner_key: string; scope_key: string; output_key: string; payload_json: string }>;
+    return rows.map((row) => {
+      const contribution = JSON.parse(row.payload_json) as ReliabilityContribution;
+      const expectedKey = JSON.stringify([contribution.scope.scopeKey, contribution.outputKey, contribution.ownerKey]);
+      if (expectedKey !== row.contribution_key || contribution.ownerKey !== row.owner_key || contribution.scope.scopeKey !== row.scope_key || contribution.outputKey !== row.output_key) {
+        throw new TypeError("Corrupt reliability contribution key");
+      }
+      return contribution;
+    });
+  }
+
+  loadReliabilityInputs(repositoryId: string): readonly ReliabilityContribution[] {
+    return this.loadReliabilityContributions(repositoryId);
+  }
+
   publishCandidateGeneration(generationId: string, options: {
     requireGraph?: boolean;
     requireLexical?: boolean;
@@ -1369,6 +1434,7 @@ export class AtlasStore {
     frameworkStaged?: boolean;
     lexicalStaged?: boolean;
     semanticStaged?: boolean;
+    reliabilityStaged?: boolean;
     deletedFiles?: string[];
     fileStates?: Array<{ file: string; capability: AtlasCapability; input: FileCapabilityStateInput }>;
     versions?: Partial<Record<AtlasIndexAxis, string>>;
@@ -1392,6 +1458,9 @@ export class AtlasStore {
         if (!frameworkState || frameworkState.complete !== 1 || frameworkState.framework_resolution_version !== versions.frameworkResolutionVersion) {
           throw new Error("Candidate framework materialization is incomplete");
         }
+      }
+      if (versions.reliabilityVersion && options.reliabilityStaged !== true) {
+        throw new Error("Candidate reliability contributions are missing");
       }
       for (const file of options.deletedFiles ?? []) {
         for (const capability of ["graph", "lexical", "semantic"] as const) this.deleteCapabilityState(generation.repository_id, file, capability);
