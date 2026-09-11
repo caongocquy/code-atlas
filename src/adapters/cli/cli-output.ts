@@ -5,16 +5,13 @@ import type { RepositoryStatus } from "../../core/repository/repository-status.s
 import type { RepositoryInitResult } from "../../core/repository/repository-init.service.js";
 import type { IntegrationChange, IntegrationStatus, LegacyIntegrationChange } from "../../core/integration/integration.types.js";
 import type { HookStatus } from "../../core/integration/integration.types.js";
+import type { PresentationRow } from "./cli-presentation.js";
 
 const DEFAULT_BAR_WIDTH = 20;
 
 type SummaryValue = string | number;
 
-export type SummaryRow = {
-  label: string;
-  value: SummaryValue;
-  tone?: "default" | "muted" | "warning" | "success";
-};
+export type SummaryRow = PresentationRow;
 
 function terminalWidth(): number {
   return process.stdout.columns ?? 80;

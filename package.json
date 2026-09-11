@@ -43,6 +43,7 @@
     "ignore": "5.3.2",
     "jsonc-parser": "3.3.1",
     "listr2": "^11.0.1",
+    "picocolors": "1.1.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "sigma": "^3.0.3",
