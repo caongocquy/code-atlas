@@ -74,17 +74,17 @@ jobs:
           npm install --global pnpm@11.22.0
           pnpm --version
           pnpm install --frozen-lockfile
+
+      - name: Run release verification
+        run: |
+          set -euo pipefail
+          pnpm run build
           global_bin="$GITHUB_WORKSPACE/node_modules/.bin"
           mkdir -p "$global_bin"
           ln -sf "$GITHUB_WORKSPACE/dist/cli.js" "$global_bin/code-atlas"
           echo "$global_bin" >> "$GITHUB_PATH"
           export PATH="$global_bin:$PATH"
           command -v code-atlas
-
-      - name: Run release verification
-        run: |
-          set -euo pipefail
-          pnpm run build
           pnpm run lint
           pnpm exec node --import tsx/esm --test \
             test/cli-presentation.test.ts \
