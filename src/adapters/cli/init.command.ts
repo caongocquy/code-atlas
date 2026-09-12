@@ -1,6 +1,7 @@
 import path from "node:path";
 
 import { createCliCommandReporter } from "./cli-command-reporter.js";
+import { createInlineProgressRunner } from "./cli-progress-reporter.js";
 import { formatInitResult, formatIntegrationChange } from "./cli-output.js";
 import { indexRepository, type IndexPipelineResult } from "../../core/indexing/index-pipeline.service.js";
 import type { IndexRunOutcome } from "../../core/indexing/indexing.types.js";
@@ -38,7 +39,12 @@ export async function runInitCommand(
 
   if (!noIndex) {
     try {
-      const outcome = await (dependencies.indexRepository ?? indexRepository)(targetPath, { progress: reporter.progress });
+      const outcome = await reporter.run(
+        "Indexing repository",
+        (progressReporter) => (dependencies.indexRepository ?? indexRepository)(targetPath, {
+          progress: createInlineProgressRunner(progressReporter),
+        }),
+      );
       if (outcome.kind === "failed") {
         indexError = outcome.failure.message;
         process.exitCode = 1;

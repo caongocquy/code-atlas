@@ -1,6 +1,7 @@
 import path from "node:path";
 
 import { createCliCommandReporter } from "./cli-command-reporter.js";
+import { createInlineProgressRunner } from "./cli-progress-reporter.js";
 import { formatIndexFailure, formatIndexResult, formatRepositoryStatus } from "./cli-output.js";
 import { getRepositoryStatusReadOnly } from "../../core/repository/repository-status.service.js";
 import { indexRepository, syncRepository, type IndexPipelineResult } from "../../core/indexing/index-pipeline.service.js";
@@ -36,10 +37,13 @@ export async function runIndexingCommand(
   process.once("SIGINT", onSigint);
 
   try {
-    const result = await index(targetPath, {
-      progress: reporter.progress,
-      skipGit: args.includes("--skip-git"),
-    });
+    const result = await reporter.run(
+      operation === "index" ? "Indexing repository" : "Syncing repository",
+      (progressReporter) => index(targetPath, {
+        progress: createInlineProgressRunner(progressReporter),
+        skipGit: args.includes("--skip-git"),
+      }),
+    );
     if (result.kind === "failed") {
       process.exitCode = 1;
       const error = new Error(result.failure.message);

@@ -80,7 +80,7 @@ jobs:
             throw new Error(`Local-only runtime dependency specifier found: ${serialized}`);
           }
           if (manifest.name !== "@showdar2112/code-atlas") throw new Error(`Unexpected package name: ${manifest.name}`);
-          if (manifest.version !== "1.0.4") throw new Error(`Unexpected package version: ${manifest.version}`);
+          if (manifest.version !== "1.0.5") throw new Error(`Unexpected package version: ${manifest.version}`);
           if (manifest.bin?.["code-atlas"] !== "dist/cli.js") throw new Error("Unexpected CLI bin target");
           if (manifest.publishConfig?.access !== "public") throw new Error("Package is not public");
           console.log(JSON.stringify({ name: manifest.name, version: manifest.version, bin: manifest.bin }, null, 2));
@@ -116,8 +116,8 @@ jobs:
             run_clean "$bin" "$flag" > "$RUNNER_TEMP/code-atlas-$flag.stdout" 2> "$RUNNER_TEMP/code-atlas-$flag.stderr"
             test ! -s "$RUNNER_TEMP/code-atlas-$flag.stderr"
           done
-          test "$(cat "$RUNNER_TEMP/code-atlas---version.stdout")" = "1.0.4"
-          test "$(cat "$RUNNER_TEMP/code-atlas--v.stdout")" = "1.0.4"
+          test "$(cat "$RUNNER_TEMP/code-atlas---version.stdout")" = "1.0.5"
+          test "$(cat "$RUNNER_TEMP/code-atlas--v.stdout")" = "1.0.5"
           grep -q 'Usage: code-atlas' "$RUNNER_TEMP/code-atlas---help.stdout"
           grep -q 'Usage: code-atlas' "$RUNNER_TEMP/code-atlas--h.stdout"
           (
@@ -143,7 +143,7 @@ jobs:
             cat "$RUNNER_TEMP/npm-global-install.stderr" >&2
             exit 1
           fi
-          HOME="$RUNNER_TEMP/global-home" XDG_CONFIG_HOME="$RUNNER_TEMP/global-xdg" "$prefix/bin/code-atlas" --version | grep -qx '1.0.4'
+          HOME="$RUNNER_TEMP/global-home" XDG_CONFIG_HOME="$RUNNER_TEMP/global-xdg" "$prefix/bin/code-atlas" --version | grep -qx '1.0.5'
           HOME="$RUNNER_TEMP/global-home" XDG_CONFIG_HOME="$RUNNER_TEMP/global-xdg" "$prefix/bin/code-atlas" --help | grep -q 'Usage: code-atlas'
 
       - name: Publish release smoke summary
@@ -153,9 +153,9 @@ jobs:
           WARNING_COUNT: ${{ steps.consumer.outputs.warning_count }}
         run: |
           {
-            echo '## CodeAtlas 1.0.4 release smoke'
+            echo '## CodeAtlas 1.0.5 release smoke'
             echo
-            echo 'Package: `@showdar2112/code-atlas@1.0.4`'
+            echo 'Package: `@showdar2112/code-atlas@1.0.5`'
             echo
             echo '| Check | Result |'
             echo '| --- | --- |'

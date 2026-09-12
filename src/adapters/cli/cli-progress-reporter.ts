@@ -97,6 +97,30 @@ export async function runProgressTask<T>(
   return result;
 }
 
+export function createInlineProgressRunner(parent: ProgressReporter): ProgressRunner {
+  return {
+    async run<T>(
+      title: string,
+      work: (reporter: ProgressReporter) => Promise<T> | T,
+      _kind?: ProgressKind,
+    ): Promise<T> {
+      parent.setTitle?.(title);
+      try {
+        return await work(parent);
+      } finally {
+        parent.setTitle?.("Analyzing repository");
+      }
+    },
+    async runAll(tasks) {
+      for (const task of tasks) {
+        parent.setTitle?.(task.title);
+        await task.work(parent);
+      }
+      parent.setTitle?.("Analyzing repository");
+    },
+  };
+}
+
 export const cliProgressRunner: ProgressRunner = {
   run: runProgressTask,
   runAll(tasks: readonly ProgressTask[]): Promise<void> {

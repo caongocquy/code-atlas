@@ -63,7 +63,7 @@ export function renderBrandHeader(
   if (!capabilities.interactive) return "";
   const width = capabilities.columns ?? 80;
   if (width < 60) return renderHeader("CODEATLAS", undefined, capabilities);
-  if (width < 96) return renderHeader("CODEATLAS", subtitle, capabilities);
+  if (width < 80) return renderHeader("CODEATLAS", subtitle, capabilities);
 
   const pc = colors(capabilities);
   return [pc.bold(pc.cyan(PIXEL_WORDMARK.join("\n"))), pc.gray(subtitle)].join("\n");

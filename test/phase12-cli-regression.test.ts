@@ -83,7 +83,7 @@ test("CLI index uses human progress and completion output", async () => {
   try {
     await writeFile(path.join(repoPath, "source.ts"), "export function source() { return true; }\n");
     const result = await runCli(repoPath, "index");
-    assert.match(result.stdout, /Scanning repository/);
+    assert.match(result.stdout, /Analyzing repository|Scanning repository/);
     assert.match(result.stdout, /Index complete/);
     assert.doesNotMatch(result.stdout, /"operation"/);
 

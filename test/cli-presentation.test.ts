@@ -76,8 +76,11 @@ test("brand header is responsive and stays within terminal width", () => {
   assert.match(wide, /▀|█/);
   assert.match(wide, /Local-first change intelligence for coding agents/);
 
-  const medium = renderBrandHeader("Local-first change intelligence for coding agents", { ...tty, color: false, columns: 80 });
+  const medium = renderBrandHeader("Local-first change intelligence for coding agents", { ...tty, color: false, columns: 79 });
   assert.equal(medium, "CODEATLAS\nLocal-first change intelligence for coding agents");
+
+  const standard = renderBrandHeader("Local-first change intelligence for coding agents", { ...tty, color: false, columns: 80 });
+  assert.match(standard, /██████╗/);
 
   const narrow = renderBrandHeader("Local-first change intelligence for coding agents", { ...tty, color: false, columns: 50 });
   assert.equal(narrow, "CODEATLAS");
