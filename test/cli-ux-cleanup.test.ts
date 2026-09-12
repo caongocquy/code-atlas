@@ -97,7 +97,7 @@ test("TTY progress keeps one final row per phase", async () => {
   const repoPath = await fixture("tty");
   try {
     await writeFile(path.join(repoPath, "source.ts"), "export function source() { return true; }\n");
-    const result = await runCli(repoPath, ["index"], { LISTR_FORCE_TTY: "1" });
+    const result = await runCli(repoPath, ["index"], { CI: "false", LISTR_FORCE_TTY: "1" });
     const finalFrame = normalizeTerminalOutput(result.stdout);
     assert.match(finalFrame, /Index complete/);
     assert.equal(count(finalFrame, /100%/g), 0);
