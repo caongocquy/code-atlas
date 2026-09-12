@@ -99,6 +99,9 @@ export async function runProgressTask<T>(
 
 export function createInlineProgressRunner(parent: ProgressReporter): ProgressRunner {
   return {
+    update(message: string): void {
+      parent.update(message);
+    },
     async run<T>(
       title: string,
       work: (reporter: ProgressReporter) => Promise<T> | T,

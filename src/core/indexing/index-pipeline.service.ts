@@ -387,6 +387,8 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
     const units: IndexedSourceUnit[] = [];
     const bindings: Array<{ repositoryId: string; relativePath: string; generationId: string; factBlobKey: FactBlobKey; contentHash: string; language: SupportedLanguage }> = [];
 
+    let parsedFiles = 0;
+    options.progress?.update?.(`Parsing repository — 0/${currentFiles.size}`);
     for (const [relativePath, current] of currentFiles) {
       let source = sources.get(relativePath);
       const adapter = getLanguageAdapter(relativePath);
@@ -434,6 +436,8 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       }
       units.push({ relativePath, source, facts });
       bindings.push({ repositoryId: repoId, relativePath, generationId: "pending", factBlobKey: key, contentHash: facts.contentHash, language: current.language });
+      parsedFiles += 1;
+      options.progress?.update?.(`Parsing repository — ${parsedFiles}/${currentFiles.size}`);
     }
 
     const directImporters = new Map<string, Set<string>>();
@@ -514,6 +518,7 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
     if (plan.fullGraphResolution && !graphCompatible) recordIndexWork(counters, "fullResolutionFallbacks");
     const reuseResolutionPaths = plan.reasons.includes("resolution_version_changed") ? [] : plan.reusePaths;
     store.writeCandidateGraph(generation.id, graph.graph, changes.fileHashes, graphCompatible ? undefined : persistedResolution, reuseResolutionPaths);
+    options.progress?.update?.("Resolving framework relationships");
     const frameworkFacts = candidateInput.allUnits.map((unit) => ({ relativePath: unit.relativePath, facts: unit.facts }));
     const frameworkContextBase = {
       repositoryId: repoId,
@@ -551,6 +556,7 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
     } satisfies FrameworkAnalysisContext, builtinFrameworkAdapters);
     store.writeCandidateFramework(generation.id, frameworkMaterialization);
     store.stageReliabilityContributions(generation.id, frameworkMaterializationContributions(frameworkMaterialization));
+    options.progress?.update?.("Writing index results");
     const lexical: LexicalFileUpdate[] = units.map((unit) => ({ file: unit.relativePath, fileHash: unit.facts.contentHash, documents: toLexicalDocumentsFromFacts(repoId, unit) }));
     store.writeCandidateLexicalDocuments(generation.id, lexical);
     const semanticStartedAt = performance.now();
