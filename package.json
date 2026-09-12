@@ -1,6 +1,6 @@
 {
   "name": "@showdar2112/code-atlas",
-  "version": "1.0.8",
+  "version": "1.1.0",
   "description": "A local-first code-intelligence engine with optional AI.",
   "bin": {
     "code-atlas": "dist/cli.js"
