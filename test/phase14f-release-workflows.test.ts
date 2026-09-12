@@ -9,6 +9,7 @@ const packageJson = JSON.parse(readFileSync(path.join(root, "package.json"), "ut
 const publish = readFileSync(path.join(root, ".github/workflows/publish.yml"), "utf8");
 const release = readFileSync(path.join(root, ".github/workflows/release.yml"), "utf8");
 const smoke = readFileSync(path.join(root, ".github/workflows/release-smoke.yml"), "utf8");
+const workspace = readFileSync(path.join(root, "pnpm-workspace.yaml"), "utf8");
 
 test("Phase14F release workflows are valid YAML", () => {
   const result = spawnSync("ruby", ["-e", "require 'yaml'; ARGV.each { |file| YAML.load_file(file) }", ".github/workflows/publish.yml", ".github/workflows/release.yml", ".github/workflows/release-smoke.yml"], { cwd: root, encoding: "utf8" });
@@ -32,6 +33,30 @@ test("manual release smoke verifies a real clean npm consumer", () => {
   assert.match(smoke, /GITHUB_STEP_SUMMARY/);
   assert.match(smoke, /upload-artifact@v4/);
   assert.doesNotMatch(smoke, /--legacy-peer-deps|--force|--ignore-scripts/);
+});
+
+test("native parser build policy allows every required grammar", () => {
+  for (const packageName of [
+    "@driftlog/tree-sitter-dart",
+    "esbuild",
+    "onnxruntime-node",
+    "protobufjs",
+    "sharp",
+    "tree-sitter",
+    "tree-sitter-c",
+    "tree-sitter-cli",
+    "tree-sitter-cpp",
+    "tree-sitter-go",
+    "tree-sitter-java",
+    "tree-sitter-javascript",
+    "tree-sitter-kotlin",
+    "tree-sitter-python",
+    "tree-sitter-rust",
+    "tree-sitter-swift",
+    "tree-sitter-typescript",
+  ]) {
+    assert.match(workspace, new RegExp(`["']?${packageName.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}['"]?: true`));
+  }
 });
 
 test("publish workflow validates the exact tag and package contract", () => {

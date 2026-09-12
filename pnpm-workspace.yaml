@@ -5,6 +5,14 @@ allowBuilds:
   protobufjs: true
   sharp: true
   tree-sitter: true
+  tree-sitter-c: true
+  tree-sitter-cli: true
+  tree-sitter-cpp: true
+  tree-sitter-go: true
+  tree-sitter-java: true
   tree-sitter-javascript: true
   tree-sitter-kotlin: true
+  tree-sitter-python: true
+  tree-sitter-rust: true
+  tree-sitter-swift: true
   tree-sitter-typescript: true
