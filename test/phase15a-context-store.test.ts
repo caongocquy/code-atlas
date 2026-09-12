@@ -6,6 +6,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { ContextStore, CONTEXT_SCHEMA_VERSION } from "../src/storage/context/context.store.js";
+import { contentIdentity } from "../src/core/context/context-snapshot.js";
 import type { ContextReceipt, ContextSession, DeliveredSnapshot } from "../src/core/context/context.types.js";
 
 function session(): ContextSession {
@@ -20,7 +21,7 @@ function receipt(): ContextReceipt {
   return {
     receiptId: "receipt-1", sessionId: "session-1", repositoryIdentity: "repo-1", workspaceIdentity: "workspace-1",
     subject: { kind: "file", path: "src/index.ts" }, subjectIdentity: "subject-1", projectionIdentity: "projection-1",
-    contextGeneration: "context-1", deliveryMode: "full", deliveredContentIdentity: "content-1", snapshotId: "snapshot-1",
+    contextGeneration: "context-1", deliveryMode: "full", deliveredContentIdentity: contentIdentity("hello"), snapshotId: "snapshot-1",
     reliability: { mayBeIncomplete: false }, deliveredAt: "2026-09-12T00:00:00.000Z", state: "active", schemaVersion: 1,
   };
 }
@@ -28,7 +29,7 @@ function receipt(): ContextReceipt {
 function snapshot(): DeliveredSnapshot {
   return {
     snapshotId: "snapshot-1", receiptId: "receipt-1", subjectIdentity: "subject-1", projectionIdentity: "projection-1",
-    content: "hello", contentIdentity: "content-1", createdAt: "2026-09-12T00:00:00.000Z", schemaVersion: 1,
+    content: "hello", contentIdentity: contentIdentity("hello"), createdAt: "2026-09-12T00:00:00.000Z", schemaVersion: 1,
   };
 }
 

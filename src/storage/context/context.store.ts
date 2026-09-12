@@ -3,6 +3,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { validateContextSession, validateContextSubject } from "../../core/context/context-identity.js";
+import { contentIdentity } from "../../core/context/context-snapshot.js";
 import type { ContextReceipt, ContextSession, DeliveredSnapshot } from "../../core/context/context.types.js";
 import { CONTEXT_SCHEMA_VERSION, initializeContextSchema } from "./context.schema.js";
 
@@ -51,7 +52,8 @@ export class ContextStore {
     const session = validateContextSession(sessionValue);
     validateContextSubject(receipt.subject);
     if (receipt.sessionId !== session.sessionId || receipt.snapshotId !== snapshot.snapshotId || snapshot.receiptId !== receipt.receiptId) throw new TypeError("receipt and snapshot linkage is invalid");
-    if (snapshot.subjectIdentity !== receipt.subjectIdentity || snapshot.projectionIdentity !== receipt.projectionIdentity || snapshot.contentIdentity !== receipt.deliveredContentIdentity) throw new TypeError("receipt and snapshot identity is invalid");
+    if (receipt.repositoryIdentity !== session.repositoryIdentity || receipt.workspaceIdentity !== session.workspaceIdentity) throw new TypeError("receipt and session identity is invalid");
+    if (snapshot.subjectIdentity !== receipt.subjectIdentity || snapshot.projectionIdentity !== receipt.projectionIdentity || snapshot.contentIdentity !== receipt.deliveredContentIdentity || snapshot.contentIdentity !== contentIdentity(snapshot.content)) throw new TypeError("receipt and snapshot identity is invalid");
     this.saveSession(session);
     this.database.exec("BEGIN");
     try {
