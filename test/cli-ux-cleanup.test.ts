@@ -108,6 +108,18 @@ test("TTY progress keeps one final row per phase", async () => {
   }
 });
 
+test("init reuses the indexing renderer without nesting progress lists", async () => {
+  const repoPath = await fixture("init-tty");
+  try {
+    await writeFile(path.join(repoPath, "source.ts"), "export const value = 1;\n");
+    const result = await runCli(repoPath, ["init"], { CI: "false", LISTR_FORCE_TTY: "1" });
+    assert.equal(count(result.stdout, /Indexing repository/g), 0);
+    assert.match(normalizeTerminalOutput(result.stdout), /Index complete|CodeAtlas initialized/);
+  } finally {
+    await rm(repoPath, { recursive: true, force: true });
+  }
+});
+
 test("non-TTY progress is plain and bounded", async () => {
   const repoPath = await fixture("plain");
   try {

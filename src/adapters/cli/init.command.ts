@@ -38,10 +38,7 @@ export async function runInitCommand(
 
   if (!noIndex) {
     try {
-      const outcome = await reporter.run(
-        "Indexing repository",
-        () => (dependencies.indexRepository ?? indexRepository)(targetPath, { progress: reporter.progress }),
-      );
+      const outcome = await (dependencies.indexRepository ?? indexRepository)(targetPath, { progress: reporter.progress });
       if (outcome.kind === "failed") {
         indexError = outcome.failure.message;
         process.exitCode = 1;
