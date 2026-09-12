@@ -40,12 +40,7 @@ async function runCli(repoPath: string, ...args: string[]): Promise<{ stdout: st
     HOME: repoPath,
     NO_COLOR: "1",
   };
-  try {
-    await access(durableCliPath);
-    env.CODE_ATLAS_CLI = durableCliPath;
-  } catch {
-    // Local test runs may not have a checkout-local executable.
-  }
+  if (process.env.CI === "true") env.CODE_ATLAS_CLI = durableCliPath;
   return execFile(process.execPath, ["--import", tsxLoader, cliPath, ...args], {
     cwd: repoPath,
     env,
