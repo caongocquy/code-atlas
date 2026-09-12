@@ -17,8 +17,11 @@ export async function resolveDurableMcpLaunch(
   }
   const argv = options.argv ?? process.argv;
   const env = options.env ?? process.env;
+  const configuredPath = env.CODE_ATLAS_CLI;
   const invokedPath = argv[1];
-  const candidates = invokedPath && path.isAbsolute(invokedPath) && isCodeAtlasExecutablePath(invokedPath)
+  const candidates = configuredPath && path.isAbsolute(configuredPath)
+    ? [configuredPath]
+    : invokedPath && path.isAbsolute(invokedPath) && isCodeAtlasExecutablePath(invokedPath)
     ? [invokedPath]
     : resolvePathCandidates(env.PATH);
   for (const candidate of candidates) {

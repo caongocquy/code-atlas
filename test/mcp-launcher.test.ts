@@ -19,7 +19,7 @@ test("durable launcher resolves the installed CodeAtlas executable", async () =>
   try {
     const launch = await resolveDurableMcpLaunch(import.meta.url, {
       argv: [process.execPath, path.join(root, "dist", "cli.js")],
-      env: { PATH: root },
+      env: { CODE_ATLAS_CLI: executable, PATH: "" },
     });
     assert.deepEqual(launch, { command: executable, args: ["mcp"] });
     await access(launch.command);

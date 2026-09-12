@@ -84,6 +84,7 @@ jobs:
           ln -sf "$GITHUB_WORKSPACE/dist/cli.js" "$global_bin/code-atlas"
           echo "$global_bin" >> "$GITHUB_PATH"
           export PATH="$global_bin:$PATH"
+          export CODE_ATLAS_CLI="$global_bin/code-atlas"
           command -v code-atlas
           pnpm run lint
           pnpm exec node --import tsx/esm --test \
