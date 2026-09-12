@@ -61,16 +61,15 @@ function format(result: AffectedTestsResult): string {
 }
 
 export async function runAffectedTestsCommand(args: string[]): Promise<void> {
+  const json = args.includes("--json");
+  const reporter = createCliCommandReporter({ command: "affected-tests", json });
   try {
     const parsed = parse(args);
-    const reporter = createCliCommandReporter({ json: parsed.json });
     const result = await affectedTests(parsed.repoPath, parsed.input);
     if (parsed.json) reporter.output(result);
     else reporter.success(format(result));
   } catch (error) {
     process.exitCode = 1;
-    const json = args.includes("--json");
-    const reporter = createCliCommandReporter({ json });
     if (json) reporter.output({ error: error instanceof Error ? error.message : String(error) });
     else reporter.failure(`affected-tests failed: ${error instanceof Error ? error.message : String(error)}`);
   }

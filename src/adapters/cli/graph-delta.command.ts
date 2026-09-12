@@ -53,7 +53,7 @@ function label(edge: GraphDeltaResult["addedEdges"][number]): string {
 
 export async function runGraphDeltaCommand(args: string[]): Promise<void> {
   const json = args.includes("--json");
-  const reporter = createCliCommandReporter({ json });
+  const reporter = createCliCommandReporter({ command: "graph-delta", json });
   try {
     const parsed = parse(args);
     const result = await graphDelta(parsed.repoPath, parsed.input);

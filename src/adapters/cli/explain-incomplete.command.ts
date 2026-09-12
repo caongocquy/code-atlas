@@ -63,7 +63,7 @@ function format(result: ExplainIncompleteResult): string {
 
 export async function runExplainIncompleteCommand(args: string[]): Promise<void> {
   const json = args.includes("--json");
-  const reporter = createCliCommandReporter({ json });
+  const reporter = createCliCommandReporter({ command: "explain-incomplete", json });
   try {
     const parsed = parse(args);
     const result = await explainIncomplete(parsed.repoPath, parsed.input);

@@ -109,12 +109,13 @@ test("default CLI output is human-readable while --json stays machine-readable",
     assert.equal(secondGuidance.match(/### Reporting/g)?.length, 1);
 
     const status = await runCli(repoPath, "status");
-    assert.match(status.stdout, /CodeAtlas Status/);
+    assert.match(status.stdout, /Repository\n/);
+    assert.doesNotMatch(status.stdout, /CODEATLAS/);
     assert.doesNotMatch(status.stdout, /^\s*\{/);
 
     const json = await runCli(repoPath, "status", "--json");
     assert.doesNotThrow(() => JSON.parse(json.stdout));
-    assert.doesNotMatch(json.stdout, /CodeAtlas Status/);
+    assert.doesNotMatch(json.stdout, /CODEATLAS|Repository status/);
   } finally {
     await rm(repoPath, { recursive: true, force: true });
   }

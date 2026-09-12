@@ -1,5 +1,6 @@
 import { cliProgressRunner } from "./cli-progress-reporter.js";
 import { formatNotice } from "./cli-output.js";
+import { getTerminalCapabilities, renderBrandHeader } from "./cli-presentation.js";
 import type { ProgressKind, ProgressReporter, ProgressRunner } from "../../core/progress/progress.types.js";
 import { silentProgressRunner } from "../../core/progress/silent-progress-runner.js";
 
@@ -15,10 +16,47 @@ export type CliCommandReporter = {
   run<T>(title: string, work: (reporter: ProgressReporter) => T | Promise<T>, kind?: ProgressKind): Promise<T>;
 };
 
-export function createCliCommandReporter(options: { json?: boolean; quiet?: boolean } = {}): CliCommandReporter {
+export type CliCommand =
+  | "affected-tests"
+  | "architecture-drift"
+  | "connect"
+  | "disconnect"
+  | "explain-incomplete"
+  | "gate"
+  | "graph-delta"
+  | "hook"
+  | "init"
+  | "index"
+  | "inspect-change"
+  | "integrations"
+  | "status"
+  | "sync";
+
+const commandSubtitles: Record<CliCommand, string> = {
+  "affected-tests": "Affected tests",
+  "architecture-drift": "Architecture analysis",
+  connect: "Agent integrations",
+  disconnect: "Agent integrations",
+  "explain-incomplete": "Reliability diagnostics",
+  gate: "Change gate",
+  "graph-delta": "Graph changes",
+  hook: "Agent integration",
+  init: "Repository indexing",
+  index: "Repository indexing",
+  "inspect-change": "Change intelligence",
+  integrations: "Agent integrations",
+  status: "Repository status",
+  sync: "Repository indexing",
+};
+
+export function createCliCommandReporter(options: { command?: CliCommand; json?: boolean; quiet?: boolean } = {}): CliCommandReporter {
   const json = options.json === true;
   const quiet = options.quiet === true;
   const progress = json || quiet ? silentProgressRunner : cliProgressRunner;
+  const capabilities = getTerminalCapabilities();
+  if (!json && !quiet && options.command && capabilities.interactive) {
+    process.stdout.write(`${renderBrandHeader(commandSubtitles[options.command], capabilities)}\n\n`);
+  }
   const humanOutput = (message: string): void => {
     if (!json && !quiet) process.stdout.write(`${message}\n`);
   };

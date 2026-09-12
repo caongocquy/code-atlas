@@ -60,15 +60,16 @@ function formatResult(result: InspectChangeResult): string {
 }
 
 export async function runInspectChangeCommand(args: string[]): Promise<void> {
-  const parsed = parseInput(args);
-  const reporter = createCliCommandReporter({ json: parsed.json });
+  const json = args.includes("--json");
+  const reporter = createCliCommandReporter({ command: "inspect-change", json });
   try {
+    const parsed = parseInput(args);
     const result = await inspectChange(parsed.repoPath, parsed.input);
     if (parsed.json) reporter.output(result);
     else reporter.success(formatResult(result));
   } catch (error) {
     process.exitCode = 1;
-    if (parsed.json) reporter.output({ error: error instanceof Error ? error.message : String(error) });
+    if (json) reporter.output({ error: error instanceof Error ? error.message : String(error) });
     else reporter.failure(`inspect-change failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }

@@ -7,7 +7,7 @@ import { GitHookService } from "../../core/integration/git-hook.service.js";
 
 export async function runHookCommand(args: string[], repoPath = path.resolve(".")): Promise<void> {
   const [action] = args.filter((arg) => !arg.startsWith("--"));
-  const reporter = createCliCommandReporter({ json: args.includes("--json") });
+  const reporter = createCliCommandReporter({ command: "hook", json: args.includes("--json") });
   const hooks = selectedHooks(args);
   const service = new GitHookService(repoPath);
   if (action === "status") {

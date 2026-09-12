@@ -40,7 +40,7 @@ function format(result: ChangeGateResult): string {
 }
 
 export async function runGateCommand(args: string[]): Promise<void> {
-  const json = args.includes("--json"); const reporter = createCliCommandReporter({ json });
+  const json = args.includes("--json"); const reporter = createCliCommandReporter({ command: "gate", json });
   try {
     const parsed = parse(args); const result = await changeGate(parsed.repoPath, parsed.input);
     if (parsed.json) reporter.output(result); else reporter.success(format(result));

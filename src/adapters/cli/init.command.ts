@@ -27,7 +27,7 @@ export async function runInitCommand(
     return true;
   });
   const targetPath = explicitPath ? path.resolve(repoPath, explicitPath) : repoPath;
-  const reporter = createCliCommandReporter({ json: args.includes("--json") });
+  const reporter = createCliCommandReporter({ command: "init", json: args.includes("--json") });
   reporter.start("CodeAtlas Init");
   const result = await reporter.run("Initializing repository", () => initializeRepository(targetPath));
   const json = args.includes("--json");

@@ -13,6 +13,12 @@ export type PresentationRow = {
   tone?: "default" | "muted" | "warning" | "success";
 };
 
+const PIXEL_WORDMARK = [
+  "█▀▀█ █▀▀█ █▀▀▄ █▀▀█ ▀█▀ █    ▄▀▀▄ █▀▀",
+  "█▄▄█ █▄▄█ █  █ █▄▄█  █  █    █  █ █▀▀",
+  "█  █ █  █ █▄▄▀ █  █ ▄█▄ █▄▄█ ▀▄▄▀ █▄▄",
+] as const;
+
 export function getTerminalCapabilities(
   stream: NodeJS.WriteStream = process.stdout,
   env: NodeJS.ProcessEnv = process.env,
@@ -45,6 +51,19 @@ export function renderHeader(
   const lines = [pc.bold(pc.cyan(title))];
   if (subtitle) lines.push(pc.gray(subtitle));
   return lines.join("\n");
+}
+
+export function renderBrandHeader(
+  subtitle: string,
+  capabilities: TerminalCapabilities = getTerminalCapabilities(),
+): string {
+  if (!capabilities.interactive) return "";
+  const width = capabilities.columns ?? 80;
+  if (width < 60) return renderHeader("CODEATLAS", undefined, capabilities);
+  if (width < 96) return renderHeader("CODEATLAS", subtitle, capabilities);
+
+  const pc = colors(capabilities);
+  return [pc.bold(pc.cyan(PIXEL_WORDMARK.join("\n"))), pc.gray(subtitle)].join("\n");
 }
 
 export function renderSection(

@@ -47,7 +47,10 @@ export async function runIntegrationCommand(
     await runIntegrationConfigCommand(args);
     return;
   }
-  const reporter = createCliCommandReporter({ json: args.includes("--json") });
+  const command = firstArgument === "connect" || firstArgument === "disconnect" || firstArgument === "integrations"
+    ? firstArgument
+    : firstArgument === "install" ? "connect" : firstArgument === "uninstall" ? "disconnect" : "integrations";
+  const reporter = createCliCommandReporter({ command, json: args.includes("--json") });
   const service = (dependencies.createService ?? createAgentIntegrationService)({ cwd: repoPath });
   const json = args.includes("--json");
   const noGuidance = args.includes("--no-guidance");
@@ -200,7 +203,7 @@ async function pickerTargets(
   });
   if (result.kind === "cancelled") {
     if (result.exitCode !== undefined) process.exitCode = result.exitCode;
-    const reporter = createCliCommandReporter();
+    const reporter = createCliCommandReporter({ command: connecting ? "connect" : "disconnect" });
     reporter.success("Cancelled.");
     return undefined;
   }

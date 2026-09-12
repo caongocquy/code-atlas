@@ -15,7 +15,7 @@ export async function runIndexingCommand(
   const targetPath = explicitPath ? path.resolve(repoPath, explicitPath) : repoPath;
   if (operation === "status") {
     const result = await getRepositoryStatusReadOnly(targetPath);
-    const reporter = createCliCommandReporter({ json });
+    const reporter = createCliCommandReporter({ command: "status", json });
     if (json) reporter.output(result);
     else reporter.success(formatRepositoryStatus(result));
     return;
@@ -24,7 +24,7 @@ export async function runIndexingCommand(
     ? indexRepository
     : syncRepository;
   const quiet = args.includes("--quiet");
-  const reporter = createCliCommandReporter({ json, quiet });
+  const reporter = createCliCommandReporter({ command: operation === "sync" ? "sync" : "index", json, quiet });
   reporter.start(operation === "index" ? "CodeAtlas Index" : "CodeAtlas Sync");
   let cancelled = false;
   const onSigint = () => {

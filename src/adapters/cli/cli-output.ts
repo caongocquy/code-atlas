@@ -7,7 +7,6 @@ import type { IntegrationChange, IntegrationStatus, LegacyIntegrationChange } fr
 import type { HookStatus } from "../../core/integration/integration.types.js";
 import {
   getTerminalCapabilities,
-  renderHeader,
   renderKeyValueRows,
   renderNextActions,
   renderResultBox,
@@ -147,7 +146,6 @@ export function formatIndexResult(result: IndexPipelineResult): string {
     { label: "Semantic", value: result.semantic ? capabilityStatus(result.semantic.status) : "- not configured", tone: "muted" },
   ];
   const sections = [
-    renderHeader("CODEATLAS", "Local-first change intelligence", capabilities),
     renderSection("Repository", renderKeyValueRows(repository, capabilities), capabilities),
     renderSection("Capabilities", renderKeyValueRows(capabilityRows, capabilities), capabilities),
   ];
@@ -193,7 +191,6 @@ export function formatRepositoryStatus(status: RepositoryStatus): string {
     : status.capabilities.lexical.state;
   const complete = status.graph.status === "ready" && status.capabilities.lexical.state === "ready";
   return [
-    renderHeader("CodeAtlas Status", undefined, capabilities),
     renderSection("Repository", renderKeyValueRows([
       { label: "Path", value: status.repository.path, tone: "muted" },
       { label: "Files", value: status.repository.sourceFiles },
@@ -236,7 +233,6 @@ export function formatInitResult(
     );
   }
   const sections = [
-    renderHeader("CODEATLAS", "Local-first change intelligence", capabilities),
     renderSection("Repository", renderKeyValueRows(rows, capabilities), capabilities),
   ];
   if (indexResult) sections.push(renderSection("Result", `Duration  ${formatDuration(indexResult.totalMs)}`, capabilities));
@@ -253,7 +249,7 @@ export function formatIntegrationChange(change: IntegrationChange | LegacyIntegr
   const valid = "configurationValid" in status ? status.configurationValid : status.state !== "invalid_config" && status.state !== "stale";
   const guidanceConfigured = "strictGuidanceConfigured" in status && status.strictGuidanceConfigured === true;
   const heading = connecting ? `Connecting CodeAtlas to ${change.displayName}...` : `Disconnecting CodeAtlas from ${change.displayName}...`;
-  const lines = [renderHeader("CODEATLAS", heading, capabilities), ""];
+  const lines = [heading, ""];
   if (connecting) {
     lines.push(
       renderStatusLine("MCP", configured ? "ready" : "warning", "configured", capabilities),
@@ -271,7 +267,6 @@ export function formatIntegrationChange(change: IntegrationChange | LegacyIntegr
 export function formatIntegrationStatuses(statuses: IntegrationStatus[]): string {
   const capabilities = getTerminalCapabilities();
   return [
-    renderHeader("CODEATLAS", "Integrations", capabilities),
     renderSection("Connections", statuses.map((status) => renderStatusLine(
       status.displayName,
       status.connection.state,
@@ -299,7 +294,7 @@ export function formatIntegrationBatch(
 
 export function formatHookStatus(status: HookStatus): string {
   return [
-    "CodeAtlas Hooks",
+    "Hooks",
     "",
     `Repository   ${status.repoPath}`,
     ...Object.entries(status.hooks).map(([name, hook]) => `${hook.installed ? "✓" : "○"} ${name}  ${hook.installed ? "installed" : "not installed"}`),

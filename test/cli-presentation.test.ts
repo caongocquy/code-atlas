@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { createCliCommandReporter } from "../src/adapters/cli/cli-command-reporter.js";
 import {
   getTerminalCapabilities,
+  renderBrandHeader,
   renderHeader,
   renderKeyValueRows,
   renderNextActions,
@@ -50,4 +52,42 @@ test("result boxes stay within narrow terminal widths", () => {
   const narrow: TerminalCapabilities = { isTTY: true, color: false, interactive: true, columns: 40 };
   const output = renderResultBox("Result", ["/a/very/long/repository/path/that/needs/truncation"], "success", narrow);
   for (const line of output.split("\n")) assert.ok(line.length <= 40, line);
+});
+
+test("human command reporters render one shared brand header", () => {
+  const writes: string[] = [];
+  const originalWrite = process.stdout.write;
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    writes.push(String(chunk));
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    createCliCommandReporter({ command: "status" });
+    createCliCommandReporter({ command: "status", json: true });
+    createCliCommandReporter({ command: "status", quiet: true });
+  } finally {
+    process.stdout.write = originalWrite;
+  }
+  assert.equal(writes.join(""), "");
+});
+
+test("brand header is responsive and stays within terminal width", () => {
+  const wide = renderBrandHeader("Local-first change intelligence for coding agents", { ...tty, columns: 100 });
+  assert.match(wide, /▀|█/);
+  assert.match(wide, /Local-first change intelligence for coding agents/);
+
+  const medium = renderBrandHeader("Local-first change intelligence for coding agents", { ...tty, color: false, columns: 80 });
+  assert.equal(medium, "CODEATLAS\nLocal-first change intelligence for coding agents");
+
+  const narrow = renderBrandHeader("Local-first change intelligence for coding agents", { ...tty, color: false, columns: 50 });
+  assert.equal(narrow, "CODEATLAS");
+
+  for (const output of [wide, medium, narrow]) {
+    for (const line of output.split("\n")) assert.ok(line.length <= 100, line);
+  }
+});
+
+test("brand header skips decorative output outside interactive TTY", () => {
+  assert.equal(renderBrandHeader("Subtitle", plain), "");
+  assert.equal(renderBrandHeader("Subtitle", { ...tty, interactive: false, columns: 120 }), "");
 });
