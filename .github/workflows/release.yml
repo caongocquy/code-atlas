@@ -25,7 +25,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
-          package-manager-cache: false
 
       - name: Validate tag and package metadata
         id: metadata
@@ -96,15 +95,15 @@ jobs:
           response_status=$?
           set -e
           if [[ "$response_status" -eq 0 ]]; then
-            TAG="$TAG" RELEASE_FILE="$response_file" node <<'NODE'
-            const fs = require("node:fs");
-            const release = JSON.parse(fs.readFileSync(process.env.RELEASE_FILE, "utf8"));
-            const expectedTag = process.env.TAG;
-            if (release.tag_name !== expectedTag || release.name !== `CodeAtlas ${expectedTag}` || release.draft || release.prerelease) {
-              throw new Error("Existing GitHub Release does not match the requested stable release");
-            }
-            console.log(`Existing GitHub Release ${expectedTag} matches; skipping duplicate`);
-            NODE
+            TAG="$TAG" RELEASE_FILE="$response_file" node -e '
+              const fs = require("node:fs");
+              const release = JSON.parse(fs.readFileSync(process.env.RELEASE_FILE, "utf8"));
+              const expectedTag = process.env.TAG;
+              if (release.tag_name !== expectedTag || release.name !== `CodeAtlas ${expectedTag}` || release.draft || release.prerelease) {
+                throw new Error("Existing GitHub Release does not match the requested stable release");
+              }
+              console.log(`Existing GitHub Release ${expectedTag} matches; skipping duplicate`);
+            '
           elif grep -qiE 'HTTP/[^ ]+ 404|status code 404|Not Found' "$error_file"; then
             gh release create "$TAG" --repo "$GH_REPO" --verify-tag --title "CodeAtlas $TAG" --generate-notes --latest
           else
