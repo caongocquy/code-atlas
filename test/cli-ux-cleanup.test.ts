@@ -115,6 +115,7 @@ test("init reuses the indexing renderer without nesting progress lists", async (
     const result = await runCli(repoPath, ["init"], { CI: "false", LISTR_FORCE_TTY: "1" });
     assert.ok(count(result.stdout, /Indexing repository/g) <= 3);
     assert.match(result.stdout, /Parsing repository|Analyzing repository/);
+    assert.match(result.stdout, /Resolving language relationships/);
     assert.match(normalizeTerminalOutput(result.stdout), /Index complete|CodeAtlas initialized/);
   } finally {
     await rm(repoPath, { recursive: true, force: true });

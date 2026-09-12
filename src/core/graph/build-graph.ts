@@ -228,6 +228,7 @@ export function resolveIndexedUnits(input: {
   resolvePaths: ReadonlySet<string>;
   evidence: readonly SemanticEvidenceBatch[];
   context: GenerationResolverContext;
+  reporter?: ProgressReporter;
 }): Map<string, GraphResolutionFile> {
   const result = new Map<string, GraphResolutionFile>();
   for (let index = 0; index < input.allUnits.length; index += 1) {
@@ -262,6 +263,7 @@ export function resolveIndexedUnits(input: {
       decisions,
       trace: [...existingTrace, ...input.context.diagnostics.snapshot().slice(before)],
     }));
+    input.reporter?.setProgress(index + 1, input.allUnits.length);
   }
   return result;
 }
@@ -518,6 +520,7 @@ export async function buildCodeGraphWithResolutionFromFacts(
     resolvePaths: new Set(resolutionPaths ?? canonical.map((unit) => unit.relativePath)),
     evidence,
     context,
+    reporter,
   });
   const graph = assembleFactsGraph(repoPath, canonical, resolutionByFile, reporter, repositoryId);
   return { graph, resolutionByFile };
