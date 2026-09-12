@@ -45,3 +45,9 @@ test("TTY result boxes color while plain output retains stable information", () 
     assert.match(output, new RegExp(tone));
   }
 });
+
+test("result boxes stay within narrow terminal widths", () => {
+  const narrow: TerminalCapabilities = { isTTY: true, color: false, interactive: true, columns: 40 };
+  const output = renderResultBox("Result", ["/a/very/long/repository/path/that/needs/truncation"], "success", narrow);
+  for (const line of output.split("\n")) assert.ok(line.length <= 40, line);
+});

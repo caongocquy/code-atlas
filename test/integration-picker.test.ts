@@ -5,6 +5,7 @@ import {
   applyPickerKey,
   createPickerState,
   renderPicker,
+  runIntegrationPicker,
   type IntegrationPickerRow,
 } from "../src/adapters/cli/integration-picker.js";
 
@@ -71,6 +72,87 @@ test("rendered rows distinguish pending selection from connected state", () => {
   assert.match(rendered, /OpenCode\s+installed/);
   assert.match(rendered, /Claude Code\s+not detected/);
   assert.match(rendered, /Space toggle · A select all detected · Enter confirm · Esc cancel/);
+});
+
+test("interactive picker redraws in place and restores the terminal", async () => {
+  let dataHandler: ((chunk: string) => void) | undefined;
+  let resizeHandler: (() => void) | undefined;
+  const writes: string[] = [];
+  const stdin = {
+    isTTY: true,
+    setRawMode: () => stdin,
+    resume: () => stdin,
+    pause: () => stdin,
+    setEncoding: () => stdin,
+    on: (event: string, listener: (chunk: string) => void) => {
+      if (event === "data") dataHandler = listener;
+      return stdin;
+    },
+    off: (event: string) => {
+      if (event === "data") dataHandler = undefined;
+      return stdin;
+    },
+  };
+  const stdout = {
+    isTTY: true,
+    write: (chunk: string) => {
+      writes.push(chunk);
+      return true;
+    },
+    on: (event: string, listener: () => void) => {
+      if (event === "resize") resizeHandler = listener;
+      return stdout;
+    },
+    off: (event: string) => {
+      if (event === "resize") resizeHandler = undefined;
+      return stdout;
+    },
+  };
+
+  const picker = runIntegrationPicker({ title: "Connect CodeAtlas", rows, stdin, stdout });
+  dataHandler?.("\u001b[B");
+  resizeHandler?.();
+  dataHandler?.("\r");
+  const result = await picker;
+  const output = writes.join("");
+
+  assert.deepEqual(result, { kind: "confirmed", selected: [] });
+  assert.equal((output.match(/\u001b\[\?25l/g) ?? []).length, 1);
+  assert.equal((output.match(/\u001b\[\?25h/g) ?? []).length, 1);
+  assert.doesNotMatch(output, /\u001b\[2J/);
+  assert.match(output, /\u001b\[2K/);
+});
+
+test("interactive picker clears on SIGINT and restores the cursor", async () => {
+  let dataHandler: ((chunk: string) => void) | undefined;
+  const writes: string[] = [];
+  const stdin = {
+    isTTY: true,
+    setRawMode: () => stdin,
+    resume: () => stdin,
+    pause: () => stdin,
+    setEncoding: () => stdin,
+    on: (event: string, listener: (chunk: string) => void) => {
+      if (event === "data") dataHandler = listener;
+      return stdin;
+    },
+    off: (event: string) => {
+      if (event === "data") dataHandler = undefined;
+      return stdin;
+    },
+  };
+  const stdout = {
+    isTTY: true,
+    write: (chunk: string) => { writes.push(chunk); return true; },
+  };
+  const picker = runIntegrationPicker({ title: "Connect CodeAtlas", rows, stdin, stdout });
+  process.emit("SIGINT");
+  assert.equal(dataHandler, undefined);
+  assert.deepEqual(await picker, { kind: "cancelled", exitCode: 130 });
+  const output = writes.join("");
+  assert.equal((output.match(/\u001b\[\?25l/g) ?? []).length, 1);
+  assert.equal((output.match(/\u001b\[\?25h/g) ?? []).length, 1);
+  assert.match(output, /\u001b\[2K/);
 });
 
 function expectUpdate(

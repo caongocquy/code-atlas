@@ -21,7 +21,10 @@ export type PickerResult =
   | { kind: "cancelled"; exitCode?: 130 };
 
 export type PickerStdin = Pick<NodeJS.ReadStream, "isTTY" | "setRawMode" | "resume" | "pause" | "setEncoding" | "on" | "off">;
-export type PickerStdout = Pick<NodeJS.WriteStream, "isTTY" | "write">;
+export type PickerStdout = Pick<NodeJS.WriteStream, "isTTY" | "write"> & {
+  on?: (event: "resize", listener: () => void) => unknown;
+  off?: (event: "resize", listener: () => void) => unknown;
+};
 
 export function createPickerState(rows: readonly IntegrationPickerRow[]): IntegrationPickerState {
   const copiedRows = rows.map((row) => ({ ...row, selected: row.selectable && row.selected }));
@@ -84,21 +87,45 @@ export async function runIntegrationPicker(options: {
   }
 
   let state = createPickerState(options.rows);
-  const render = (): void => { stdout.write(`\x1b[2J\x1b[H${renderPicker(options.title, state)}`); };
+  let renderedLines = 0;
+  const clearFrame = (): void => {
+    if (renderedLines === 0) return;
+    if (renderedLines > 1) stdout.write(`\x1b[${renderedLines - 1}A`);
+    stdout.write("\r");
+    for (let index = 0; index < renderedLines; index += 1) {
+      stdout.write("\x1b[2K");
+      if (index < renderedLines - 1) stdout.write("\x1b[1B\r");
+    }
+    if (renderedLines > 1) stdout.write(`\x1b[${renderedLines - 1}A\r`);
+    renderedLines = 0;
+  };
+  const render = (): void => {
+    clearFrame();
+    const frame = renderPicker(options.title, state);
+    stdout.write(frame);
+    renderedLines = frame.split("\n").length;
+  };
+  stdout.write("\x1b[?25l");
   render();
 
   return new Promise((resolve) => {
     let done = false;
+    let onData: (chunk: string) => void;
     const finish = (result: Exclude<PickerResult, { kind: "updated" }>): void => {
       if (done) return;
       done = true;
       stdin.off("data", onData);
+      stdout.off?.("resize", onResize);
+      process.off("SIGINT", onSigint);
       stdin.setRawMode?.(false);
       stdin.pause();
-      stdout.write("\n");
+      clearFrame();
+      stdout.write("\x1b[?25h");
       resolve(result);
     };
-    const onData = (chunk: string): void => {
+    const onResize = (): void => render();
+    const onSigint = (): void => finish({ kind: "cancelled", exitCode: 130 });
+    onData = (chunk: string): void => {
       const inputs: PickerKey[] = chunk === "\u0003"
         ? ["ctrl-c"]
         : chunk === "\u001b[A"
@@ -128,7 +155,9 @@ export async function runIntegrationPicker(options: {
     stdin.setEncoding("utf8");
     stdin.setRawMode?.(true);
     stdin.on("data", onData);
+    stdout.on?.("resize", onResize);
     stdin.resume();
+    process.once("SIGINT", onSigint);
   });
 }
 

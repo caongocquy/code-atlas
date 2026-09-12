@@ -4,6 +4,7 @@ export type TerminalCapabilities = {
   isTTY: boolean;
   color: boolean;
   interactive: boolean;
+  columns?: number;
 };
 
 export type PresentationRow = {
@@ -19,7 +20,8 @@ export function getTerminalCapabilities(
   const isCI = env.CI === "true";
   const isTTY = stream.isTTY === true;
   const color = isTTY && !isCI && !("NO_COLOR" in env);
-  return { isTTY, color, interactive: isTTY && !isCI };
+  const columns = typeof stream.columns === "number" && stream.columns > 0 ? stream.columns : undefined;
+  return { isTTY, color, interactive: isTTY && !isCI, ...(columns ? { columns } : {}) };
 }
 
 function colors(capabilities: TerminalCapabilities) {
@@ -87,9 +89,21 @@ export function renderResultBox(
   const marker = tone === "success" ? "✓" : tone === "warning" ? "!" : "✗";
   const color = tone === "success" ? pc.green : tone === "warning" ? pc.yellow : pc.red;
   const content = [`${color(marker)} ${color(title)}`, ...lines];
-  const width = Math.max(...content.map((line) => line.replace(/\u001b\[[0-9;]*m/g, "").length), 0) + 2;
+  const maxInnerWidth = Math.max(1, (capabilities.columns ?? 80) - 2);
+  const boundedContent = content.map((line) => truncateVisible(line, maxInnerWidth - 1));
+  const width = Math.min(maxInnerWidth, Math.max(...boundedContent.map((line) => stripAnsi(line).length), 0) + 1);
   const border = `┌${"─".repeat(width)}┐`;
-  return [border, ...content.map((line) => `│ ${line.padEnd(width - 1)}│`), `└${"─".repeat(width)}┘`].join("\n");
+  return [border, ...boundedContent.map((line) => `│ ${line.padEnd(width - 1)}│`), `└${"─".repeat(width)}┘`].join("\n");
+}
+
+function stripAnsi(value: string): string {
+  return value.replace(/\u001b\[[0-9;]*m/g, "");
+}
+
+function truncateVisible(value: string, maxLength: number): string {
+  const plain = stripAnsi(value);
+  if (plain.length <= maxLength) return value;
+  return `${plain.slice(0, Math.max(0, maxLength - 1))}…`;
 }
 
 export function renderNextActions(
