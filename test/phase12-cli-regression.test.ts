@@ -40,7 +40,7 @@ async function runCli(repoPath: string, ...args: string[]): Promise<{ stdout: st
     HOME: repoPath,
     NO_COLOR: "1",
   };
-  if (process.env.CODE_ATLAS_CLI || process.env.GITHUB_ACTIONS === "true") {
+  if (process.env.CODE_ATLAS_CLI || process.env.GITHUB_WORKSPACE) {
     env.CODE_ATLAS_CLI = process.env.CODE_ATLAS_CLI ?? durableCliPath;
   }
   return execFile(process.execPath, ["--import", tsxLoader, cliPath, ...args], {
