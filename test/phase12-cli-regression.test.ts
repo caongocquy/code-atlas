@@ -32,15 +32,23 @@ async function fixture(name: string): Promise<string> {
 }
 
 async function runCli(repoPath: string, ...args: string[]): Promise<{ stdout: string; stderr: string }> {
+  const durableCliPath = path.resolve("node_modules/.bin/code-atlas");
+  const env = {
+    ...process.env,
+    CODEX_HOME: path.join(repoPath, ".codex-home"),
+    XDG_CONFIG_HOME: path.join(repoPath, ".xdg"),
+    HOME: repoPath,
+    NO_COLOR: "1",
+  };
+  try {
+    await access(durableCliPath);
+    env.CODE_ATLAS_CLI = durableCliPath;
+  } catch {
+    // Local test runs may not have a checkout-local executable.
+  }
   return execFile(process.execPath, ["--import", tsxLoader, cliPath, ...args], {
     cwd: repoPath,
-    env: {
-      ...process.env,
-      CODEX_HOME: path.join(repoPath, ".codex-home"),
-      XDG_CONFIG_HOME: path.join(repoPath, ".xdg"),
-      HOME: repoPath,
-      NO_COLOR: "1",
-    },
+    env,
   });
 }
 
