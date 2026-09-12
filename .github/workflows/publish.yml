@@ -75,6 +75,7 @@ jobs:
           pnpm --version
           pnpm install --frozen-lockfile
           global_bin="$GITHUB_WORKSPACE/node_modules/.bin"
+          mkdir -p "$global_bin"
           ln -sf "$GITHUB_WORKSPACE/dist/cli.js" "$global_bin/code-atlas"
           echo "$global_bin" >> "$GITHUB_PATH"
           export PATH="$global_bin:$PATH"
