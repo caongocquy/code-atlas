@@ -71,6 +71,11 @@ async function main(): Promise<void> {
       await runIndexingCommand("status", args);
       return;
     }
+    case "context-read": {
+      const { runContextReadCommand } = await import("./adapters/cli/context-read.command.js");
+      await runContextReadCommand(args);
+      return;
+    }
     case "inspect-change": {
       const { runInspectChangeCommand } = await import("./adapters/cli/inspect-change.command.js");
       await runInspectChangeCommand(args);

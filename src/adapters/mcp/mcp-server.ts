@@ -47,6 +47,7 @@ import { architectureDrift } from "../../core/architecture/architecture-drift.se
 import type { ArchitectureDriftInput } from "../../core/architecture/architecture-drift.types.js";
 import { changeGate } from "../../core/gate/change-gate.service.js";
 import type { ChangeGateInput } from "../../core/gate/change-gate.types.js";
+import { readContextAware } from "../../core/context/context-aware-read.service.js";
 
 const MAX_LIMIT = 1_000;
 const MAX_CANDIDATES = 20;
@@ -525,6 +526,18 @@ export function createMcpServer(): McpServer {
       mayBeIncomplete: context.mayBeIncomplete,
       ...(context.framework?.reliability ? { reliability: context.framework.reliability } : {}),
     };
+  }));
+
+  registerJsonTool(server, "context_read", "Opt-in context-aware read for one repository-relative file.", z.object({
+    repoPath: repoInput,
+    file: z.string().min(1),
+    sessionId: z.string().min(1),
+    contextGeneration: z.string().min(1),
+  }).strict(), async (args) => readContextAware(resolveRepo(args.repoPath as string | undefined), {
+    sessionId: args.sessionId as string,
+    contextGeneration: args.contextGeneration as string,
+    subject: { kind: "file", path: args.file as string },
+    projection: "source-v1",
   }));
 
   const relationTools = [

@@ -17,6 +17,7 @@ export type CliCommandReporter = {
 };
 
 export type CliCommand =
+  | "context-read"
   | "affected-tests"
   | "architecture-drift"
   | "connect"
@@ -33,6 +34,7 @@ export type CliCommand =
   | "sync";
 
 const commandSubtitles: Record<CliCommand, string> = {
+  "context-read": "Context-aware read",
   "affected-tests": "Affected tests",
   "architecture-drift": "Architecture analysis",
   connect: "Agent integrations",

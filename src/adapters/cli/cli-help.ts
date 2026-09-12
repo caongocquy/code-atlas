@@ -11,6 +11,7 @@ const groups: HelpGroup[] = [
       ["index [path]", "Build the graph and lexical indexes"],
       ["sync [path]", "Update indexes from repository changes"],
       ["status [path]", "Show repository and capability status"],
+      ["context-read [path]", "Read a file with explicit context reuse"],
     ],
   },
   {
@@ -87,6 +88,17 @@ const details: Record<string, string[]> = {
     "",
     "Options:",
     "  --json             Print machine-readable output",
+  ],
+  "context-read": [
+    "Usage: code-atlas context-read [path] --file <relative-path> --session <id> --context-generation <id> [options]",
+    "",
+    "Read one file with opt-in context-aware delivery.",
+    "",
+    "Options:",
+    "  --file <path>              Repository-relative file path",
+    "  --session <id>             Explicit context session id",
+    "  --context-generation <id>  Explicit context generation",
+    "  --json                     Print machine-readable output",
   ],
   "inspect-change": [
     "Usage: code-atlas inspect-change [path] [options]",

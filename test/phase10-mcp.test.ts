@@ -42,6 +42,7 @@ test("MCP exposes the structured CodeAtlas capability surface", async () => {
       "graph_delta",
       "architecture_drift",
       "change_gate",
+      "context_read",
       "get_community",
       "get_symbol",
       "impact",
