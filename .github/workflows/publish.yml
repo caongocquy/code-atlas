@@ -76,6 +76,8 @@ jobs:
           pnpm install --frozen-lockfile
 
       - name: Run release verification
+        env:
+          CODE_ATLAS_CLI: ${{ github.workspace }}/node_modules/.bin/code-atlas
         run: |
           set -euo pipefail
           pnpm run build
