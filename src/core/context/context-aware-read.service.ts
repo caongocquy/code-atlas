@@ -75,15 +75,21 @@ export async function readContextAware(repoPath: string, request: ContextAwareRe
   const session = sessionFor(workspace, request, now);
   const subjectIdentity = canonicalProjectionIdentity("subject", { repositoryIdentity: workspace.repositoryIdentity, workspaceIdentity: workspace.workspaceIdentity, subject: request.subject });
   const projectionIdentity = canonicalProjectionIdentity(request.projection, { schemaVersion: 1 });
-  const store = new ContextStore(path.join(root, ".codeatlas", "context.db"));
+  let status;
+  try { status = await getRepositoryStatusReadOnly(root); } catch { status = undefined; }
+  let content: string;
+  try { content = await readSubject(root, request.subject); } catch (error) {
+    throw new Error(`Context-aware source read failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+  }
+  const currentIdentity = contentIdentity(content);
+  let store: ContextStore;
+  try { store = new ContextStore(path.join(root, ".codeatlas", "context.db")); } catch (error) {
+    const receipt: ContextReceipt = { receiptId: randomUUID(), sessionId: session.sessionId, repositoryIdentity: workspace.repositoryIdentity, workspaceIdentity: workspace.workspaceIdentity, subject: request.subject, subjectIdentity, projectionIdentity, contextGeneration: session.contextGeneration, deliveryMode: "rehydrate", deliveredContentIdentity: currentIdentity, snapshotId: randomUUID(), reliability: reliability(status), deliveredAt: now, state: "invalid", schemaVersion: 1 };
+    const result = { mode: "rehydrate" as const, receipt, current: { contentIdentity: currentIdentity, reliability: receipt.reliability }, content, reason: `context_database_unavailable: ${error instanceof Error ? error.message : String(error)}` };
+    recordMetrics(result.mode, Buffer.byteLength(content), Buffer.byteLength(content));
+    return result;
+  }
   try {
-    let status;
-    try { status = await getRepositoryStatusReadOnly(root); } catch { status = undefined; }
-    let content: string;
-      try { content = await readSubject(root, request.subject); } catch (error) {
-      throw new Error(`Context-aware source read failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
-    }
-    const currentIdentity = contentIdentity(content);
     const previous = store.findLatestReceipt(request.sessionId, subjectIdentity, projectionIdentity);
     const previousSnapshot = previous ? store.getSnapshot(previous.snapshotId) : undefined;
     const delta = previousSnapshot && previous!.deliveredContentIdentity !== currentIdentity ? createExactDelta(previousSnapshot.content, content) : undefined;

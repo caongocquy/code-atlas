@@ -64,3 +64,18 @@ test("context-aware symbol reads require one exact indexed selector", async () =
     assert.equal(result.content, "export function target() {\n  return 42;\n}");
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test("context database corruption fails safe without blocking the current read", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15a-corrupt-read-"));
+  const databasePath = path.join(root, ".codeatlas", "context.db");
+  try {
+    await writeFile(path.join(root, "source.ts"), "current\n");
+    const request = { sessionId: "s", contextGeneration: "g", subject: { kind: "file" as const, path: "source.ts" }, projection: "source-v1" };
+    await readContextAware(root, request);
+    await writeFile(databasePath, "corrupt sqlite");
+    const result = await readContextAware(root, request);
+    assert.equal(result.mode, "rehydrate");
+    assert.equal(result.content, "current\n");
+    assert.match(result.reason ?? "", /context|database/i);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
