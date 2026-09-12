@@ -1,5 +1,6 @@
 import { AgentIntegrationService } from "../../core/integration/agent-integration.service.js";
 import { IntegrationRegistry } from "../../core/integration/integration-registry.js";
+import type { ResolveDurableMcpLaunch } from "../../core/integration/integration.types.js";
 import { ClaudeIntegration } from "./claude.adapter.js";
 import { ClineIntegration } from "./cline.adapter.js";
 import { CodexIntegration } from "./codex.adapter.js";
@@ -14,12 +15,13 @@ import { ZooIntegration } from "./zoo.adapter.js";
 
 export function createAgentIntegrationService(
   environmentInput: IntegrationEnvironment = {},
+  resolveLaunch: ResolveDurableMcpLaunch = resolveDurableMcpLaunch,
 ): AgentIntegrationService {
   return new AgentIntegrationService(createIntegrationRegistry(environmentInput), {
     status: strictGuidanceStatus,
     install: (repoPath, strict) => installGuidance(repoPath, strict),
     uninstall: uninstallStrictGuidance,
-  }, resolveDurableMcpLaunch);
+  }, resolveLaunch);
 }
 
 export function createIntegrationRegistry(

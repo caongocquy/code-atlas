@@ -74,7 +74,7 @@ test("publish workflow validates the exact tag and package contract", () => {
 
 test("public package metadata points to the canonical repository", () => {
   assert.equal(packageJson.name, "@showdar2112/code-atlas");
-  assert.equal(packageJson.version, "1.0.8");
+  assert.equal(packageJson.version, "1.1.1");
   assert.deepEqual(packageJson.bin, { "code-atlas": "dist/cli.js" });
   assert.deepEqual(packageJson.publishConfig, { access: "public" });
   assert.equal(packageJson.license, "ISC");

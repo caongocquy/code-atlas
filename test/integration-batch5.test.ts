@@ -265,7 +265,7 @@ test("disconnect keeps guidance while another managed integration remains", asyn
         CODEX_HOME: path.join(root, ".codex-home"),
         XDG_CONFIG_HOME: path.join(root, ".xdg"),
       },
-    });
+    }, async () => ({ command: path.resolve("dist/cli.js"), args: ["mcp"] }));
     const options = { repoPath: root };
     await service.connect("codex", options);
     await service.connect("opencode", options);
@@ -285,7 +285,8 @@ async function runCli(root: string, args: string[], bin: string): Promise<{ stdo
     cwd: root,
     env: {
       ...process.env,
-      PATH: `${bin}:${process.env.PATH ?? ""}`,
+      PATH: `${bin}:/usr/bin:/bin`,
+      CODE_ATLAS_CLI: path.resolve("dist/cli.js"),
       HOME: root,
       NODE_PATH: undefined,
       CODEX_HOME: path.join(root, ".codex-home"),
