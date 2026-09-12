@@ -74,6 +74,8 @@ jobs:
           npm install --global pnpm@11.22.0
           pnpm --version
           pnpm install --frozen-lockfile
+          npm install --global . --ignore-scripts --no-audit --no-fund
+          command -v code-atlas
 
       - name: Run release verification
         run: |
