@@ -53,6 +53,7 @@ const MAX_CANDIDATES = 20;
 const MAX_COMMUNITIES = 10_000;
 const MAX_TEXT = 2_000;
 const DEFAULT_LIMIT = 20;
+const DEFAULT_DETAIL_LIMIT = 20;
 
 const repoInput = z.string().min(1).optional();
 const limitInput = z.number().int().min(1).max(MAX_LIMIT).optional();
@@ -60,9 +61,11 @@ const queryInput = z.string().min(1);
 const commonInput = {
   repoPath: repoInput,
   limit: limitInput,
+  detail: z.enum(["compact", "full"]).optional().default("compact"),
 };
 
 type JsonObject = Record<string, unknown>;
+export type McpDetail = "compact" | "full";
 
 class McpToolError extends Error {
   constructor(
@@ -151,6 +154,133 @@ function bounded(value: string | undefined, max = MAX_TEXT): string | undefined 
   return `${value.slice(0, max)}\n…[truncated]`;
 }
 
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as JsonObject).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+function sortedBounded<T>(items: T[], limit: number, key: (item: T) => unknown): { items: T[]; omitted: number } {
+  const sorted = [...items].sort((a, b) => stableJson(key(a)).localeCompare(stableJson(key(b))));
+  return { items: sorted.slice(0, limit), omitted: Math.max(0, sorted.length - limit) };
+}
+
+function withOmissions<T extends JsonObject>(value: T, omitted: Record<string, number>): T & { truncated?: true; omitted?: Record<string, number>; detailsAvailable?: true } {
+  const actual = Object.fromEntries(Object.entries(omitted).filter(([, count]) => count > 0));
+  return Object.keys(actual).length === 0
+    ? value
+    : { ...value, truncated: true, omitted: actual, detailsAvailable: true };
+}
+
+function projectDiagnostics(diagnostics: JsonObject, limit: number): JsonObject {
+  const gaps = Array.isArray(diagnostics.gaps) ? sortedBounded(diagnostics.gaps, limit, (item) => stableJson(item)).items.map((gap) => {
+    if (!gap || typeof gap !== "object") return gap;
+    const projected = { ...(gap as JsonObject) };
+    const nestedOmitted: Record<string, number> = {};
+    for (const field of ["files", "symbols", "details"] as const) {
+      if (!Array.isArray(projected[field])) continue;
+      const nested = sortedBounded(projected[field] as unknown[], limit, (item) => item);
+      projected[field] = nested.items;
+      if (nested.omitted > 0) nestedOmitted[field] = nested.omitted;
+    }
+    return Object.keys(nestedOmitted).length === 0 ? projected : { ...projected, truncated: true, omitted: nestedOmitted, detailsAvailable: true };
+  }) : diagnostics.gaps;
+  const verificationTargets = Array.isArray(diagnostics.verificationTargets)
+    ? sortedBounded(diagnostics.verificationTargets, limit, (item) => stableJson(item)).items
+    : diagnostics.verificationTargets;
+  const reasons = Array.isArray(diagnostics.reasons)
+    ? sortedBounded(diagnostics.reasons, limit, (item) => item).items
+    : diagnostics.reasons;
+  const omitted: Record<string, number> = {};
+  if (Array.isArray(diagnostics.gaps)) omitted.gaps = (diagnostics.gaps as unknown[]).length - (gaps as unknown[]).length;
+  if (Array.isArray(diagnostics.verificationTargets)) omitted.verificationTargets = (diagnostics.verificationTargets as unknown[]).length - (verificationTargets as unknown[]).length;
+  if (Array.isArray(diagnostics.reasons)) omitted.reasons = (diagnostics.reasons as unknown[]).length - (reasons as unknown[]).length;
+  return withOmissions({ ...diagnostics, gaps, verificationTargets, reasons }, omitted);
+}
+
+function projectNestedArray(value: unknown, field: string, limit: number): unknown {
+  if (!Array.isArray(value)) return value;
+  const boundedItems = sortedBounded(value, limit, (item) => item);
+  return boundedItems.omitted > 0
+    ? { items: boundedItems.items, truncated: true, omitted: { [field]: boundedItems.omitted }, detailsAvailable: true }
+    : boundedItems.items;
+}
+
+export function projectInspectChangeResponse<T extends JsonObject>(result: T, detail: McpDetail = "compact", limit = DEFAULT_DETAIL_LIMIT): T & JsonObject {
+  if (detail === "full") return result;
+  const omitted: Record<string, number> = {};
+  const output = { ...result } as JsonObject;
+  for (const field of ["files", "changedSymbols", "affectedSymbols", "affectedFiles"] as const) {
+    const items = result[field];
+    if (Array.isArray(items)) {
+      const boundedItems = sortedBounded(items, limit, (item) => item);
+      output[field] = boundedItems.items;
+      omitted[field] = boundedItems.omitted;
+    }
+  }
+  if (Array.isArray(output.files)) {
+    output.files = output.files.map((file) => {
+      if (!file || typeof file !== "object") return file;
+      const projected = { ...(file as JsonObject) };
+      projected.hunks = projectNestedArray(projected.hunks, "hunks", limit);
+      return projected;
+    });
+  }
+  if (result.diagnostics && typeof result.diagnostics === "object") {
+    output.diagnostics = projectDiagnostics(result.diagnostics as JsonObject, limit);
+  }
+  return withOmissions(output, omitted) as T & JsonObject;
+}
+
+export function projectAffectedTestsResponse<T extends JsonObject>(result: T, detail: McpDetail = "compact", limit = DEFAULT_DETAIL_LIMIT): T & JsonObject {
+  if (detail === "full") return result;
+  const omitted: Record<string, number> = {};
+  const output = { ...result } as JsonObject;
+  for (const field of ["tests", "changedTests", "uncoveredAffectedSymbols", "uncoveredAffectedFiles"] as const) {
+    const items = result[field];
+    if (Array.isArray(items)) {
+      const boundedItems = sortedBounded(items, limit, (item) => item);
+      output[field] = boundedItems.items;
+      omitted[field] = boundedItems.omitted;
+    }
+  }
+  if (Array.isArray(output.tests)) {
+    output.tests = output.tests.map((item) => {
+      if (!item || typeof item !== "object") return item;
+      const test = { ...(item as JsonObject) };
+      test.testSymbols = projectNestedArray(test.testSymbols, "testSymbols", limit);
+      test.reasons = projectNestedArray(test.reasons, "reasons", limit);
+      return test;
+    });
+  }
+  if (result.diagnostics && typeof result.diagnostics === "object") {
+    output.diagnostics = projectDiagnostics(result.diagnostics as JsonObject, limit);
+  }
+  return withOmissions(output, omitted) as T & JsonObject;
+}
+
+export function projectMcpResponse<T extends JsonObject>(result: T, detail: McpDetail = "compact", limit = DEFAULT_DETAIL_LIMIT): T & JsonObject {
+  if (detail === "full") return result;
+  const output = { ...result } as JsonObject;
+  const omitted: Record<string, number> = {};
+  for (const field of [
+    "addedEdges", "removedEdges", "introduced", "resolved", "checks", "verificationTargets",
+    "communities", "coupling", "bridges", "cycles", "items", "results",
+  ]) {
+    const items = result[field];
+    if (!Array.isArray(items)) continue;
+    const boundedItems = sortedBounded(items, limit, (item) => item);
+    output[field] = boundedItems.items;
+    omitted[field] = boundedItems.omitted;
+  }
+  if (result.diagnostics && typeof result.diagnostics === "object") {
+    output.diagnostics = projectDiagnostics(result.diagnostics as JsonObject, limit);
+  }
+  return withOmissions(output, omitted) as T & JsonObject;
+}
+
 function compactChunk(chunk: InspectorChunk): JsonObject {
   return {
     key: chunk.key,
@@ -172,6 +302,54 @@ function compactChunk(chunk: InspectorChunk): JsonObject {
     rerankRank: chunk.rerankRank,
     provenance: chunk.provenance,
   };
+}
+
+export function projectRetrievalInspectionResponse(inspection: RetrievalInspection, detail: McpDetail = "compact", limit = DEFAULT_DETAIL_LIMIT): JsonObject {
+  if (detail === "full") return compactInspection(inspection);
+  const omitted: Record<string, number> = {};
+  const seen = new Set<string>();
+  const stage = (name: string, items: InspectorChunk[]) => {
+    const unique = items.filter((item) => {
+      if (seen.has(item.key)) { omitted.duplicateChunks = (omitted.duplicateChunks ?? 0) + 1; return false; }
+      seen.add(item.key);
+      return true;
+    });
+    const boundedItems = sortedBounded(unique, limit, (item) => item.key);
+    omitted[name] = (omitted[name] ?? 0) + boundedItems.omitted;
+    return boundedItems.items.map(compactChunk);
+  };
+  const compactContext = (context: RetrievalInspection["retrievalOnly"]) => ({
+    chunks: stage("contextChunks", context.chunks),
+    dropped: stage("dropped", context.dropped),
+    tokens: context.tokens,
+    budget: context.budget,
+    rendered: bounded(context.rendered, 20_000),
+  });
+  const graphDetails = inspection.graphExpansion.details.filter((detail) => {
+    if (seen.has(detail.node.key)) { omitted.duplicateChunks = (omitted.duplicateChunks ?? 0) + 1; return false; }
+    seen.add(detail.node.key);
+    return true;
+  });
+  const boundedGraphDetails = sortedBounded(graphDetails, limit, (detail) => detail.node.key);
+  omitted.graphDetails = boundedGraphDetails.omitted;
+  return withOmissions({
+    query: inspection.query,
+    repoId: inspection.repoId,
+    options: inspection.options,
+    vectorResults: stage("vectorResults", inspection.vectorResults),
+    lexicalResults: stage("lexicalResults", inspection.lexicalResults),
+    fusedResults: stage("fusedResults", inspection.fusedResults),
+    rerankedResults: stage("rerankedResults", inspection.rerankedResults),
+    graphExpansion: {
+      ...inspection.graphExpansion,
+      details: boundedGraphDetails.items.map((detail) => ({ ...detail, node: compactChunk(detail.node) })),
+    },
+    retrievalOnly: compactContext(inspection.retrievalOnly),
+    withGraph: compactContext(inspection.withGraph),
+    finalContext: compactContext(inspection.finalContext),
+    metrics: inspection.metrics,
+    capabilities: inspection.capabilities,
+  }, omitted);
 }
 
 function compactInspection(inspection: RetrievalInspection): JsonObject {
@@ -270,16 +448,18 @@ export function createMcpServer(): McpServer {
 
   registerJsonTool(server, "repository_status", "Return repository identity and capability status.", z.object({
     repoPath: repoInput,
+    detail: z.enum(["compact", "full"]).optional().default("compact"),
     includeOptionalCapabilities: z.boolean().optional().default(false),
   }).strict(), async (args) => {
     const repoPath = resolveRepo(args.repoPath as string | undefined);
     const providers = await optionalProviders(repoPath, args.includeOptionalCapabilities === true);
     try {
-      return await getRepositoryStatus(repoPath, providers ? {
+      const result = await getRepositoryStatus(repoPath, providers ? {
         embeddingProvider: providers.embeddingProvider,
         vectorStore: providers.vectorStore,
         rerankerProvider: providers.rerankerProvider,
       } : {});
+      return projectMcpResponse(result as unknown as JsonObject, args.detail as McpDetail | undefined);
     } finally {
       await closeProviders(providers);
     }
@@ -381,6 +561,7 @@ export function createMcpServer(): McpServer {
 
   const changeSourceShape = {
     repoPath: repoInput,
+    detail: z.enum(["compact", "full"]).optional().default("compact"),
     mode: z.enum(["working", "staged", "commit", "range"]).optional().default("working"),
     commit: z.string().min(1).optional(),
     base: z.string().min(1).optional(),
@@ -399,25 +580,34 @@ export function createMcpServer(): McpServer {
     maxDepth: z.number().int().min(0).max(10).optional(),
   }).strict().superRefine(validateChangeSource);
   registerJsonTool(server, "inspect_change", "Inspect Git changes and map changed symbols to their structural blast radius.", inspectChangeSchema, async (args) => {
+    const detail = args.detail as McpDetail | undefined;
     const mode = (args.mode as InspectChangeInput["mode"] | undefined) ?? "working";
-    if (mode === "commit") return inspectChange(resolveRepo(args.repoPath as string | undefined), { mode, commit: args.commit as string, maxDepth: args.maxDepth as number | undefined });
-    if (mode === "range") return inspectChange(resolveRepo(args.repoPath as string | undefined), { mode, base: args.base as string, head: args.head as string, maxDepth: args.maxDepth as number | undefined });
-    return inspectChange(resolveRepo(args.repoPath as string | undefined), { mode, maxDepth: args.maxDepth as number | undefined });
+    const result = mode === "commit"
+      ? await inspectChange(resolveRepo(args.repoPath as string | undefined), { mode, commit: args.commit as string, maxDepth: args.maxDepth as number | undefined })
+      : mode === "range"
+        ? await inspectChange(resolveRepo(args.repoPath as string | undefined), { mode, base: args.base as string, head: args.head as string, maxDepth: args.maxDepth as number | undefined })
+        : await inspectChange(resolveRepo(args.repoPath as string | undefined), { mode, maxDepth: args.maxDepth as number | undefined });
+    return projectInspectChangeResponse(result as unknown as JsonObject, detail);
   });
 
   const affectedTestsSchema = inspectChangeSchema.extend({
     maxTests: z.number().int().min(1).max(1_000).optional(),
   });
   registerJsonTool(server, "affected_tests", "Find tests structurally affected by Git changes and identify affected code with no indexed test evidence.", affectedTestsSchema, async (args) => {
+    const detail = args.detail as McpDetail | undefined;
     const mode = (args.mode as InspectChangeInput["mode"] | undefined) ?? "working";
     const options = { maxDepth: args.maxDepth as number | undefined, maxTests: args.maxTests as number | undefined };
-    if (mode === "commit") return affectedTests(resolveRepo(args.repoPath as string | undefined), { mode, commit: args.commit as string, ...options });
-    if (mode === "range") return affectedTests(resolveRepo(args.repoPath as string | undefined), { mode, base: args.base as string, head: args.head as string, ...options });
-    return affectedTests(resolveRepo(args.repoPath as string | undefined), { mode, ...options });
+    const result = mode === "commit"
+      ? await affectedTests(resolveRepo(args.repoPath as string | undefined), { mode, commit: args.commit as string, ...options })
+      : mode === "range"
+        ? await affectedTests(resolveRepo(args.repoPath as string | undefined), { mode, base: args.base as string, head: args.head as string, ...options })
+        : await affectedTests(resolveRepo(args.repoPath as string | undefined), { mode, ...options });
+    return projectAffectedTestsResponse(result as unknown as JsonObject, detail);
   });
 
   const explainIncompleteSchema = z.object({
     repoPath: repoInput,
+    detail: z.enum(["compact", "full"]).optional().default("compact"),
     scope: z.enum(["repository", "change", "tests"]).optional().default("repository"),
     mode: z.enum(["working", "staged", "commit", "range"]).optional(),
     commit: z.string().min(1).optional(),
@@ -435,14 +625,14 @@ export function createMcpServer(): McpServer {
     if (value.scope !== "repository" && mode !== "commit" && has("commit")) context.addIssue({ code: "custom", path: ["commit"], message: "commit is only valid in commit mode" });
     if (value.scope !== "repository" && mode !== "range" && (has("base") || has("head"))) context.addIssue({ code: "custom", path: ["base"], message: "base and head are only valid in range mode" });
   });
-  registerJsonTool(server, "explain_incomplete", "Explain why CodeAtlas evidence may be incomplete and what should be verified directly.", explainIncompleteSchema, async (args) => explainIncomplete(resolveRepo(args.repoPath as string | undefined), {
+  registerJsonTool(server, "explain_incomplete", "Explain why CodeAtlas evidence may be incomplete and what should be verified directly.", explainIncompleteSchema, async (args) => projectMcpResponse(await explainIncomplete(resolveRepo(args.repoPath as string | undefined), {
     scope: args.scope as "repository" | "change" | "tests" | undefined,
     mode: args.mode as "working" | "staged" | "commit" | "range" | undefined,
     commit: args.commit as string | undefined,
     base: args.base as string | undefined,
     head: args.head as string | undefined,
     maxDepth: args.maxDepth as number | undefined,
-  }));
+  }), args.detail as McpDetail | undefined));
 
   const graphDeltaSchema = z.object(changeSourceShape).strict().superRefine(validateChangeSource).extend({
     maxEdges: z.number().int().min(1).max(10_000).optional(),
@@ -450,9 +640,12 @@ export function createMcpServer(): McpServer {
   registerJsonTool(server, "graph_delta", "Compare structural relationships before and after Git changes.", graphDeltaSchema, async (args) => {
     const mode = (args.mode as GraphDeltaInput["mode"] | undefined) ?? "working";
     const options = { maxEdges: args.maxEdges as number | undefined };
-    if (mode === "commit") return graphDelta(resolveRepo(args.repoPath as string | undefined), { mode, commit: args.commit as string, ...options });
-    if (mode === "range") return graphDelta(resolveRepo(args.repoPath as string | undefined), { mode, base: args.base as string, head: args.head as string, ...options });
-    return graphDelta(resolveRepo(args.repoPath as string | undefined), { mode, ...options });
+    const result = mode === "commit"
+      ? await graphDelta(resolveRepo(args.repoPath as string | undefined), { mode, commit: args.commit as string, ...options })
+      : mode === "range"
+        ? await graphDelta(resolveRepo(args.repoPath as string | undefined), { mode, base: args.base as string, head: args.head as string, ...options })
+        : await graphDelta(resolveRepo(args.repoPath as string | undefined), { mode, ...options });
+    return projectMcpResponse(result as unknown as JsonObject, args.detail as McpDetail | undefined);
   });
 
   const architectureDriftSchema = z.object({
@@ -463,9 +656,12 @@ export function createMcpServer(): McpServer {
   registerJsonTool(server, "architecture_drift", "Detect architectural violations and dependency cycles introduced or resolved by Git changes.", architectureDriftSchema, async (args) => {
     const mode = (args.mode as ArchitectureDriftInput["mode"] | undefined) ?? "working";
     const options = { maxEdges: args.maxEdges as number | undefined, configPath: args.configPath as string | undefined };
-    if (mode === "commit") return architectureDrift(resolveRepo(args.repoPath as string | undefined), { mode, commit: args.commit as string, ...options });
-    if (mode === "range") return architectureDrift(resolveRepo(args.repoPath as string | undefined), { mode, base: args.base as string, head: args.head as string, ...options });
-    return architectureDrift(resolveRepo(args.repoPath as string | undefined), { mode, ...options });
+    const result = mode === "commit"
+      ? await architectureDrift(resolveRepo(args.repoPath as string | undefined), { mode, commit: args.commit as string, ...options })
+      : mode === "range"
+        ? await architectureDrift(resolveRepo(args.repoPath as string | undefined), { mode, base: args.base as string, head: args.head as string, ...options })
+        : await architectureDrift(resolveRepo(args.repoPath as string | undefined), { mode, ...options });
+    return projectMcpResponse(result as unknown as JsonObject, args.detail as McpDetail | undefined);
   });
 
   const changeGateSchema = z.object({
@@ -481,9 +677,12 @@ export function createMcpServer(): McpServer {
       maxTests: args.maxTests as number | undefined,
       maxEdges: args.maxEdges as number | undefined,
     };
-    if (mode === "commit") return changeGate(resolveRepo(args.repoPath as string | undefined), { mode, commit: args.commit as string, ...options });
-    if (mode === "range") return changeGate(resolveRepo(args.repoPath as string | undefined), { mode, base: args.base as string, head: args.head as string, ...options });
-    return changeGate(resolveRepo(args.repoPath as string | undefined), { mode, ...options });
+    const result = mode === "commit"
+      ? await changeGate(resolveRepo(args.repoPath as string | undefined), { mode, commit: args.commit as string, ...options })
+      : mode === "range"
+        ? await changeGate(resolveRepo(args.repoPath as string | undefined), { mode, base: args.base as string, head: args.head as string, ...options })
+        : await changeGate(resolveRepo(args.repoPath as string | undefined), { mode, ...options });
+    return projectMcpResponse(result as unknown as JsonObject, args.detail as McpDetail | undefined);
   });
 
   registerJsonTool(server, "trace", "Return a bounded, directed or explanatory graph path.", z.object({
@@ -524,7 +723,7 @@ export function createMcpServer(): McpServer {
           rerankerProvider: args.includeReranker === true ? providers.rerankerProvider : undefined,
         } : undefined,
       });
-      return compactInspection(inspection);
+      return projectRetrievalInspectionResponse(inspection, args.detail as McpDetail | undefined, (args.limit as number | undefined) ?? DEFAULT_LIMIT);
     } finally {
       await closeProviders(providers);
     }
