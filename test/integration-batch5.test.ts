@@ -195,7 +195,8 @@ test("interactive connect passes only picker-selected integrations to the servic
       stdin,
       stdout,
       picker: async ({ rows }) => {
-        assert.equal(rows[0].selected, false);
+        assert.equal(rows[0].selected, true);
+        assert.equal(rows[1].selected, false);
         assert.equal(rows[0].state, "connected");
         assert.equal(rows[2].selectable, false);
         return { kind: "confirmed", selected: ["opencode"] };

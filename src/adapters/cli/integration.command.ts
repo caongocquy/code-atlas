@@ -192,7 +192,7 @@ async function pickerTargets(
       displayName: status.displayName,
       state: connecting ? displayState(status) : status.connection.state,
       selectable: connecting ? connectable(status) : managedCandidate(status),
-      selected: !connecting && managedCandidate(status),
+      selected: connecting ? status.connection.state === "connected" : managedCandidate(status),
     }));
   const picker = dependencies.picker ?? runIntegrationPicker;
   const result = await picker({
