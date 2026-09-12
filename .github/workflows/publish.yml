@@ -74,8 +74,8 @@ jobs:
           npm install --global pnpm@11.22.0
           pnpm --version
           pnpm install --frozen-lockfile
-          npm install --global . --ignore-scripts --no-audit --no-fund
-          global_bin="$(npm prefix --global)/bin"
+          global_bin="$GITHUB_WORKSPACE/node_modules/.bin"
+          ln -sf "$GITHUB_WORKSPACE/dist/cli.js" "$global_bin/code-atlas"
           echo "$global_bin" >> "$GITHUB_PATH"
           export PATH="$global_bin:$PATH"
           command -v code-atlas
