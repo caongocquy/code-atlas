@@ -45,3 +45,12 @@ export type DeliveredSnapshot = {
   createdAt: string;
   schemaVersion: number;
 };
+
+export type ContextAwareReadResult = {
+  mode: DeliveryMode;
+  receipt: ContextReceipt;
+  current: { contentIdentity: string; reliability: unknown };
+  content?: string;
+  delta?: unknown;
+  reason?: string;
+};

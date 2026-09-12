@@ -69,6 +69,11 @@ export class ContextStore {
     return { receiptId: row.receipt_id as string, sessionId: row.session_id as string, repositoryIdentity: row.repository_identity as string, workspaceIdentity: row.workspace_identity as string, subject: JSON.parse(row.subject_json as string), subjectIdentity: row.subject_identity as string, projectionIdentity: row.projection_identity as string, contextGeneration: row.context_generation as string, deliveryMode: row.delivery_mode as ContextReceipt["deliveryMode"], deliveredContentIdentity: row.delivered_content_identity as string, snapshotId: row.snapshot_id as string, reliability: JSON.parse(row.reliability_json as string), deliveredAt: row.delivered_at as string, ...(row.expires_at ? { expiresAt: row.expires_at as string } : {}), ...(row.prior_receipt_id ? { priorReceiptId: row.prior_receipt_id as string } : {}), state: row.state as ContextReceipt["state"], schemaVersion: row.schema_version as number };
   }
 
+  findLatestReceipt(sessionId: string, subjectIdentity: string, projectionIdentity: string): ContextReceipt | undefined {
+    const row = this.database.prepare("SELECT receipt_id FROM context_receipts WHERE session_id = ? AND subject_identity = ? AND projection_identity = ? ORDER BY delivered_at DESC, receipt_id DESC LIMIT 1").get(sessionId, subjectIdentity, projectionIdentity) as { receipt_id?: string } | undefined;
+    return row?.receipt_id ? this.getReceipt(row.receipt_id) : undefined;
+  }
+
   getSnapshot(snapshotId: string): DeliveredSnapshot | undefined {
     const row = this.database.prepare("SELECT * FROM context_snapshots WHERE snapshot_id = ?").get(snapshotId) as Record<string, unknown> | undefined;
     if (!row) return undefined;
