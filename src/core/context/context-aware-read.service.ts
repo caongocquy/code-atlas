@@ -21,6 +21,31 @@ export type ContextAwareReadRequest = {
   ttlSeconds?: number;
 };
 
+export type ContextMetrics = {
+  requestedBytes: number;
+  returnedBytes: number;
+  fullReads: number;
+  unchangedReads: number;
+  deltaReads: number;
+  rehydrates: number;
+  savedBytes: number;
+};
+
+const metrics: ContextMetrics = { requestedBytes: 0, returnedBytes: 0, fullReads: 0, unchangedReads: 0, deltaReads: 0, rehydrates: 0, savedBytes: 0 };
+
+export function resetContextMetrics(): void { Object.assign(metrics, { requestedBytes: 0, returnedBytes: 0, fullReads: 0, unchangedReads: 0, deltaReads: 0, rehydrates: 0, savedBytes: 0 }); }
+export function getContextMetrics(): ContextMetrics { return { ...metrics }; }
+
+function recordMetrics(mode: ContextAwareReadResult["mode"], requestedBytes: number, returnedBytes: number): void {
+  metrics.requestedBytes += requestedBytes;
+  metrics.returnedBytes += returnedBytes;
+  metrics.savedBytes += Math.max(0, requestedBytes - returnedBytes);
+  if (mode === "full") metrics.fullReads += 1;
+  if (mode === "unchanged") metrics.unchangedReads += 1;
+  if (mode === "delta") metrics.deltaReads += 1;
+  if (mode === "rehydrate") metrics.rehydrates += 1;
+}
+
 async function readSubject(root: string, subject: ContextSubject): Promise<string> {
   const source = await fs.readFile(path.join(root, subject.path), "utf8");
   if (subject.kind === "file") return source;
@@ -68,6 +93,8 @@ export async function readContextAware(repoPath: string, request: ContextAwareRe
     const receipt: ContextReceipt = { receiptId, sessionId: session.sessionId, repositoryIdentity: workspace.repositoryIdentity, workspaceIdentity: workspace.workspaceIdentity, subject: request.subject, subjectIdentity, projectionIdentity, contextGeneration: session.contextGeneration, deliveryMode: decision.mode, deliveredContentIdentity: currentIdentity, snapshotId, reliability: reliability(status), deliveredAt: now, ...(request.ttlSeconds !== undefined ? { expiresAt: new Date(Date.parse(now) + request.ttlSeconds * 1000).toISOString() } : {}), ...(previous ? { priorReceiptId: previous.receiptId } : {}), state: "active", schemaVersion: 1 };
     const snapshot = createDeliveredSnapshot({ snapshotId, receiptId, subjectIdentity, projectionIdentity }, content);
     store.publish(session, receipt, snapshot);
-    return { mode: decision.mode, receipt, current: { contentIdentity: currentIdentity, reliability: receipt.reliability }, ...(decision.mode === "full" || decision.mode === "rehydrate" ? { content } : {}), ...(decision.mode === "delta" ? { delta } : {}), ...(decision.reason ? { reason: decision.reason } : {}) };
+    const result = { mode: decision.mode, receipt, current: { contentIdentity: currentIdentity, reliability: receipt.reliability }, ...(decision.mode === "full" || decision.mode === "rehydrate" ? { content } : {}), ...(decision.mode === "delta" ? { delta } : {}), ...(decision.reason ? { reason: decision.reason } : {}) } as ContextAwareReadResult;
+    recordMetrics(result.mode, Buffer.byteLength(content), Buffer.byteLength(result.content ?? (result.delta ? JSON.stringify(result.delta) : "")));
+    return result;
   } finally { store.close(); }
 }
