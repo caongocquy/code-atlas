@@ -347,7 +347,12 @@ test("Codex MCP configuration launches with a minimal PATH and clean JSON-RPC st
 
     const child = spawn(entry.command, entry.args, {
       cwd: repoPath,
-      env: { PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, HOME: repoPath, CODEX_HOME: path.join(repoPath, ".codex-home") },
+      env: {
+        PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`,
+        HOME: repoPath,
+        CODEX_HOME: path.join(repoPath, ".codex-home"),
+        CODE_ATLAS_CLI: entry.command,
+      },
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";

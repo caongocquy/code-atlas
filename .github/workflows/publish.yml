@@ -87,7 +87,7 @@ jobs:
           export CODE_ATLAS_CLI="$global_bin/code-atlas"
           command -v code-atlas
           pnpm run lint
-          pnpm exec node --import tsx/esm --test \
+          CODE_ATLAS_CLI="$global_bin/code-atlas" pnpm exec node --import tsx/esm --test \
             test/cli-presentation.test.ts \
             test/cli-ux-cleanup.test.ts \
             test/phase12-cli-regression.test.ts \
