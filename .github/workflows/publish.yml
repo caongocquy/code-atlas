@@ -75,6 +75,9 @@ jobs:
           pnpm --version
           pnpm install --frozen-lockfile
           npm install --global . --ignore-scripts --no-audit --no-fund
+          global_bin="$(npm prefix --global)/bin"
+          echo "$global_bin" >> "$GITHUB_PATH"
+          export PATH="$global_bin:$PATH"
           command -v code-atlas
 
       - name: Run release verification
