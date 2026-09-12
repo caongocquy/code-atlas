@@ -83,6 +83,7 @@ jobs:
           pnpm run build
           global_bin="$GITHUB_WORKSPACE/node_modules/.bin"
           mkdir -p "$global_bin"
+          chmod +x "$GITHUB_WORKSPACE/dist/cli.js"
           ln -sf "$GITHUB_WORKSPACE/dist/cli.js" "$global_bin/code-atlas"
           echo "$global_bin" >> "$GITHUB_PATH"
           export PATH="$global_bin:$PATH"
