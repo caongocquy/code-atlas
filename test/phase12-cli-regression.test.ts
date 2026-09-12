@@ -338,18 +338,16 @@ test("Codex MCP configuration launches with a minimal PATH and clean JSON-RPC st
     const entry = config.mcp_servers["code-atlas"];
 
     assert.ok(path.isAbsolute(entry.command));
-    assert.equal(entry.command, process.execPath);
-    assert.equal(entry.args.length, 2);
-    assert.ok(path.isAbsolute(entry.args[0]));
+    assert.equal(path.basename(entry.command), "code-atlas");
+    assert.equal(entry.args.length, 1);
     await access(entry.command);
-    await access(entry.args[0]);
-    assert.equal(entry.args[1], "mcp");
-    assert.equal(isEphemeralMcpPath(entry.args[0]), false);
+    assert.equal(entry.args[0], "mcp");
+    assert.equal(isEphemeralMcpPath(entry.command), false);
     assert.equal(entry.cwd, undefined);
 
     const child = spawn(entry.command, entry.args, {
       cwd: repoPath,
-      env: { PATH: "/usr/bin:/bin", HOME: repoPath, CODEX_HOME: path.join(repoPath, ".codex-home") },
+      env: { PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, HOME: repoPath, CODEX_HOME: path.join(repoPath, ".codex-home") },
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";

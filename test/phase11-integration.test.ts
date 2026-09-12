@@ -75,8 +75,8 @@ test("Codex integration preserves unrelated TOML and is idempotent", async () =>
     assert.equal(parsed.model, "test-model");
     assert.deepEqual(parsed.mcp_servers.other, { command: "other", args: ["serve"] });
     assert.deepEqual(parsed.mcp_servers["code-atlas"], {
-      command: process.execPath,
-      args: [path.resolve("dist/cli.js"), "mcp"],
+      command: (await resolveDurableMcpLaunch()).command,
+      args: ["mcp"],
       enabled: true,
     });
 
@@ -140,6 +140,30 @@ test("Claude Code uses project .mcp.json and never touches user session config",
     await integrations.uninstall("claude", options);
     assert.equal(parseJsonc(await readFile(configPath, "utf8")).mcpServers["code-atlas"], undefined);
     await assert.rejects(() => integrations.install("claude", { ...options, scope: "user" }), /project scope only/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("reconnect migrates managed node plus dist launchers to the installed CLI executable", async () => {
+  const { root, home, bin } = await fixture("launcher-migration");
+  try {
+    await mkdir(path.join(home, ".codex"), { recursive: true });
+    await mkdir(path.join(home, ".config", "opencode"), { recursive: true });
+    const old = { command: process.execPath, args: [path.resolve("dist/cli.js"), "mcp"] };
+    await writeFile(path.join(home, ".codex", "config.toml"), `[mcp_servers.code-atlas]\ncommand = "${old.command}"\nargs = ["${old.args[0]}", "mcp"]\n`);
+    await writeFile(path.join(home, ".config", "opencode", "opencode.json"), JSON.stringify({ mcp: { "code-atlas": { type: "local", command: [old.command, ...old.args] } } }));
+    const integrations = service(root, home, bin);
+    const launch = await resolveDurableMcpLaunch();
+
+    assert.equal((await integrations.status("codex", { repoPath: root })).state, "installed");
+    assert.equal((await integrations.status("opencode", { repoPath: root, scope: "user" })).state, "installed");
+    await integrations.install("codex", { repoPath: root });
+    await integrations.install("opencode", { repoPath: root, scope: "user" });
+    const codex = parseToml(await readFile(path.join(home, ".codex", "config.toml"), "utf8")) as Record<string, any>;
+    const openCode = parseJsonc(await readFile(path.join(home, ".config", "opencode", "opencode.json"), "utf8")) as Record<string, any>;
+    assert.deepEqual(codex.mcp_servers["code-atlas"], { command: launch.command, args: ["mcp"], enabled: true });
+    assert.deepEqual(openCode.mcp["code-atlas"].command, [launch.command, "mcp"]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -306,7 +330,7 @@ test("ephemeral launcher resolution fails before any adapter writes config", asy
 async function assertFreshMcpInitialize(command: string, args: string[], cwd: string): Promise<void> {
   const child = spawn(command, args, {
     cwd,
-    env: { PATH: "/usr/bin:/bin", HOME: cwd },
+    env: { PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, HOME: cwd },
     stdio: ["pipe", "pipe", "pipe"],
   });
   let stdout = "";

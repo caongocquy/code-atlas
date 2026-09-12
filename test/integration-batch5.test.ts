@@ -284,7 +284,7 @@ async function runCli(root: string, args: string[], bin: string): Promise<{ stdo
     cwd: root,
     env: {
       ...process.env,
-      PATH: bin,
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
       HOME: root,
       NODE_PATH: undefined,
       CODEX_HOME: path.join(root, ".codex-home"),

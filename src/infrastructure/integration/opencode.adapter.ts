@@ -13,7 +13,7 @@ import type {
 import { CODE_ATLAS_ARGS, CODE_ATLAS_COMMAND, CODE_ATLAS_NAME, isCodeAtlasCommand } from "./agent-entry.js";
 import { openCodeConfigPath } from "./config-paths.js";
 import { isJsonObject, readJsoncConfig, removeJsoncValue, writeJsoncValue } from "./jsonc-config.js";
-import { validateConfiguredLaunch } from "./mcp-launcher.js";
+import { configuredMcpLaunch, validateConfiguredLaunch } from "./mcp-launcher.js";
 import { commandAvailable, type ResolvedIntegrationEnvironment } from "./integration-environment.js";
 
 const displayName = "OpenCode";
@@ -139,11 +139,8 @@ function isOpenCodeLegacyEntry(value: unknown): boolean {
 
 function openCodeLaunchFromEntry(value: unknown): DurableMcpLaunch | undefined {
   if (!isJsonObject(value) || value.type !== "local" || !Array.isArray(value.command)) return undefined;
-  if (value.command.length !== 3 || !value.command.every((part): part is string => typeof part === "string")) return undefined;
-  const [command, cliPath, mode] = value.command;
-  return path.isAbsolute(command) && path.isAbsolute(cliPath) && mode === "mcp"
-    ? { command, args: [cliPath, mode] }
-    : undefined;
+  if (!value.command.every((part): part is string => typeof part === "string")) return undefined;
+  return configuredMcpLaunch(value.command[0]!, value.command.slice(1));
 }
 
 function isDisabledEntry(value: unknown): boolean {

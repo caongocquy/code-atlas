@@ -117,9 +117,8 @@ function isAbsoluteCodeAtlasLaunch(
 ): boolean {
   return launch !== undefined
     && path.isAbsolute(launch.command)
-    && launch.args.length === 2
-    && path.isAbsolute(launch.args[0])
-    && launch.args[1] === "mcp";
+    && (launch.args.length === 1 && launch.args[0] === "mcp"
+      || launch.args.length === 2 && path.isAbsolute(launch.args[0]!) && launch.args[1] === "mcp");
 }
 
 function connectionValue(

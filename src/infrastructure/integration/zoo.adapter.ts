@@ -1,5 +1,4 @@
 import { execFile as execFileCallback } from "node:child_process";
-import path from "node:path";
 import { promisify } from "node:util";
 
 import type {
@@ -15,7 +14,7 @@ import { CODE_ATLAS_NAME, isCodeAtlasCommand } from "./agent-entry.js";
 import { zooConfigPath } from "./config-paths.js";
 import { commandAvailable, type ResolvedIntegrationEnvironment } from "./integration-environment.js";
 import { isJsonObject, readJsoncConfig, removeJsoncValue, writeJsoncValue } from "./jsonc-config.js";
-import { validateConfiguredLaunch } from "./mcp-launcher.js";
+import { configuredMcpLaunch, validateConfiguredLaunch } from "./mcp-launcher.js";
 
 const execFile = promisify(execFileCallback);
 const ZOO_EXTENSION_ID = "zoocodeorganization.zoo-code";
@@ -141,11 +140,8 @@ function isZooLegacyEntry(value: unknown): boolean {
 
 function zooLaunchFromEntry(value: unknown): DurableMcpLaunch | undefined {
   if (!isJsonObject(value) || typeof value.command !== "string" || !Array.isArray(value.args)) return undefined;
-  if (value.args.length !== 2 || !value.args.every((part): part is string => typeof part === "string")) return undefined;
-  const [cliPath, mode] = value.args;
-  return path.isAbsolute(value.command) && path.isAbsolute(cliPath) && mode === "mcp"
-    ? { command: value.command, args: [cliPath, mode] }
-    : undefined;
+  if (!value.args.every((part): part is string => typeof part === "string")) return undefined;
+  return configuredMcpLaunch(value.command, value.args);
 }
 
 function isZooManagedEntry(value: unknown): boolean {

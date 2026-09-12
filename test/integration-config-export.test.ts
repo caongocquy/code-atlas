@@ -19,7 +19,7 @@ const tsxLoader = createRequire(import.meta.url).resolve("tsx/esm");
 test("integration config exports a durable JSON launch from any cwd", async () => {
   const cwd = await mkdtemp(path.join(tmpdir(), "code-atlas-config-export-"));
   try {
-    const env = { ...process.env, PATH: "/usr/bin:/bin", HOME: cwd, NODE_NO_WARNINGS: "1" };
+    const env = { ...process.env, PATH: `${process.env.PATH ?? ""}:/usr/bin:/bin`, HOME: cwd, NODE_NO_WARNINGS: "1" };
     delete env.NODE_PATH;
     const result = await execFile(process.execPath, [
       "--import",
@@ -35,10 +35,9 @@ test("integration config exports a durable JSON launch from any cwd", async () =
     assert.equal(result.stderr, "");
     assert.deepEqual(Object.keys(launch), ["command", "args"]);
     assert.equal(path.isAbsolute(launch.command), true);
-    assert.equal(path.isAbsolute(launch.args[0] ?? ""), true);
-    assert.deepEqual(launch.args.slice(1), ["mcp"]);
+    assert.equal(path.basename(launch.command), "code-atlas");
+    assert.deepEqual(launch.args, ["mcp"]);
     await access(launch.command);
-    await access(launch.args[0]!);
     await assert.rejects(() => access(path.join(cwd, ".codeatlas")));
     await assert.rejects(() => access(path.join(cwd, ".mcp.json")));
     await assert.rejects(() => access(path.join(cwd, ".codex-home")));
