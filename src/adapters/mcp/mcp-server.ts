@@ -48,6 +48,10 @@ import type { ArchitectureDriftInput } from "../../core/architecture/architectur
 import { changeGate } from "../../core/gate/change-gate.service.js";
 import type { ChangeGateInput } from "../../core/gate/change-gate.types.js";
 import { readContextAware } from "../../core/context/context-aware-read.service.js";
+import { compileTaskContext } from "../../core/context/task-context-compiler.js";
+import { collectTaskContextCandidates, enrichTaskContextGraph } from "../../core/context/task-context-candidates.js";
+import { getWorkspaceIdentity } from "../../core/context/context-identity.js";
+import { getRepositoryIdentity } from "../../core/repository/repository-identity.js";
 
 const MAX_LIMIT = 1_000;
 const MAX_CANDIDATES = 20;
@@ -539,6 +543,39 @@ export function createMcpServer(): McpServer {
     subject: { kind: "file", path: args.file as string },
     projection: "source-v1",
   }));
+
+  registerJsonTool(server, "compile_task_context", "Compile bounded, evidence-backed Phase15A context subjects for a task.", z.object({
+    task: z.string().min(1),
+    repoPath: repoInput,
+    anchors: z.array(z.union([
+      z.object({ kind: z.literal("file"), path: z.string().min(1) }).strict(),
+      z.object({ kind: z.literal("symbol"), path: z.string().min(1).optional(), name: z.string().min(1) }).strict(),
+    ])).optional(),
+    changedPaths: z.array(z.string().min(1)).optional(),
+    budget: z.object({ maxItems: z.number().int().positive().optional(), maxEstimatedTokens: z.number().int().positive().optional() }).strict().optional(),
+    detail: z.enum(["compact", "full"]).optional(),
+  }).strict(), async (args) => {
+    const repoPath = resolveRepo(args.repoPath as string | undefined);
+    const indexed = await withGraph(repoPath, async (context) => context);
+    const workspace = getWorkspaceIdentity(repoPath);
+    const repository = getRepositoryIdentity(repoPath);
+    return compileTaskContext({
+      task: args.task as string,
+      repoPath,
+      anchors: args.anchors as never,
+      changedPaths: args.changedPaths as string[] | undefined,
+      budget: args.budget as { maxItems?: number; maxEstimatedTokens?: number } | undefined,
+      detail: args.detail as "compact" | "full" | undefined,
+    }, {
+      repositoryPath: repoPath,
+      repositoryIdentity: repository.identityKey,
+      workspaceIdentity: workspace.workspaceIdentity,
+      collect: async (normalized) => {
+        const collected = await collectTaskContextCandidates(normalized, { repositoryPath: repoPath, loadGraph: async () => indexed });
+        return { ...collected, candidates: enrichTaskContextGraph(collected.candidates, indexed.graph) };
+      },
+    });
+  });
 
   const relationTools = [
     ["find_callers", findCallers, "Find callers of a resolved symbol."],
