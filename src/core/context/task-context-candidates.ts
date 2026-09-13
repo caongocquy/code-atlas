@@ -111,3 +111,23 @@ export async function collectTaskContextCandidates(
   if (resolution.status === "resolved") diagnostics.push(`task target was not exact: ${normalized.task}`);
   return { candidates: [], reliability: { mayBeIncomplete: false, capabilityStates: { graph: "ready" }, diagnostics } };
 }
+
+export function enrichTaskContextGraph(candidates: readonly TaskContextCandidate[], graph: CodeGraph): TaskContextCandidate[] {
+  const nodes = new Map(graph.nodes.map((node) => [node.id, node]));
+  const additions: TaskContextCandidate[] = [];
+  for (const candidate of candidates) {
+    if (!candidate.subject || !candidate.exact || candidate.subject.kind !== "symbol") continue;
+    const seedId = candidate.subject.symbolId;
+    const related = graph.edges
+      .filter((edge) => edge.from === seedId || edge.to === seedId)
+      .map((edge) => nodes.get(edge.from === seedId ? edge.to : edge.from))
+      .filter((node): node is GraphNode => node !== undefined)
+      .sort((a, b) => a.file.localeCompare(b.file) || a.id.localeCompare(b.id))
+      .slice(0, 5);
+    related.forEach((node, index) => {
+      const subject = subjectForNode(node);
+      additions.push({ subject, evidence: [{ kind: "graph", relation: "direct", from: seedId, depth: 1 }], sourceRanks: { graph: index + 1 }, exact: true });
+    });
+  }
+  return mergeTaskContextCandidates([...candidates, ...additions]);
+}
