@@ -12,6 +12,7 @@ const groups: HelpGroup[] = [
       ["sync [path]", "Update indexes from repository changes"],
       ["status [path]", "Show repository and capability status"],
       ["context-read [path]", "Read a file with explicit context reuse"],
+      ["context-compile [path]", "Compile bounded task context subjects"],
     ],
   },
   {
@@ -99,6 +100,19 @@ const details: Record<string, string[]> = {
     "  --session <id>             Explicit context session id",
     "  --context-generation <id>  Explicit context generation",
     "  --json                     Print machine-readable output",
+  ],
+  "context-compile": [
+    "Usage: code-atlas context-compile [path] --task <text> [options]",
+    "",
+    "Compile bounded Phase15A file and symbol subjects for a task.",
+    "",
+    "Options:",
+    "  --anchor-file <path>     Add a file anchor (repeatable)",
+    "  --changed-path <path>    Add a changed path (repeatable)",
+    "  --budget-items <n>       Limit selected subjects",
+    "  --budget-tokens <n>      Limit estimated tokens",
+    "  --full                   Include bounded evidence details",
+    "  --json                   Print machine-readable output",
   ],
   "inspect-change": [
     "Usage: code-atlas inspect-change [path] [options]",

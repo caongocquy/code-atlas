@@ -42,6 +42,7 @@ test("MCP exposes the structured CodeAtlas capability surface", async () => {
       "graph_delta",
       "architecture_drift",
       "change_gate",
+      "compile_task_context",
       "context_read",
       "get_community",
       "get_symbol",
@@ -116,6 +117,16 @@ test("MCP lifecycle, lexical search, graph queries, and Phase 9 tools reuse core
     const callers = await callJson(client, "find_callers", { repoPath, query: "AuthService" });
     assert.equal(callers.value.status, "resolved");
     assert.equal((callers.value.results as Array<{ entity: { name: string } }>).some((item) => item.entity.name === "run"), true);
+
+    const compiled = await callJson(client, "compile_task_context", {
+      repoPath,
+      task: "AuthService",
+      anchors: [{ kind: "symbol", path: "src/auth.ts", name: "AuthService" }],
+    });
+    assert.equal(compiled.result.isError, undefined);
+    assert.equal(Array.isArray(compiled.value.items), true);
+    assert.equal(JSON.stringify(compiled.value).includes("context_read"), false);
+    assert.equal(JSON.stringify(compiled.value).includes("source body"), false);
 
     const communities = await callJson(client, "list_communities", { repoPath });
     assert.equal((communities.value.totalCommunities as number) > 0, true);

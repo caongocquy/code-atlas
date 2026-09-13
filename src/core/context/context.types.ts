@@ -2,6 +2,8 @@ export type ContextSubject =
   | { kind: "file"; path: string }
   | { kind: "symbol"; path: string; symbolId: string; selectorVersion: string };
 
+export const CONTEXT_SUBJECT_SELECTOR_VERSION = "1";
+
 export type ContextSession = {
   sessionId: string;
   repositoryIdentity: string;
