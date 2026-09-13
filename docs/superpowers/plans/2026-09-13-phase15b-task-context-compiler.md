@@ -14,6 +14,8 @@
 
 - Phase15B decides WHAT context is relevant; Phase15A decides HOW selected content is delivered.
 - Reuse exactly the current Phase15A `ContextSubject`: file or symbol only.
+- `candidate.exact` means only that the candidate has an exact, deliverable Phase15A `ContextSubject`; it never by itself implies `priority="required"`.
+- Required promotion is allowed only for `explicit_anchor`, `explicit_changed_path`, or direct exact task-target resolution represented by `task_exact_resolution`.
 - `compile_task_context` must not call `context_read`, return source bodies, or accept session/receipt/history/model/agent inputs.
 - Preserve unique-or-drop resolution: malformed anchors are hard errors; valid unresolved/ambiguous anchors are non-exact evidence.
 - Use no LLM, generic RAG/memory subsystem, recursive graph traversal, or new mandatory dependency.
@@ -61,7 +63,7 @@ The implementation must start from these current APIs rather than assuming desig
 - Create `src/core/context/task-context-ranker.ts`: required/supporting/optional rules and deterministic RRF-style ordering.
 - Create `src/core/context/task-context-budget.ts`: subject budget selection and conservative cost accounting.
 - Create `src/core/context/task-context-compiler.ts`: orchestration, repository/workspace resolution, identities, reliability, and compact/full detail projection.
-- Modify `src/core/context/context.types.ts` only if needed to export the Phase15A-owned symbol selector version.
+- Modify `src/core/context/context.types.ts`: baseline does not export the selector constant, so add `CONTEXT_SUBJECT_SELECTOR_VERSION = "1"` there.
 - Modify `src/core/repository/repository-status.service.ts` only if needed to expose a read-only generation/version fingerprint for plan identity.
 - Create `src/adapters/cli/context-compile.command.ts`: parser and human/JSON inspection output using the shared compiler.
 - Modify `src/cli.ts` and `src/adapters/cli/cli-help.ts`: register `context-compile`.
@@ -113,7 +115,7 @@ export type TaskContextPriority = "required" | "supporting" | "optional";
 export type TaskContextEvidence =
   | { kind: "explicit_anchor"; anchor: TaskContextAnchor }
   | { kind: "explicit_changed_path"; path: string }
-  | { kind: "exact_resolution"; query: string; resolution: "file" | "symbol" }
+  | { kind: "task_exact_resolution"; query: string; resolution: "file" | "symbol" }
   | { kind: "lexical"; rank: number; query: string }
   | { kind: "semantic"; rank: number; query: string }
   | { kind: "hybrid"; rank: number; query: string }
@@ -230,7 +232,7 @@ changes `planIdentity`.
 - [ ] Run the focused tests again; expected: PASS.
 - [ ] Commit:
   ```bash
-  git add src/core/context/task-context.types.ts src/core/context/task-context-normalizer.ts test/phase15b-normalizer.test.ts test/phase15b-identity.test.ts
+  git add src/core/context/context.types.ts src/core/context/task-context.types.ts src/core/context/task-context-normalizer.ts test/phase15b-normalizer.test.ts test/phase15b-identity.test.ts
   git commit -m "feat(context): add task context contracts and normalization"
   ```
 
@@ -252,7 +254,7 @@ changes `planIdentity`.
   node --import tsx/esm --test test/phase15b-candidates.test.ts
   ```
   Expected: FAIL on missing candidate exports.
-- [ ] Implement merge keyed only by canonical Phase15A subject key when a subject exists; keep unresolved candidates in diagnostics/omitted evidence without fabricating a subject; dedupe evidence by deterministic canonical JSON and sort evidence by kind/source rank/payload.
+- [ ] Implement merge keyed only by canonical Phase15A subject key when a subject exists; keep unresolved candidates in diagnostics/omitted evidence without fabricating a subject; dedupe evidence by deterministic canonical JSON and sort evidence by kind/source rank/payload. Define `exact=true` only as exact deliverability of the subject; do not derive required priority from that boolean.
 - [ ] Keep `path?: string` only on input anchors. Emitted symbol subjects always contain the Phase15A stable `path`, `symbolId`, and `selectorVersion`.
 - [ ] Run the focused test; expected: PASS.
 - [ ] Commit:
@@ -287,9 +289,9 @@ changes `planIdentity`.
   ): Promise<{ candidates: TaskContextCandidate[]; reliability: TaskContextReliability }>;
   ```
 
-- [ ] Write failing integration tests for explicit file anchor, path-qualified symbol anchor, pathless symbol anchor, exact task target resolution, explicit changed path producing an exact required file, missing changed path producing only diagnostic evidence, lexical-only retrieval, semantic available, semantic unavailable, empty/weak retrieval, and optional retrieval failure.
+- [ ] Write failing integration tests for explicit file anchor, path-qualified symbol anchor, pathless symbol anchor, direct exact task-target resolution, explicit changed path producing an exact required file, missing changed path producing only diagnostic evidence, lexical-only retrieval, semantic available, semantic unavailable, empty/weak retrieval, and optional retrieval failure.
 - [ ] Run the focused collection test; expected: FAIL because the collector is not exported.
-- [ ] Implement authority order: validate explicit anchors; resolve files against the already canonical `repositoryPath` and repository-relative existence/index metadata; resolve symbols via `resolveGraphEntity`; accept only `resolved` entities as exact stable symbol subjects; preserve ambiguous/not_found states as non-exact diagnostics. Process `explicit_changed_path` separately and require current readable-file proof before creating its exact required file subject.
+- [ ] Implement authority order: validate explicit anchors; resolve files against the already canonical `repositoryPath` and repository-relative existence/index metadata; resolve direct task targets via `resolveGraphEntity` and emit `task_exact_resolution` only for unique direct task resolution; accept only `resolved` entities as exact stable symbol subjects; preserve ambiguous/not_found states as non-exact diagnostics. Process `explicit_changed_path` separately and require current readable-file proof before creating its exact required file subject.
 - [ ] Convert retrieval results from `searchLexical`/hybrid stages to file subjects when only file metadata is proven, and symbol subjects only when a matching graph node resolves uniquely; retain source rank and query evidence without copying content bodies.
 - [ ] Choose the primitive lexical stream and primitive semantic/vector stream as the only RRF scoring streams. When using `inspectHybridSearch`, consume its lexical/vector stage ranks and fused result only as provenance/diagnostic metadata; never add a separate hybrid rank contribution.
 - [ ] Cap retrieval seed inputs to 20 and result candidates to the centralized strategy cap. Catch semantic/provider failures, record capability diagnostics, and continue with lexical/exact evidence.
@@ -344,13 +346,13 @@ changes `planIdentity`.
   ```
 - Consumes candidate evidence and strategy constants; performs no I/O.
 
-- [ ] Write failing table-driven tests for required explicit/exact/changed candidates, supporting direct neighbors/corroborated retrieval/affected tests, optional weak or one-source candidates, ambiguous non-required candidates, and exact-over-fuzzy dominance.
+- [ ] Write failing table-driven tests for required explicit/direct-task-exact/changed candidates, supporting direct neighbors/corroborated retrieval/affected tests, optional weak or one-source candidates, ambiguous non-required candidates, and exact-over-fuzzy dominance. Prove a lexical fuzzy candidate that maps uniquely to an exact symbol has `exact=true` but is not automatically required, while a direct task target with `task_exact_resolution` is required.
 - [ ] Run:
   ```bash
   node --import tsx/esm --test test/phase15b-ranker.test.ts
   ```
   Expected: FAIL because the ranker is not implemented.
-- [ ] Implement priority as a rule-first decision: explicit anchors, exact resolution, and explicit changed targets are required; direct graph neighbors, corroborated retrieval, and directly affected tests are supporting; weak/one-source evidence is optional; unresolved/ambiguous evidence cannot be required.
+- [ ] Implement priority as a rule-first decision: only explicit anchors, explicit changed paths, and direct task resolution carrying `task_exact_resolution` are required; exactness alone never promotes a candidate. Direct graph neighbors, corroborated retrieval, and directly affected tests are supporting; weak/one-source evidence is optional; unresolved/ambiguous evidence cannot be required. Retrieval candidates remain budgeted even when their subject is exactly addressable.
 - [ ] Compute source ranks independently for lexical, semantic/vector, graph, impact, change, and affected-test streams. Use `1 / (60 + sourceRank)` for each contributing stream; hybrid/fused is metadata only and contributes zero. Add a test proving one hybrid result is not double/triple-counted.
 - [ ] Dedupe reasons and evidence deterministically; rank by priority tier, descending fused signal, exact flag, evidence count, then canonical subject key. Assign one-based rank after final ordering.
 - [ ] Return stable short reasons such as `explicit anchor`, `exact symbol resolution`, `lexical match rank N`, `direct graph caller`, or `affected test`; do not emit probability/confidence claims.
@@ -377,7 +379,7 @@ changes `planIdentity`.
   ```
 - Consumes ranked `TaskContextFullItem[]` and optional indexed/source-span/file metadata; never reads full source merely to count tokens.
 
-- [ ] Write failing tests for max-items selection, max-estimated-tokens selection, required/supporting/optional order, omitted count, unknown cost handling, and required overflow.
+- [ ] Write failing tests for max-items selection, max-estimated-tokens selection, required/supporting/optional order, omitted count, unknown cost handling, required overflow, and an exact-addressable retrieval candidate being budgeted as supporting/optional rather than bypassing the budget.
 - [ ] Run:
   ```bash
   node --import tsx/esm --test test/phase15b-budget.test.ts
@@ -398,6 +400,7 @@ changes `planIdentity`.
 
 **Files:**
 - Create: `src/core/context/task-context-compiler.ts`
+- Modify: `src/core/repository/repository-status.service.ts` to expose the read-only capability fingerprint
 - Test: `test/phase15b-compiler.test.ts`
 - Test: `test/phase15b-identity-integration.test.ts`
 - Test: `test/phase15b-phase15a-compatibility.test.ts`
@@ -429,14 +432,13 @@ changes `planIdentity`.
 - [ ] Run focused tests; expected: PASS.
 - [ ] Commit:
   ```bash
-  git add src/core/context/task-context-compiler.ts test/phase15b-compiler.test.ts test/phase15b-identity-integration.test.ts
+  git add src/core/context/task-context-compiler.ts src/core/repository/repository-status.service.ts test/phase15b-compiler.test.ts test/phase15b-identity-integration.test.ts test/phase15b-phase15a-compatibility.test.ts
   git commit -m "feat(context): compile task context plans"
   ```
 
 ## Task 8: Verify Phase15A compatibility and compiler boundary
 
 **Files:**
-- Modify: `src/core/context/task-context-compiler.ts` only if a typed adapter is needed
 - Review: `test/phase15b-phase15a-compatibility.test.ts`
 
 **Interfaces:**
@@ -525,7 +527,7 @@ changes `planIdentity`.
 **Files:**
 - Create: `test/phase15b-cross-language.test.ts`
 - Create: `test/phase15b-evaluation.test.ts`
-- Modify: existing fixture/helper only when required by the tests
+- Reuse: existing Phase14B fixture/helper files; add no fixture/helper production changes unless a concrete test requires one
 - Review: all `src/core/context/task-context-*.ts`, MCP/CLI adapters, and Phase15A tests
 
 **Interfaces:**
@@ -541,6 +543,7 @@ changes `planIdentity`.
   ```
   Expected: PASS. If new evaluation coverage exposes a gap, fix that gap in the owning task and rerun this verification; do not label an existing behavior test as a required RED step.
 - [ ] Add only fixture/test support needed to exercise existing language-neutral graph/parser/index behavior; do not add TypeScript-specific branches to the compiler.
+- [ ] If evaluation exposes a production or helper defect, move that correction to its owning task, add the exact changed path to that task's Files and git-add command, and commit it there before returning to this closure task. Do not leave an owning fix unstaged.
 - [ ] Run the focused Phase15B suite, existing Phase15A suite, MCP/CLI regressions, and then:
   ```
   pnpm exec tsc --noEmit
@@ -595,3 +598,10 @@ Phase15A compatibility are proven.
 - [ ] Cross-language fixtures cover TypeScript, Python, Java/Kotlin, and Go/Rust.
 - [ ] No Phase15C lifecycle or generic memory behavior is present.
 - [ ] Full relevant validation, `git diff --check`, and final Git status are recorded.
+- [ ] Before every focused commit, `git status --short` shows only that task's
+  listed files staged; `AGENTS.md` and `.worktrees/` remain unstaged and no
+  unrelated dirty file is carried into the commit.
+- [ ] Candidate `exact=true` is never treated as required without
+  `explicit_anchor`, `explicit_changed_path`, or
+  `task_exact_resolution`; exact-addressable retrieval candidates still pass
+  through ranking and budgeting.
