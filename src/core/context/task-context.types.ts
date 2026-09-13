@@ -54,3 +54,12 @@ export type TaskContextFullItem = {
   evidence: TaskContextEvidence[];
   fusion: { sourceRanks: Partial<Record<TaskContextEvidence["kind"], number>> };
 };
+
+export type TaskContextBudget = {
+  maxItems: number;
+  maxEstimatedTokens: number;
+  selectedItems: number;
+  estimatedTokens: number;
+  omittedItems: number;
+  budgetExceeded: boolean;
+};
