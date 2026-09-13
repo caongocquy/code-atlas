@@ -551,11 +551,27 @@ unchanged subject body resend            0%
 immutable task mutation accepted         0%
 Phase15A reconstruction invariant      100%
 Phase15B required-authority invariant  100%
+stable-filesystem containment          100%
 ~~~
+
+Phase15C v1 does not claim `symlink-race isolation`. Parent-directory
+namespace swaps concurrent with file opening are outside the supported stable
+filesystem threat model; fully closing that window requires descriptor-relative
+native filesystem primitives not exposed by the supported Node runtime. No
+native addon, FFI, `/proc/self/fd` or `/dev/fd` shim, or path-check/reopen
+workaround is part of this plan.
+
+## Follow-up design backlog
+
+### Secure Descriptor-Relative File Access
+
+Define a future secure source-access design using POSIX `openat`/`openat2` and
+the equivalent Windows descriptor-relative primitives. This is deliberately
+backlog-only and is not implemented in Phase15C v1.
 
 ## Self-review before implementation handoff
 
-- [ ] Every spec section 1–22 maps to a task or Global Constraints.
+- [ ] Every spec section 1–23 maps to a task or Global Constraints.
 - [ ] taskIntentIdentity is distinct from Phase15B taskIdentity; Phase15B task-v1 is untouched.
 - [ ] changedPaths are recomputed from readGitChanges(repoPath, { mode: "working" }), normalized, and never accepted by refresh callers.
 - [ ] contextGeneration and sessionId remain stable across refresh.

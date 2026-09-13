@@ -79,7 +79,7 @@ test("subject delivery rejects traversal and symlink escapes outside the reposit
   }
 });
 
-test("descriptor traversal reads a valid nested repository file", async () => {
+test("stable filesystem containment reads a valid nested repository file", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15c-descriptor-read-"));
   try {
     await mkdir(path.join(root, "src", "nested"), { recursive: true });
