@@ -25,22 +25,22 @@ export type TaskContextLifecycleDeps = {
   readCurrentChangedPaths?: typeof readCurrentChangedPaths;
 };
 
-type LifecycleErrorCode = "invalid_task_context_id" | "lifecycle_not_found" | "workspace_mismatch" | "lifecycle_conflict" | "context_closed" | "context_expired" | "unsupported_context_schema" | "context_database_unavailable" | "compiler_validation_failed";
+type LifecycleErrorCode = "invalid_task_context_id" | "lifecycle_not_found" | "task_context_closed" | "task_context_expired" | "repository_mismatch" | "workspace_mismatch" | "lifecycle_conflict" | "unsupported_context_schema" | "context_database_unavailable" | "compiler_validation_failed";
 
-function operationError(code: LifecycleErrorCode, operation: "start" | "refresh" | "close", message: string, taskContextId?: string): never {
-  throw new TaskContextLifecycleDomainError({ code, operation, message, ...(taskContextId ? { taskContextId } : {}) });
+function operationError(code: LifecycleErrorCode, operation: "start" | "refresh" | "close", message: string, taskContextId?: string, expectedRevision?: number, currentRevision?: number): never {
+  throw new TaskContextLifecycleDomainError({ code, operation, message, retryable: code === "lifecycle_conflict", ...(taskContextId ? { taskContextId } : {}), ...(expectedRevision !== undefined ? { expectedRevision } : {}), ...(currentRevision !== undefined ? { currentRevision } : {}) });
 }
 
-function metrics(plan: TaskContextPlanDetail, prepared: PreparedContextAwareRead[], deliveries: TaskContextDelivery[]) {
-  const result = { compiledItems: plan.items.length, deliveredItems: prepared.length, failedItems: deliveries.filter((delivery) => delivery.mode === "error").length, omittedItems: plan.budget.omittedItems, estimatedTokens: plan.budget.estimatedTokens, requestedBytes: 0, returnedBytes: 0, savedBytes: 0, fullReads: 0, unchangedReads: 0, deltaReads: 0, rehydrates: 0 };
+function metrics(plan: TaskContextPlanDetail, prepared: PreparedContextAwareRead[], deliveries: TaskContextDelivery[], previousPlanIdentity?: string) {
+  const result = { selectedItems: plan.items.length, deliveredItems: prepared.length, fullItems: 0, deltaItems: 0, unchangedItems: 0, rehydratedItems: 0, failedItems: deliveries.filter((delivery) => delivery.mode === "error").length, requestedBytes: 0, returnedBytes: 0, savedBytes: 0, ...(previousPlanIdentity ? { previousPlanIdentity } : {}), currentPlanIdentity: plan.planIdentity, planChanged: previousPlanIdentity !== undefined && previousPlanIdentity !== plan.planIdentity };
   for (const item of prepared) {
     result.requestedBytes += item.metrics.requestedBytes;
     result.returnedBytes += item.metrics.returnedBytes;
     result.savedBytes += item.metrics.savedBytes;
-    if (item.result.mode === "full") result.fullReads += 1;
-    if (item.result.mode === "unchanged") result.unchangedReads += 1;
-    if (item.result.mode === "delta") result.deltaReads += 1;
-    if (item.result.mode === "rehydrate") result.rehydrates += 1;
+    if (item.result.mode === "full") result.fullItems += 1;
+    if (item.result.mode === "unchanged") result.unchangedItems += 1;
+    if (item.result.mode === "delta") result.deltaItems += 1;
+    if (item.result.mode === "rehydrate") result.rehydratedItems += 1;
   }
   return result;
 }
@@ -48,11 +48,11 @@ function metrics(plan: TaskContextPlanDetail, prepared: PreparedContextAwareRead
 function mapPrepared(item: TaskContextPlanDetail["items"][number], prepared: PreparedContextAwareRead | undefined): TaskContextDelivery {
   if (prepared) {
     const { mode, current, content, delta, reason } = prepared.result;
-    if (mode === "full" || mode === "rehydrate") return { item, mode, current, content: content as string, ...(reason ? { reason } : {}) };
-    if (mode === "delta") return { item, mode, current, delta };
-    return { item, mode, current };
+    if (mode === "full" || mode === "rehydrate") return { subject: item.subject, receiptId: prepared.receipt.receiptId, reliability: prepared.receipt.reliability, mode, current, content: content as string, ...(reason ? { reason } : {}) };
+    if (mode === "delta") return { subject: item.subject, receiptId: prepared.receipt.receiptId, reliability: prepared.receipt.reliability, mode, current, delta };
+    return { subject: item.subject, receiptId: prepared.receipt.receiptId, reliability: prepared.receipt.reliability, mode, current };
   }
-  return { item, mode: "error", error: { code: "context_delivery_failed", message: "Context delivery preparation failed" } };
+  return { subject: item.subject, mode: "error", error: { code: "delivery_preparation_failed", message: "Context delivery preparation failed" } };
 }
 
 async function prepareItems(root: string, plan: TaskContextPlanDetail, sessionId: string, generation: string, ttlSeconds: number, store: ContextStore, deps: TaskContextLifecycleDeps): Promise<{ prepared: PreparedContextAwareRead[]; deliveries: TaskContextDelivery[] }> {
@@ -66,7 +66,8 @@ async function prepareItems(root: string, plan: TaskContextPlanDetail, sessionId
     } catch (error) {
       if (!(error instanceof ContextDeliveryPreparationError)) throw error;
       const typed = error as { code?: unknown; message?: unknown };
-      deliveries.push({ item, mode: "error", error: { code: typeof typed.code === "string" ? typed.code : "context_delivery_failed", message: typeof typed.message === "string" ? typed.message : String(error) } });
+      if (typed.code !== "subject_unavailable" && typed.code !== "symbol_resolution_failed" && typed.code !== "delivery_preparation_failed") throw error;
+      deliveries.push({ subject: item.subject, mode: "error", error: { code: typed.code, message: typeof typed.message === "string" ? typed.message : String(error) } });
     }
   }
   return { prepared, deliveries };
@@ -83,7 +84,7 @@ function storeFor(root: string, deps: TaskContextLifecycleDeps, operation: "star
 }
 
 export async function startTaskContext(input: StartTaskContextInput, deps: TaskContextLifecycleDeps = {}): Promise<TaskContextLifecycleResult> {
-  const root = canonicalRepositoryPath(path.resolve(deps.repositoryPath ?? process.cwd()));
+  const root = canonicalRepositoryPath(path.resolve(input.repoPath ?? deps.repositoryPath ?? process.cwd()));
   const workspace = getWorkspaceIdentity(root);
   const now = (deps.now ?? (() => new Date()))().toISOString();
   const ttlSeconds = normalizeLifecycleTtlSeconds(input.ttlSeconds);
@@ -100,25 +101,29 @@ export async function startTaskContext(input: StartTaskContextInput, deps: TaskC
   try {
     const deliveries = await prepareItems(root, plan, sessionId, generation, ttlSeconds, storeInfo.store, deps);
     const session = deliveries.prepared[0]?.session ?? { sessionId, repositoryIdentity: workspace.repositoryIdentity, workspaceIdentity: workspace.workspaceIdentity, createdAt: now, lastSeenAt: now, contextGeneration: generation, schemaVersion: 1 };
-    const lifecycle = { taskContextId, repositoryIdentity: workspace.repositoryIdentity, workspaceIdentity: workspace.workspaceIdentity, sessionId, contextGeneration: generation, task: normalized.task, anchors: normalized.anchors, taskIdentity: plan.taskIdentity, taskIntentIdentity: createTaskIntentIdentity(normalized.task, normalized.anchors), defaultBudget: budget, ttlSeconds, latestTaskIdentity: plan.taskIdentity, latestPlanIdentity: plan.planIdentity, revision: 0, state: "active" as const, createdAt: now, lastSeenAt: now, expiresAt: new Date(Date.parse(now) + ttlSeconds * 1000).toISOString(), schemaVersion: 2 };
+    const lifecycle = { taskContextId, repositoryIdentity: workspace.repositoryIdentity, workspaceIdentity: workspace.workspaceIdentity, sessionId, contextGeneration: generation, task: normalized.task, anchors: normalized.anchors, taskIntentIdentity: createTaskIntentIdentity(normalized.task, normalized.anchors), defaultBudget: budget, ttlSeconds, latestTaskIdentity: plan.taskIdentity, latestPlanIdentity: plan.planIdentity, revision: 0, state: "active" as const, createdAt: now, lastSeenAt: now, expiresAt: new Date(Date.parse(now) + ttlSeconds * 1000).toISOString(), schemaVersion: 2 };
     const committed = storeInfo.store.createAndCommitStart({ lifecycle, session, prepared: deliveries.prepared });
-    return { lifecycle: committed, deliveries: deliveries.deliveries, metrics: metrics(plan, deliveries.prepared, deliveries.deliveries), budget: plan.budget };
+    return { lifecycle: committed, plan, deliveries: deliveries.deliveries, partial: deliveries.deliveries.some((delivery) => delivery.mode === "error"), metrics: metrics(plan, deliveries.prepared, deliveries.deliveries) };
   } finally { if (storeInfo.owned) storeInfo.store.close(); }
 }
 
 export async function refreshTaskContext(input: RefreshTaskContextInput, deps: TaskContextLifecycleDeps = {}): Promise<TaskContextLifecycleResult> {
   const taskContextId = (() => { try { return validateTaskContextId(input.taskContextId); } catch (error) { return operationError("invalid_task_context_id", "refresh", error instanceof Error ? error.message : String(error), input.taskContextId); } })();
-  const root = canonicalRepositoryPath(path.resolve(deps.repositoryPath ?? process.cwd()));
+  const root = canonicalRepositoryPath(path.resolve(input.repoPath ?? deps.repositoryPath ?? process.cwd()));
   const workspace = getWorkspaceIdentity(root);
   const storeInfo = storeFor(root, deps, "refresh");
   try {
     const current = storeInfo.store.loadLifecycle(taskContextId);
     if (!current) operationError("lifecycle_not_found", "refresh", `lifecycle_not_found: ${taskContextId}`, taskContextId);
-    if (current.repositoryIdentity !== workspace.repositoryIdentity || current.workspaceIdentity !== workspace.workspaceIdentity) operationError("workspace_mismatch", "refresh", `workspace_mismatch: ${taskContextId}`, taskContextId);
-    if (current.state === "closed") operationError("context_closed", "refresh", `context_closed: ${taskContextId}`, taskContextId);
-    if (current.state === "expired") operationError("context_expired", "refresh", `context_expired: ${taskContextId}`, taskContextId);
+    if (current.repositoryIdentity !== workspace.repositoryIdentity) operationError("repository_mismatch", "refresh", `repository_mismatch: ${taskContextId}`, taskContextId);
+    if (current.workspaceIdentity !== workspace.workspaceIdentity) operationError("workspace_mismatch", "refresh", `workspace_mismatch: ${taskContextId}`, taskContextId);
+    if (current.state === "closed") operationError("task_context_closed", "refresh", `task_context_closed: ${taskContextId}`, taskContextId, current.revision, current.revision);
+    if (current.state === "expired") operationError("task_context_expired", "refresh", `task_context_expired: ${taskContextId}`, taskContextId, current.revision, current.revision);
     const initialNow = (deps.now ?? (() => new Date()))().toISOString();
-    if (current.expiresAt && Date.parse(initialNow) >= Date.parse(current.expiresAt)) operationError("context_expired", "refresh", `context_expired: ${taskContextId}`, taskContextId);
+    if (current.expiresAt && Date.parse(initialNow) >= Date.parse(current.expiresAt)) {
+      storeInfo.store.expireLifecycle({ taskContextId, expectedRevision: current.revision, now: initialNow, repositoryIdentity: workspace.repositoryIdentity, workspaceIdentity: workspace.workspaceIdentity });
+      operationError("task_context_expired", "refresh", `task_context_expired: ${taskContextId}`, taskContextId, current.revision, current.revision + 1);
+    }
     const budget = normalizeLifecycleBudget(input.budget ?? current.defaultBudget);
     const changedPaths = await (deps.readCurrentChangedPaths ?? readCurrentChangedPaths)(root);
     let plan: TaskContextPlanDetail;
@@ -126,7 +131,7 @@ export async function refreshTaskContext(input: RefreshTaskContextInput, deps: T
     catch (error) { if (error instanceof TaskContextRepositoryCompilerError || error instanceof TypeError) operationError("compiler_validation_failed", "refresh", error.message, taskContextId); throw error; }
     const deliveries = await prepareItems(root, plan, current.sessionId, current.contextGeneration, current.ttlSeconds, storeInfo.store, deps);
     const committed = storeInfo.store.commitRefresh({ taskContextId, expectedRevision: current.revision, now: (deps.now ?? (() => new Date()))().toISOString(), repositoryIdentity: workspace.repositoryIdentity, workspaceIdentity: workspace.workspaceIdentity, prepared: deliveries.prepared, latestTaskIdentity: plan.taskIdentity, latestPlanIdentity: plan.planIdentity });
-    return { lifecycle: committed, deliveries: deliveries.deliveries, metrics: metrics(plan, deliveries.prepared, deliveries.deliveries), budget: plan.budget };
+    return { lifecycle: committed, plan, deliveries: deliveries.deliveries, partial: deliveries.deliveries.some((delivery) => delivery.mode === "error"), metrics: metrics(plan, deliveries.prepared, deliveries.deliveries, current.latestPlanIdentity) };
   } finally { if (storeInfo.owned) storeInfo.store.close(); }
 }
 
@@ -134,7 +139,7 @@ export function closeTaskContext(input: CloseTaskContextInput, deps: TaskContext
   let taskContextId: string;
   try { taskContextId = validateTaskContextId(input.taskContextId); }
   catch (error) { return operationError("invalid_task_context_id", "close", error instanceof Error ? error.message : String(error), input.taskContextId); }
-  const root = canonicalRepositoryPath(path.resolve(deps.repositoryPath ?? process.cwd()));
+  const root = canonicalRepositoryPath(path.resolve(input.repoPath ?? deps.repositoryPath ?? process.cwd()));
   const workspace = getWorkspaceIdentity(root);
   const storeInfo = storeFor(root, deps, "close");
   try {

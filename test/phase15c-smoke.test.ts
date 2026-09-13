@@ -34,7 +34,7 @@ async function cli(cwd: string, ...args: string[]): Promise<Record<string, any>>
 }
 
 function deliveryFor(result: Record<string, any>, subjectPath: string): Record<string, any> {
-  const delivery = result.deliveries.find((candidate: Record<string, any>) => candidate.item.subject.path === subjectPath);
+  const delivery = result.deliveries.find((candidate: Record<string, any>) => candidate.subject?.path === subjectPath);
   assert.ok(delivery, `missing delivery for ${subjectPath}`);
   return delivery;
 }

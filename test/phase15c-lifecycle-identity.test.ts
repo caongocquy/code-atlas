@@ -84,17 +84,18 @@ test("models immutable lifecycle state and structured operation errors", () => {
   assert.equal(lifecycle.defaultBudget.maxItems, 20);
   assert.equal(lifecycle.latestPlanIdentity, "plan-v1:identity");
 
-  const operationError = { code: "context_expired" as const, operation: "refresh" as const, message: "context expired", taskContextId: lifecycle.taskContextId };
+  const operationError = { code: "task_context_expired" as const, operation: "refresh" as const, message: "context expired", taskContextId: lifecycle.taskContextId, retryable: false, expectedRevision: 1, currentRevision: 1 };
   const error = new TaskContextLifecycleDomainError(operationError);
   assert.equal(error.name, "TaskContextLifecycleDomainError");
-  assert.deepEqual(error.operationError, operationError);
+  assert.deepEqual(error.payload, operationError);
+  assert.equal(error.operationError, error.payload);
 });
 
 test("error deliveries always carry an error payload", () => {
   const delivery: TaskContextDelivery = {
-    item: { subject: { kind: "file", path: "src/index.ts" }, priority: "optional", rank: 1, reasons: [], estimatedTokens: 1 },
+    subject: { kind: "file", path: "src/index.ts" },
     mode: "error",
-    error: { code: "delivery_failed", message: "unable to deliver" },
+    error: { code: "delivery_preparation_failed", message: "unable to deliver" },
   };
-  assert.equal(delivery.error.code, "delivery_failed");
+  assert.equal(delivery.error.code, "delivery_preparation_failed");
 });

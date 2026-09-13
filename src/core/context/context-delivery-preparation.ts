@@ -10,11 +10,17 @@ import { decideContextMode } from "./context-decision.js";
 import { applyDelta, createExactDelta } from "./context-delta.js";
 import { contentIdentity, createDeliveredSnapshot } from "./context-snapshot.js";
 import type { ContextAwareReadRequest } from "./context-aware-read.service.js";
+import { CONTEXT_AWARE_SOURCE_PROJECTION } from "./context.types.js";
 import type { ContextAwareReadResult, ContextReceipt, ContextSession, ContextSubject, PreparedContextAwareRead } from "./context.types.js";
 import { ContextDeliveryPreparationError as PreparationError } from "./context.types.js";
 import type { ContextStore } from "../../storage/context/context.store.js";
 
-export const CONTEXT_AWARE_SOURCE_PROJECTION = "source-v1";
+export { CONTEXT_AWARE_SOURCE_PROJECTION };
+
+export type ContextDeliveryPreparationDeps = {
+  store: Pick<ContextStore, "findLatestReceipt" | "getSnapshot">;
+  now: () => string;
+};
 
 export async function readRepositoryRelativeFile(root: string, relativePath: string): Promise<string> {
   root = path.normalize(await fs.realpath(root));
@@ -66,12 +72,12 @@ async function readSubject(root: string, subject: ContextSubject): Promise<strin
   try {
     source = await readRepositoryRelativeFile(root, subject.path);
   } catch (error) {
-    throw new PreparationError(`Context-aware source read failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    throw new PreparationError("subject_unavailable", `Context-aware source read failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   }
   if (subject.kind === "file") return source;
   const graph = await loadIndexedGraphReadOnly(root);
   const nodes = graph.graph.nodes.filter((node) => node.id === subject.symbolId && node.file === subject.path && node.startLine !== undefined && node.endLine !== undefined);
-  if (nodes.length !== 1) throw new PreparationError("Context-aware source read failed: Symbol selector is not uniquely indexed");
+  if (nodes.length !== 1) throw new PreparationError("symbol_resolution_failed", "Context-aware source read failed: Symbol selector is not uniquely indexed");
   const lines = source.split(/\r?\n/);
   return lines.slice(nodes[0]!.startLine! - 1, nodes[0]!.endLine!).join("\n");
 }
@@ -90,10 +96,12 @@ function metrics(result: ContextAwareReadResult, content: string) {
   return { requestedBytes, returnedBytes, savedBytes: Math.max(0, requestedBytes - returnedBytes) };
 }
 
-export async function prepareContextAwareRead(repoPath: string, request: ContextAwareReadRequest, store?: ContextStore, storeError?: unknown): Promise<PreparedContextAwareRead> {
+export async function prepareContextAwareRead(repoPath: string, request: ContextAwareReadRequest, storeOrDeps?: ContextStore | ContextDeliveryPreparationDeps, storeError?: unknown): Promise<PreparedContextAwareRead> {
   const root = canonicalRepositoryPath(path.resolve(repoPath));
   const workspace = getWorkspaceIdentity(root);
-  const now = new Date().toISOString();
+  const deps = storeOrDeps && "store" in storeOrDeps && "now" in storeOrDeps ? storeOrDeps : undefined;
+  const store = deps?.store ?? (storeOrDeps as ContextStore | undefined);
+  const now = deps?.now() ?? new Date().toISOString();
   const session = sessionFor(workspace, request, now);
   const subjectIdentity = canonicalProjectionIdentity("subject", { repositoryIdentity: workspace.repositoryIdentity, workspaceIdentity: workspace.workspaceIdentity, subject: request.subject });
   const projectionIdentity = canonicalProjectionIdentity(request.projection, { schemaVersion: 1 });

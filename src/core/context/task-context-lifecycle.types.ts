@@ -1,5 +1,5 @@
-import type { TaskContextAnchor, TaskContextBudget, TaskContextItem } from "./task-context.types.js";
-import type { ContextAwareReadResult } from "./context.types.js";
+import type { TaskContextAnchor, TaskContextPlanDetail } from "./task-context.types.js";
+import type { ContextAwareReadResult, ContextReceipt, ContextSession, ContextSubject, DeliveredSnapshot } from "./context.types.js";
 
 export type TaskContextLifecycleState = "active" | "expired" | "closed";
 
@@ -9,22 +9,25 @@ export type TaskContextLifecycleBudget = {
 };
 
 export type TaskContextLifecycleMetrics = {
-  compiledItems: number;
+  selectedItems: number;
   deliveredItems: number;
+  fullItems: number;
+  deltaItems: number;
+  unchangedItems: number;
+  rehydratedItems: number;
   failedItems: number;
-  omittedItems: number;
-  estimatedTokens: number;
   requestedBytes: number;
   returnedBytes: number;
   savedBytes: number;
-  fullReads: number;
-  unchangedReads: number;
-  deltaReads: number;
-  rehydrates: number;
+  previousPlanIdentity?: string;
+  currentPlanIdentity: string;
+  planChanged: boolean;
 };
 
 type TaskContextDeliveryBase = {
-  item: TaskContextItem;
+  subject: ContextSubject;
+  receiptId: string;
+  reliability: unknown;
   current: ContextAwareReadResult["current"];
 };
 
@@ -34,10 +37,12 @@ export type PreparedContextDelivery =
   | (TaskContextDeliveryBase & { mode: "unchanged" });
 
 export type TaskContextDelivery = PreparedContextDelivery | {
-  item: TaskContextItem;
+  subject: ContextSubject;
   mode: "error";
-  error: { code: string; message: string };
+  error: TaskContextDeliveryError;
 };
+
+export type TaskContextDeliveryError = { code: "subject_unavailable" | "symbol_resolution_failed" | "delivery_preparation_failed"; message: string };
 
 export type TaskContextLifecycle = {
   readonly taskContextId: string;
@@ -47,7 +52,7 @@ export type TaskContextLifecycle = {
   readonly contextGeneration: string;
   readonly task: string;
   readonly anchors: readonly TaskContextAnchor[];
-  readonly taskIdentity: string;
+  readonly taskIntentIdentity: string;
   readonly defaultBudget: Readonly<TaskContextLifecycleBudget>;
   readonly ttlSeconds: number;
   latestTaskIdentity?: string;
@@ -63,12 +68,14 @@ export type TaskContextLifecycle = {
 
 export type TaskContextLifecycleResult = {
   lifecycle: TaskContextLifecycle;
+  plan: TaskContextPlanDetail;
   deliveries: TaskContextDelivery[];
+  partial: boolean;
   metrics: TaskContextLifecycleMetrics;
-  budget: TaskContextBudget;
 };
 
 export type StartTaskContextInput = {
+  repoPath?: string;
   task: string;
   anchors?: TaskContextAnchor[];
   budget?: { maxItems?: number; maxEstimatedTokens?: number };
@@ -77,12 +84,13 @@ export type StartTaskContextInput = {
 };
 
 export type RefreshTaskContextInput = {
+  repoPath?: string;
   taskContextId: string;
   budget?: { maxItems?: number; maxEstimatedTokens?: number };
   detail?: "compact" | "full";
 };
 
-export type CloseTaskContextInput = { taskContextId: string };
+export type CloseTaskContextInput = { repoPath?: string; taskContextId: string };
 export type StartTaskContextResult = TaskContextLifecycleResult;
 export type RefreshTaskContextResult = TaskContextLifecycleResult;
 export type CloseTaskContextResult = { lifecycle: TaskContextLifecycle };
@@ -91,10 +99,11 @@ export type TaskContextLifecycleOperation = "start" | "refresh" | "close" | "exp
 export type TaskContextLifecycleOperationErrorCode =
   | "invalid_task_context_id"
   | "lifecycle_not_found"
+  | "task_context_closed"
+  | "task_context_expired"
+  | "repository_mismatch"
   | "workspace_mismatch"
   | "lifecycle_conflict"
-  | "context_closed"
-  | "context_expired"
   | "unsupported_context_schema"
   | "context_database_unavailable"
   | "compiler_validation_failed";
@@ -103,17 +112,29 @@ export type TaskContextLifecycleOperationError = {
   code: TaskContextLifecycleOperationErrorCode;
   operation: TaskContextLifecycleOperation;
   message: string;
+  retryable: boolean;
   taskContextId?: string;
+  expectedRevision?: number;
+  currentRevision?: number;
 };
 
 export type TaskContextLifecycleError = TaskContextLifecycleOperationError;
 
 export class TaskContextLifecycleDomainError extends Error {
-  readonly operationError: TaskContextLifecycleOperationError;
+  readonly payload: TaskContextLifecycleOperationError;
+  get operationError(): TaskContextLifecycleOperationError { return this.payload; }
 
   constructor(operationError: TaskContextLifecycleOperationError) {
     super(operationError.message);
     this.name = "TaskContextLifecycleDomainError";
-    this.operationError = operationError;
+    this.payload = operationError;
   }
 }
+
+export type TaskContextLifecyclePersistence = {
+  createAndCommitStart(input: { lifecycle: TaskContextLifecycle; session: ContextSession; prepared: Array<{ session: ContextSession; receipt: ContextReceipt; snapshot: DeliveredSnapshot }> }): TaskContextLifecycle;
+  loadLifecycle(taskContextId: string): TaskContextLifecycle | undefined;
+  commitRefresh(input: { taskContextId: string; expectedRevision: number; now: string; repositoryIdentity: string; workspaceIdentity: string; prepared: Array<{ session: ContextSession; receipt: ContextReceipt; snapshot: DeliveredSnapshot }>; latestTaskIdentity: string; latestPlanIdentity: string }): TaskContextLifecycle;
+  closeLifecycle(input: { taskContextId: string; expectedRevision: number; now: string; repositoryIdentity: string; workspaceIdentity: string }): TaskContextLifecycle;
+  expireLifecycle(input: { taskContextId: string; expectedRevision: number; now: string; repositoryIdentity: string; workspaceIdentity: string }): TaskContextLifecycle;
+};

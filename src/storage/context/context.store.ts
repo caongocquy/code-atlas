@@ -19,7 +19,7 @@ export class ContextStoreOpenError extends Error {
   }
 }
 
-type StoredTaskContextLifecycle = Omit<TaskContextLifecycle, "taskIdentity"> & { taskIntentIdentity: string; taskIdentity: string };
+type StoredTaskContextLifecycle = TaskContextLifecycle;
 
 function json(value: unknown): string {
   return JSON.stringify(value, Object.keys(value as object).sort()) ?? "null";
@@ -117,7 +117,7 @@ export class ContextStore {
     this.database.exec("BEGIN");
     try {
       this.writeSession(input.session);
-      this.database.prepare("INSERT INTO task_context_lifecycles (task_context_id, repository_identity, workspace_identity, session_id, context_generation, task, anchors_json, task_intent_identity, latest_task_identity, max_items, max_estimated_tokens, ttl_seconds, latest_plan_identity, revision, state, created_at, last_seen_at, expires_at, closed_at, schema_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(input.lifecycle.taskContextId, input.lifecycle.repositoryIdentity, input.lifecycle.workspaceIdentity, input.lifecycle.sessionId, input.lifecycle.contextGeneration, input.lifecycle.task, json(input.lifecycle.anchors), input.lifecycle.taskIntentIdentity, input.lifecycle.latestTaskIdentity ?? input.lifecycle.taskIdentity, input.lifecycle.defaultBudget.maxItems, input.lifecycle.defaultBudget.maxEstimatedTokens, input.lifecycle.ttlSeconds, input.lifecycle.latestPlanIdentity ?? null, 0, input.lifecycle.state, input.lifecycle.createdAt, input.lifecycle.lastSeenAt, input.lifecycle.expiresAt ?? null, input.lifecycle.closedAt ?? null, input.lifecycle.schemaVersion);
+      this.database.prepare("INSERT INTO task_context_lifecycles (task_context_id, repository_identity, workspace_identity, session_id, context_generation, task, anchors_json, task_intent_identity, latest_task_identity, max_items, max_estimated_tokens, ttl_seconds, latest_plan_identity, revision, state, created_at, last_seen_at, expires_at, closed_at, schema_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(input.lifecycle.taskContextId, input.lifecycle.repositoryIdentity, input.lifecycle.workspaceIdentity, input.lifecycle.sessionId, input.lifecycle.contextGeneration, input.lifecycle.task, json(input.lifecycle.anchors), input.lifecycle.taskIntentIdentity, input.lifecycle.latestTaskIdentity ?? null, input.lifecycle.defaultBudget.maxItems, input.lifecycle.defaultBudget.maxEstimatedTokens, input.lifecycle.ttlSeconds, input.lifecycle.latestPlanIdentity ?? null, 0, input.lifecycle.state, input.lifecycle.createdAt, input.lifecycle.lastSeenAt, input.lifecycle.expiresAt ?? null, input.lifecycle.closedAt ?? null, input.lifecycle.schemaVersion);
       for (const prepared of input.prepared) this.writePublication(prepared.session, prepared.receipt, prepared.snapshot);
       const revisionUpdate = this.database.prepare("UPDATE task_context_lifecycles SET revision = 1 WHERE task_context_id = ? AND revision = 0").run(input.lifecycle.taskContextId);
       if (revisionUpdate.changes !== 1) throw new Error("lifecycle start revision update affected an unexpected number of rows");
@@ -135,21 +135,22 @@ export class ContextStore {
     try {
       const current = this.readLifecycle(input.taskContextId);
       if (!current) throw this.lifecycleError("refresh", "lifecycle_not_found", input.taskContextId);
-      if (current.repositoryIdentity !== input.repositoryIdentity || current.workspaceIdentity !== input.workspaceIdentity) throw this.lifecycleError("refresh", "workspace_mismatch", input.taskContextId);
-      if (current.revision !== input.expectedRevision) throw this.lifecycleError("refresh", "lifecycle_conflict", input.taskContextId);
-      if (current.state === "closed") throw this.lifecycleError("refresh", "context_closed", input.taskContextId);
-      if (current.state === "expired") throw this.lifecycleError("refresh", "context_expired", input.taskContextId);
+      if (current.repositoryIdentity !== input.repositoryIdentity) throw this.lifecycleError("refresh", "repository_mismatch", input.taskContextId, input.expectedRevision, current.revision);
+      if (current.workspaceIdentity !== input.workspaceIdentity) throw this.lifecycleError("refresh", "workspace_mismatch", input.taskContextId, input.expectedRevision, current.revision);
+      if (current.revision !== input.expectedRevision) throw this.lifecycleError("refresh", "lifecycle_conflict", input.taskContextId, input.expectedRevision, current.revision);
+      if (current.state === "closed") throw this.lifecycleError("refresh", "task_context_closed", input.taskContextId, input.expectedRevision, current.revision);
+      if (current.state === "expired") throw this.lifecycleError("refresh", "task_context_expired", input.taskContextId, input.expectedRevision, current.revision);
       if (current.expiresAt && Date.parse(input.now) >= Date.parse(current.expiresAt)) {
         const expired = this.database.prepare("UPDATE task_context_lifecycles SET state = 'expired', last_seen_at = ?, revision = revision + 1 WHERE task_context_id = ? AND revision = ? AND state = 'active'").run(input.now, input.taskContextId, input.expectedRevision);
-        if (expired.changes !== 1) throw this.lifecycleError("refresh", "lifecycle_conflict", input.taskContextId);
+        if (expired.changes !== 1) throw this.lifecycleError("refresh", "lifecycle_conflict", input.taskContextId, input.expectedRevision, current.revision);
         this.database.exec("COMMIT");
-        throw this.lifecycleError("refresh", "context_expired", input.taskContextId);
+        throw this.lifecycleError("refresh", "task_context_expired", input.taskContextId, input.expectedRevision, input.expectedRevision + 1);
       }
       this.validatePreparedForLifecycle(current, input.prepared);
       for (const prepared of input.prepared) this.writePublication(prepared.session, prepared.receipt, prepared.snapshot);
       const expiresAt = new Date(Date.parse(input.now) + current.ttlSeconds * 1000).toISOString();
       const update = this.database.prepare("UPDATE task_context_lifecycles SET last_seen_at = ?, expires_at = ?, latest_task_identity = ?, latest_plan_identity = ?, revision = revision + 1 WHERE task_context_id = ? AND revision = ? AND state = 'active'").run(input.now, expiresAt, input.latestTaskIdentity, input.latestPlanIdentity, input.taskContextId, input.expectedRevision);
-      if (update.changes !== 1) throw this.lifecycleError("refresh", "lifecycle_conflict", input.taskContextId);
+      if (update.changes !== 1) throw this.lifecycleError("refresh", "lifecycle_conflict", input.taskContextId, input.expectedRevision, current.revision);
       const result = this.readLifecycle(input.taskContextId);
       this.database.exec("COMMIT");
       if (!result) throw new Error("lifecycle disappeared during commit");
@@ -170,11 +171,12 @@ export class ContextStore {
     try {
       const current = this.readLifecycle(input.taskContextId);
       if (!current) throw this.lifecycleError(operation, "lifecycle_not_found", input.taskContextId);
-      if (current.repositoryIdentity !== input.repositoryIdentity || current.workspaceIdentity !== input.workspaceIdentity) throw this.lifecycleError(operation, "workspace_mismatch", input.taskContextId);
-      if (current.revision !== input.expectedRevision) throw this.lifecycleError(operation, "lifecycle_conflict", input.taskContextId);
+      if (current.repositoryIdentity !== input.repositoryIdentity) throw this.lifecycleError(operation, "repository_mismatch", input.taskContextId, input.expectedRevision, current.revision);
+      if (current.workspaceIdentity !== input.workspaceIdentity) throw this.lifecycleError(operation, "workspace_mismatch", input.taskContextId, input.expectedRevision, current.revision);
+      if (current.revision !== input.expectedRevision) throw this.lifecycleError(operation, "lifecycle_conflict", input.taskContextId, input.expectedRevision, current.revision);
       if (operation === "close" && (current.state === "closed" || current.state === "expired")) { this.database.exec("COMMIT"); return current; }
-      if (current.state === "closed") throw this.lifecycleError(operation, "context_closed", input.taskContextId);
-      if (current.state === "expired") throw this.lifecycleError(operation, "context_expired", input.taskContextId);
+      if (current.state === "closed") throw this.lifecycleError(operation, "task_context_closed", input.taskContextId, input.expectedRevision, current.revision);
+      if (current.state === "expired") throw this.lifecycleError(operation, "task_context_expired", input.taskContextId, input.expectedRevision, current.revision);
       if (operation === "refresh" && input.prepared) this.validatePreparedForLifecycle(current, input.prepared);
       write();
       const result = this.readLifecycle(input.taskContextId);
@@ -184,14 +186,14 @@ export class ContextStore {
     } catch (error) { this.database.exec("ROLLBACK"); throw error; }
   }
 
-  private lifecycleError(operation: "refresh" | "close" | "expire", code: "lifecycle_not_found" | "workspace_mismatch" | "context_closed" | "context_expired" | "lifecycle_conflict", taskContextId: string): TaskContextLifecycleDomainError {
-    return new TaskContextLifecycleDomainError({ code, operation, taskContextId, message: `${code}: ${taskContextId}` });
+  private lifecycleError(operation: "refresh" | "close" | "expire", code: "lifecycle_not_found" | "repository_mismatch" | "workspace_mismatch" | "task_context_closed" | "task_context_expired" | "lifecycle_conflict", taskContextId: string, expectedRevision?: number, currentRevision?: number): TaskContextLifecycleDomainError {
+    return new TaskContextLifecycleDomainError({ code, operation, taskContextId, message: `${code}: ${taskContextId}`, retryable: code === "lifecycle_conflict", ...(expectedRevision !== undefined ? { expectedRevision } : {}), ...(currentRevision !== undefined ? { currentRevision } : {}) });
   }
 
   private readLifecycle(taskContextId: string): StoredTaskContextLifecycle | undefined {
     const row = this.database.prepare("SELECT * FROM task_context_lifecycles WHERE task_context_id = ?").get(taskContextId) as Record<string, unknown> | undefined;
     if (!row) return undefined;
-    return { taskContextId: row.task_context_id as string, repositoryIdentity: row.repository_identity as string, workspaceIdentity: row.workspace_identity as string, sessionId: row.session_id as string, contextGeneration: row.context_generation as string, task: row.task as string, anchors: JSON.parse(row.anchors_json as string), taskIntentIdentity: row.task_intent_identity as string, taskIdentity: row.latest_task_identity as string, ...(row.latest_task_identity ? { latestTaskIdentity: row.latest_task_identity as string } : {}), defaultBudget: { maxItems: row.max_items as number, maxEstimatedTokens: row.max_estimated_tokens as number }, ttlSeconds: row.ttl_seconds as number, ...(row.latest_plan_identity ? { latestPlanIdentity: row.latest_plan_identity as string } : {}), revision: row.revision as number, state: row.state as TaskContextLifecycle["state"], createdAt: row.created_at as string, lastSeenAt: row.last_seen_at as string, ...(row.expires_at ? { expiresAt: row.expires_at as string } : {}), ...(row.closed_at ? { closedAt: row.closed_at as string } : {}), schemaVersion: row.schema_version as number };
+    return { taskContextId: row.task_context_id as string, repositoryIdentity: row.repository_identity as string, workspaceIdentity: row.workspace_identity as string, sessionId: row.session_id as string, contextGeneration: row.context_generation as string, task: row.task as string, anchors: JSON.parse(row.anchors_json as string), taskIntentIdentity: row.task_intent_identity as string, ...(row.latest_task_identity ? { latestTaskIdentity: row.latest_task_identity as string } : {}), defaultBudget: { maxItems: row.max_items as number, maxEstimatedTokens: row.max_estimated_tokens as number }, ttlSeconds: row.ttl_seconds as number, ...(row.latest_plan_identity ? { latestPlanIdentity: row.latest_plan_identity as string } : {}), revision: row.revision as number, state: row.state as TaskContextLifecycle["state"], createdAt: row.created_at as string, lastSeenAt: row.last_seen_at as string, ...(row.expires_at ? { expiresAt: row.expires_at as string } : {}), ...(row.closed_at ? { closedAt: row.closed_at as string } : {}), schemaVersion: row.schema_version as number };
   }
 
   private validateStart(lifecycle: StoredTaskContextLifecycle, sessionValue: ContextSession, prepared: Array<{ session: ContextSession; receipt: ContextReceipt; snapshot: DeliveredSnapshot }>): void {

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -53,11 +54,14 @@ test("start creates an opaque revision-one lifecycle and persists the default bu
     assert.deepEqual(result.lifecycle.defaultBudget, { maxItems: 20, maxEstimatedTokens: 4000 });
     assert.equal(result.deliveries.length, 1);
     assert.equal(result.metrics.deliveredItems, 1);
-    assert.equal(result.metrics.fullReads, 1);
+    assert.equal(result.metrics.selectedItems, 1);
+    assert.equal(result.metrics.fullItems, 1);
     assert.equal(result.metrics.failedItems, 0);
-    assert.equal(result.metrics.unchangedReads, 0);
-    assert.equal(result.metrics.deltaReads, 0);
-    assert.equal(result.metrics.rehydrates, 0);
+    assert.equal(result.metrics.unchangedItems, 0);
+    assert.equal(result.metrics.deltaItems, 0);
+    assert.equal(result.metrics.rehydratedItems, 0);
+    assert.equal(result.partial, false);
+    assert.equal(result.plan.planIdentity, "phase15b-plan-1");
     assert.equal(result.metrics.returnedBytes > 0, true);
     assert.ok(result.metrics.requestedBytes > 0);
     assert.ok(result.metrics.returnedBytes > 0);
@@ -81,10 +85,13 @@ test("refresh keeps session identity while recompiling current paths and uses th
     assert.equal(refreshed.lifecycle.revision, 2);
     assert.equal(refreshed.lifecycle.sessionId, started.lifecycle.sessionId);
     assert.equal(refreshed.lifecycle.contextGeneration, started.lifecycle.contextGeneration);
-    assert.equal(refreshed.lifecycle.taskIdentity, "task-after");
+    assert.equal(refreshed.lifecycle.latestTaskIdentity, "task-after");
     assert.ok(calls.every((call) => call.projection === CONTEXT_AWARE_SOURCE_PROJECTION));
     assert.equal(refreshed.deliveries[0]?.mode, "delta");
-    assert.equal(refreshed.metrics.deltaReads, 1);
+    assert.equal(refreshed.metrics.deltaItems, 1);
+    assert.equal(refreshed.metrics.previousPlanIdentity, "plan-before");
+    assert.equal(refreshed.metrics.currentPlanIdentity, "plan-after");
+    assert.equal(refreshed.metrics.planChanged, true);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -152,12 +159,44 @@ test("refresh commits expiry without publishing prepared receipts when the final
     const refreshing = refreshTaskContext({ taskContextId: started.lifecycle.taskContextId }, { ...common, prepareContextAwareRead: async (...args: Parameters<typeof import("../src/core/context/context-delivery-preparation.js").prepareContextAwareRead>) => { preparationStarted(); await preparationBarrier; return (await import("../src/core/context/context-delivery-preparation.js")).prepareContextAwareRead(...args); } });
     await preparationStartedSignal;
     releasePreparation();
-    await assert.rejects(refreshing, (error: unknown) => error instanceof Error && "operationError" in error && (error as { operationError: { code: string } }).operationError.code === "context_expired");
+    await assert.rejects(refreshing, (error: unknown) => error instanceof Error && "payload" in error && (error as { payload: { code: string } }).payload.code === "task_context_expired");
     const store = new ContextStore(path.join(root, ".codeatlas", "context.db"));
     const expired = store.loadLifecycle(started.lifecycle.taskContextId);
     assert.equal(expired?.state, "expired");
     assert.equal(expired?.revision, 2);
     store.close();
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("refresh atomically expires an initially elapsed lifecycle before returning its typed error", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15c-initial-expiry-"));
+  try {
+    await writeFile(path.join(root, "source.ts"), "one\n");
+    const compile = async () => testPlan([fileItem("source.ts")]);
+    const started = await startTaskContext({ task: "value", ttlSeconds: 1 }, { repositoryPath: root, now: () => new Date("2026-09-13T00:00:00.000Z"), readCurrentChangedPaths: async () => [], compileTaskContextForRepository: compile });
+    await assert.rejects(
+      refreshTaskContext({ taskContextId: started.lifecycle.taskContextId }, { repositoryPath: root, now: () => new Date("2026-09-13T00:00:01.000Z"), readCurrentChangedPaths: async () => [], compileTaskContextForRepository: compile }),
+      (error: unknown) => error instanceof Error && "payload" in error && (error as { payload: Record<string, unknown> }).payload.code === "task_context_expired" && (error as { payload: Record<string, unknown> }).payload.retryable === false,
+    );
+    const store = new ContextStore(path.join(root, ".codeatlas", "context.db"));
+    const expired = store.loadLifecycle(started.lifecycle.taskContextId);
+    assert.equal(expired?.state, "expired");
+    assert.equal(expired?.revision, 2);
+    assert.equal((store as unknown as { database: DatabaseSync }).database.prepare("SELECT count(*) AS count FROM context_receipts").get().count, 1);
+    store.close();
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("lifecycle identity failures distinguish repository mismatch from workspace mismatch", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15c-identity-mismatch-"));
+  try {
+    await writeFile(path.join(root, "source.ts"), "one\n");
+    const deps = { repositoryPath: root, readCurrentChangedPaths: async () => [], compileTaskContextForRepository: async () => testPlan([fileItem("source.ts")]) };
+    const started = await startTaskContext({ task: "value" }, deps);
+    const database = new DatabaseSync(path.join(root, ".codeatlas", "context.db"));
+    database.prepare("UPDATE task_context_lifecycles SET repository_identity = 'other-repository' WHERE task_context_id = ?").run(started.lifecycle.taskContextId);
+    database.close();
+    await assert.rejects(refreshTaskContext({ taskContextId: started.lifecycle.taskContextId }, deps), (error: unknown) => error instanceof Error && "payload" in error && (error as { payload: { code: string } }).payload.code === "repository_mismatch");
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -169,12 +208,13 @@ test("all subject-local preparation failures still commit a valid lifecycle with
       now: () => new Date("2026-09-13T00:00:00.000Z"),
       readCurrentChangedPaths: async () => [],
       compileTaskContextForRepository: async () => ({ taskIdentity: "task", planIdentity: "plan", repositoryIdentity: "repo", workspaceIdentity: "workspace", items: [{ subject: { kind: "file" as const, path: "missing.ts" }, priority: "required" as const, rank: 1, reasons: [] }], budget: { maxItems: 20, maxEstimatedTokens: 4000, selectedItems: 1, estimatedTokens: 1, omittedItems: 0, budgetExceeded: false }, reliability: { mayBeIncomplete: false, capabilityStates: {}, diagnostics: [] }, capabilityFingerprint: "none", compiler: { schemaVersion: 1, strategyVersion: "task-context-v1" }, projection: { detail: "compact" as const, detailsAvailable: false, omitted: 0, truncated: false } }),
-      prepareContextAwareRead: async () => { throw Object.assign(new ContextDeliveryPreparationError("missing subject"), { code: "subject_unavailable" }); },
+      prepareContextAwareRead: async () => { throw new ContextDeliveryPreparationError("subject_unavailable", "missing subject"); },
     });
     assert.equal(result.lifecycle.revision, 1);
     assert.equal(result.metrics.deliveredItems, 0);
     assert.equal(result.deliveries[0]?.mode, "error");
     assert.deepEqual(result.deliveries[0]?.mode === "error" ? result.deliveries[0].error : undefined, { code: "subject_unavailable", message: "missing subject" });
+    assert.equal(result.partial, true);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -187,10 +227,10 @@ test("refresh delivers a newly selected subject fully and omits a dropped subjec
     const compileTaskContextForRepository = async () => testPlan(refresh ? [fileItem("new.ts")] : [fileItem("kept.ts")]);
     const deps = { repositoryPath: root, now: () => new Date("2026-09-13T00:00:00.000Z"), readCurrentChangedPaths: async () => [], compileTaskContextForRepository };
     const started = await startTaskContext({ task: "subjects" }, deps);
-    assert.deepEqual(started.deliveries.map((delivery) => delivery.item.subject.path), ["kept.ts"]);
+    assert.deepEqual(started.deliveries.map((delivery) => delivery.subject.path), ["kept.ts"]);
     refresh = true;
     const refreshed = await refreshTaskContext({ taskContextId: started.lifecycle.taskContextId }, deps);
-    assert.deepEqual(refreshed.deliveries.map((delivery) => delivery.item.subject.path), ["new.ts"]);
+    assert.deepEqual(refreshed.deliveries.map((delivery) => delivery.subject.path), ["new.ts"]);
     assert.equal(refreshed.deliveries[0]?.mode, "full");
     assert.equal(refreshed.deliveries[0]?.mode === "full" ? refreshed.deliveries[0].content : undefined, "new-v1\n");
     assert.equal(refreshed.metrics.deliveredItems, 1);
@@ -254,7 +294,7 @@ test("refresh budget overrides are ephemeral while persisted TTL is reused after
     const refreshed = await refreshTaskContext({ taskContextId: started.lifecycle.taskContextId, budget: { maxItems: 1, maxEstimatedTokens: 2 } }, { ...common, now: () => new Date("2026-09-13T00:00:05.000Z") });
     assert.deepEqual(calls, [{ maxItems: 3, maxEstimatedTokens: 300 }, { maxItems: 1, maxEstimatedTokens: 2 }]);
     assert.deepEqual(refreshed.lifecycle.defaultBudget, { maxItems: 3, maxEstimatedTokens: 300 });
-    assert.deepEqual(refreshed.budget, { maxItems: 1, maxEstimatedTokens: 2, selectedItems: 1, estimatedTokens: 1, omittedItems: 0, budgetExceeded: false });
+    assert.deepEqual(refreshed.plan.budget, { maxItems: 1, maxEstimatedTokens: 2, selectedItems: 1, estimatedTokens: 1, omittedItems: 0, budgetExceeded: false });
     assert.equal(refreshed.lifecycle.ttlSeconds, 10);
     assert.equal(refreshed.lifecycle.expiresAt, "2026-09-13T00:00:15.000Z");
     const restarted = await refreshTaskContext({ taskContextId: started.lifecycle.taskContextId }, { ...common, now: () => new Date("2026-09-13T00:00:14.000Z") });
@@ -279,11 +319,11 @@ test("equivalent independent lifecycles keep exact delivery equal across compact
     await writeFile(sourcePath, content);
     const compact = await refreshTaskContext({ taskContextId: lifecycleA.lifecycle.taskContextId, detail: "compact" }, deps);
     const full = await refreshTaskContext({ taskContextId: lifecycleB.lifecycle.taskContextId, detail: "full" }, deps);
-    const shape = (delivery: (typeof compact.deliveries)[number]) => delivery.mode === "error" ? { path: delivery.item.subject.path, mode: delivery.mode, error: delivery.error } : { path: delivery.item.subject.path, mode: delivery.mode, current: delivery.current, ...(delivery.mode === "delta" ? { delta: delivery.delta } : {}), ...(delivery.mode === "full" || delivery.mode === "rehydrate" ? { content: delivery.content } : {}) };
+    const shape = (delivery: (typeof compact.deliveries)[number]) => delivery.mode === "error" ? { path: delivery.subject.path, mode: delivery.mode, error: delivery.error } : { path: delivery.subject.path, mode: delivery.mode, current: delivery.current, ...(delivery.mode === "delta" ? { delta: delivery.delta } : {}), ...(delivery.mode === "full" || delivery.mode === "rehydrate" ? { content: delivery.content } : {}) };
     assert.deepEqual(compact.deliveries.map(shape), full.deliveries.map(shape));
     assert.equal(compact.deliveries.some((delivery) => delivery.mode === "unchanged" && "content" in delivery), false);
-    assert.deepEqual(compact.budget, full.budget);
-    assert.equal(compact.lifecycle.taskIdentity, full.lifecycle.taskIdentity);
+    assert.deepEqual(compact.plan.budget, full.plan.budget);
+    assert.equal(compact.lifecycle.latestTaskIdentity, full.lifecycle.latestTaskIdentity);
     assert.equal(compact.lifecycle.latestPlanIdentity, full.lifecycle.latestPlanIdentity);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
