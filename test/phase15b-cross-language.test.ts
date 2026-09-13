@@ -7,7 +7,9 @@ const fixtures = [
   ["typescript", "src/app.ts", "main"],
   ["python", "src/app.py", "main"],
   ["java", "src/App.java", "main"],
+  ["kotlin", "src/App.kt", "main"],
   ["go", "src/app.go", "main"],
+  ["rust", "src/main.rs", "main"],
 ] as const;
 
 for (const [language, file, symbol] of fixtures) {
