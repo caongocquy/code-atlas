@@ -1,0 +1,103 @@
+import type { TaskContextAnchor, TaskContextBudget, TaskContextItem } from "./task-context.types.js";
+
+export type TaskContextLifecycleState = "active" | "expired" | "closed";
+
+export type TaskContextLifecycleBudget = {
+  maxItems: number;
+  maxEstimatedTokens: number;
+};
+
+export type TaskContextLifecycleMetrics = {
+  compiledItems: number;
+  deliveredItems: number;
+  omittedItems: number;
+  estimatedTokens: number;
+};
+
+export type PreparedContextDelivery = {
+  item: TaskContextItem;
+  mode: "full" | "delta" | "rehydrate" | "unchanged" | "error";
+};
+
+export type TaskContextDelivery = PreparedContextDelivery | {
+  item: TaskContextItem;
+  mode: "error";
+  error: { code: string; message: string };
+};
+
+export type TaskContextLifecycle = {
+  taskContextId: string;
+  repositoryIdentity: string;
+  workspaceIdentity: string;
+  sessionId: string;
+  contextGeneration: string;
+  task: string;
+  anchors: TaskContextAnchor[];
+  taskIntentIdentity: string;
+  latestTaskIdentity: string;
+  budget: TaskContextLifecycleBudget;
+  ttlSeconds: number;
+  revision: number;
+  state: TaskContextLifecycleState;
+  createdAt: number;
+  lastSeenAt: number;
+  expiresAt: number;
+  closedAt?: number;
+};
+
+export type TaskContextLifecycleResult = {
+  lifecycle: TaskContextLifecycle;
+  deliveries: TaskContextDelivery[];
+  metrics: TaskContextLifecycleMetrics;
+  budget: TaskContextBudget;
+};
+
+export type StartTaskContextInput = {
+  task: string;
+  anchors?: TaskContextAnchor[];
+  budget?: { maxItems?: number; maxEstimatedTokens?: number };
+  ttlSeconds?: number;
+  detail?: "compact" | "full";
+};
+
+export type RefreshTaskContextInput = {
+  taskContextId: string;
+  budget?: { maxItems?: number; maxEstimatedTokens?: number };
+  detail?: "compact" | "full";
+};
+
+export type CloseTaskContextInput = { taskContextId: string };
+export type StartTaskContextResult = TaskContextLifecycleResult;
+export type RefreshTaskContextResult = TaskContextLifecycleResult;
+export type CloseTaskContextResult = { lifecycle: TaskContextLifecycle };
+
+export type TaskContextLifecycleOperation = "start" | "refresh" | "close";
+export type TaskContextLifecycleOperationErrorCode =
+  | "invalid_task_context_id"
+  | "context_not_found"
+  | "workspace_mismatch"
+  | "lifecycle_conflict"
+  | "context_closed"
+  | "context_expired"
+  | "unsupported_context_schema"
+  | "context_database_unavailable"
+  | "compiler_validation_failed";
+
+export type TaskContextLifecycleOperationError = {
+  code: TaskContextLifecycleOperationErrorCode;
+  operation: TaskContextLifecycleOperation;
+  message: string;
+  taskContextId?: string;
+};
+
+export type TaskContextLifecycleError = TaskContextLifecycleOperationError;
+
+export class TaskContextLifecycleDomainError extends Error {
+  readonly operationError: TaskContextLifecycleOperationError;
+
+  constructor(operationError: TaskContextLifecycleOperationError) {
+    super(operationError.message);
+    this.name = "TaskContextLifecycleDomainError";
+    this.operationError = operationError;
+  }
+}
