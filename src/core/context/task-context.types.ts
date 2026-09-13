@@ -63,3 +63,31 @@ export type TaskContextBudget = {
   omittedItems: number;
   budgetExceeded: boolean;
 };
+
+export type TaskContextItem = {
+  subject: ContextSubject;
+  priority: TaskContextPriority;
+  rank: number;
+  reasons: string[];
+  estimatedTokens?: number;
+};
+
+export type TaskContextReliability = {
+  mayBeIncomplete: boolean;
+  capabilityStates: Record<string, string>;
+  diagnostics: string[];
+};
+
+export type TaskContextPlanDetail = {
+  taskIdentity: string;
+  planIdentity: string;
+  repositoryIdentity: string;
+  workspaceIdentity: string;
+  items: TaskContextItem[];
+  budget: TaskContextBudget;
+  reliability: TaskContextReliability;
+  capabilityFingerprint: string;
+  compiler: { schemaVersion: number; strategyVersion: string };
+  projection: { detail: "compact" | "full"; detailsAvailable: boolean; omitted: number; truncated: boolean };
+  fullItems?: TaskContextFullItem[];
+};

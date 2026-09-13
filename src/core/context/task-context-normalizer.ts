@@ -35,7 +35,7 @@ export function normalizeTaskContextInput(input: CompileTaskContextInput): Norma
   if (typeof input.task !== "string") throw new TypeError("task is required");
   const task = input.task.normalize("NFC").replace(/\r\n?/g, "\n").split("\n").map((line) => line.trim().replace(/[ \t]+/g, " ")).join("\n").trim();
   if (!task) throw new TypeError("task is required");
-  const anchors = [...(input.anchors ?? [])].map(normalizeAnchor).sort((a, b) => `${a.kind}:${a.path ?? ""}:${a.name ?? ""}`.localeCompare(`${b.kind}:${b.path ?? ""}:${b.name ?? ""}`));
+  const anchors = [...(input.anchors ?? [])].map(normalizeAnchor).sort((a, b) => `${a.kind}:${a.path ?? ""}:${a.kind === "symbol" ? a.name : ""}`.localeCompare(`${b.kind}:${b.path ?? ""}:${b.kind === "symbol" ? b.name : ""}`));
   const uniqueAnchors = anchors.filter((anchor, index) => index === 0 || stableJson(anchor) !== stableJson(anchors[index - 1]));
   const changedPaths = [...new Set((input.changedPaths ?? []).map(normalizePath))].sort();
   return { task, anchors: uniqueAnchors, changedPaths };

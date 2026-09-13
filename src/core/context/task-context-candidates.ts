@@ -101,7 +101,7 @@ export async function collectTaskContextCandidates(
     return { candidates: [], reliability: { mayBeIncomplete: true, capabilityStates: { graph: "error" }, diagnostics: [error instanceof Error ? error.message : "graph unavailable"] } };
   }
   const resolution = resolveGraphEntity(graph, normalized.task);
-  if (isAuthoritativeTaskResolution(normalized.task, resolution)) {
+  if (resolution.status === "resolved" && isAuthoritativeTaskResolution(normalized.task, resolution)) {
     const subject = subjectForNode(resolution.entity);
     return {
       candidates: [{ subject, query: normalized.task, evidence: [{ kind: "task_exact_resolution", query: normalized.task, resolution: subject.kind }], sourceRanks: { task_exact_resolution: 1 }, exact: true }],
