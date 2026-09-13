@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import {
   CONTEXT_AWARE_SOURCE_PROJECTION,
+  readRepositoryRelativeFile,
   prepareContextAwareRead,
 } from "../src/core/context/context-delivery-preparation.js";
 import { ContextDeliveryPreparationError } from "../src/core/context/context.types.js";
@@ -76,6 +77,15 @@ test("subject delivery rejects traversal and symlink escapes outside the reposit
   } finally {
     await Promise.all([rm(root, { recursive: true, force: true }), rm(outside, { recursive: true, force: true })]);
   }
+});
+
+test("descriptor traversal reads a valid nested repository file", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15c-descriptor-read-"));
+  try {
+    await mkdir(path.join(root, "src", "nested"), { recursive: true });
+    await writeFile(path.join(root, "src", "nested", "source.ts"), "nested\n");
+    assert.equal(await readRepositoryRelativeFile(root, "src/nested/source.ts"), "nested\n");
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test("symbol subject delivery rejects symlink escapes before graph selection", async () => {

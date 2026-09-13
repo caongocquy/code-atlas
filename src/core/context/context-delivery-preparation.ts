@@ -16,17 +16,55 @@ import type { ContextStore } from "../../storage/context/context.store.js";
 
 export const CONTEXT_AWARE_SOURCE_PROJECTION = "source-v1";
 
+export async function readRepositoryRelativeFile(root: string, relativePath: string): Promise<string> {
+  root = path.normalize(await fs.realpath(root));
+  const normalizedPath = path.posix.normalize(relativePath);
+  if (path.posix.isAbsolute(relativePath) || normalizedPath === "." || normalizedPath === ".." || normalizedPath.startsWith("../")) {
+    throw new Error("Subject path escapes the repository");
+  }
+  const components = relativePath.split("/");
+  if (components.some((component) => !component || component === "." || component === "..")) {
+    throw new Error("Subject path is not canonical");
+  }
+
+  let directory = await fs.open(root, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
+  try {
+    const rootStat = await fs.stat(root);
+    const rootDescriptorStat = await directory.stat();
+    if (rootStat.dev !== rootDescriptorStat.dev || rootStat.ino !== rootDescriptorStat.ino) {
+      throw new Error("Subject path escapes the repository");
+    }
+    for (const [index, component] of components.entries()) {
+      const childPath = path.join(root, ...components.slice(0, index + 1));
+      const isFile = index === components.length - 1;
+      const child = await fs.open(childPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | (isFile ? 0 : fs.constants.O_DIRECTORY));
+      let keepOpen = false;
+      try {
+        const resolvedPath = path.normalize(await fs.realpath(childPath));
+        const expectedPath = path.normalize(childPath);
+        const expectedStat = await fs.stat(childPath);
+        const descriptorStat = await child.stat();
+        if (resolvedPath !== expectedPath || expectedStat.dev !== descriptorStat.dev || expectedStat.ino !== descriptorStat.ino) {
+          throw new Error("Subject path escapes the repository");
+        }
+        if (isFile) return await child.readFile("utf8");
+        keepOpen = true;
+      } finally {
+        if (!keepOpen) await child.close();
+      }
+      await directory.close();
+      directory = child;
+    }
+  } finally {
+    await directory.close();
+  }
+  throw new Error("Subject path is empty");
+}
+
 async function readSubject(root: string, subject: ContextSubject): Promise<string> {
   let source: string;
   try {
-    const sourcePath = await fs.realpath(path.join(root, subject.path));
-    const relativePath = path.relative(root, sourcePath);
-    if (!relativePath || relativePath.startsWith(".." + path.sep) || path.isAbsolute(relativePath)) {
-      throw new Error("Subject path escapes the repository");
-    }
-    const handle = await fs.open(sourcePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-    try { source = await handle.readFile("utf8"); }
-    finally { await handle.close(); }
+    source = await readRepositoryRelativeFile(root, subject.path);
   } catch (error) {
     throw new PreparationError(`Context-aware source read failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   }
