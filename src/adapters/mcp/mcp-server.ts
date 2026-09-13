@@ -49,7 +49,7 @@ import { changeGate } from "../../core/gate/change-gate.service.js";
 import type { ChangeGateInput } from "../../core/gate/change-gate.types.js";
 import { readContextAware } from "../../core/context/context-aware-read.service.js";
 import { compileTaskContext } from "../../core/context/task-context-compiler.js";
-import { collectTaskContextCandidates, enrichTaskContextGraph } from "../../core/context/task-context-candidates.js";
+import { collectTaskContextCandidates, enrichTaskContextCandidates, enrichTaskContextGraph } from "../../core/context/task-context-candidates.js";
 import { getWorkspaceIdentity } from "../../core/context/context-identity.js";
 import { getRepositoryIdentity } from "../../core/repository/repository-identity.js";
 
@@ -571,8 +571,26 @@ export function createMcpServer(): McpServer {
       repositoryIdentity: repository.identityKey,
       workspaceIdentity: workspace.workspaceIdentity,
       collect: async (normalized) => {
-        const collected = await collectTaskContextCandidates(normalized, { repositoryPath: repoPath, loadGraph: async () => indexed });
-        return { ...collected, candidates: enrichTaskContextGraph(collected.candidates, indexed.graph) };
+        const deps = {
+          repositoryPath: repoPath,
+          loadGraph: async () => indexed,
+          getStatus: getRepositoryStatus,
+          lexicalSearch: searchLexical,
+          inspectChange,
+          analyzeImpact: async (...args: Parameters<typeof analyzeImpact>) => analyzeImpact(...args),
+          affectedTests,
+        };
+        const collected = await collectTaskContextCandidates(normalized, deps);
+        const enriched = await enrichTaskContextCandidates(collected.candidates, normalized, indexed.graph, deps);
+        const graphCandidates = enrichTaskContextGraph(enriched.candidates, indexed.graph);
+        return {
+          candidates: graphCandidates,
+          reliability: {
+            ...collected.reliability,
+            mayBeIncomplete: collected.reliability.mayBeIncomplete || enriched.reliability.mayBeIncomplete,
+            diagnostics: [...collected.reliability.diagnostics, ...enriched.reliability.diagnostics],
+          },
+        };
       },
     });
   });

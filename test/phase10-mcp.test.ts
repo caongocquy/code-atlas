@@ -118,6 +118,16 @@ test("MCP lifecycle, lexical search, graph queries, and Phase 9 tools reuse core
     assert.equal(callers.value.status, "resolved");
     assert.equal((callers.value.results as Array<{ entity: { name: string } }>).some((item) => item.entity.name === "run"), true);
 
+    const compiled = await callJson(client, "compile_task_context", {
+      repoPath,
+      task: "AuthService",
+      anchors: [{ kind: "symbol", path: "src/auth.ts", name: "AuthService" }],
+    });
+    assert.equal(compiled.result.isError, undefined);
+    assert.equal(Array.isArray(compiled.value.items), true);
+    assert.equal(JSON.stringify(compiled.value).includes("context_read"), false);
+    assert.equal(JSON.stringify(compiled.value).includes("source body"), false);
+
     const communities = await callJson(client, "list_communities", { repoPath });
     assert.equal((communities.value.totalCommunities as number) > 0, true);
     const important = await callJson(client, "important_symbols", { repoPath, limit: 5 });

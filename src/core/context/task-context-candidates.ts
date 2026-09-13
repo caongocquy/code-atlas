@@ -1,4 +1,5 @@
 import type { ContextSubject } from "./context.types.js";
+import fs from "node:fs/promises";
 import type { GraphEntityResolution } from "../graph/query/graph-query.types.js";
 import { resolveGraphEntity } from "../graph/query/graph-query-entity-resolver.js";
 import type { CodeGraph, GraphNode } from "../graph/types.js";
@@ -82,6 +83,12 @@ export function exactFileCandidate(path: string, evidence: TaskContextEvidence):
 export type TaskContextCollectionDeps = {
   repositoryPath: string;
   loadGraph: () => Promise<{ graph: CodeGraph }>;
+  getStatus?: (...args: any[]) => Promise<any>;
+  lexicalSearch?: (...args: any[]) => Promise<any[]>;
+  hybridSearch?: (...args: any[]) => Promise<any>;
+  inspectChange?: (...args: any[]) => Promise<any>;
+  analyzeImpact?: (...args: any[]) => Promise<any>;
+  affectedTests?: (...args: any[]) => Promise<any>;
 };
 
 function subjectForNode(node: GraphNode): ContextSubject {
@@ -94,22 +101,70 @@ export async function collectTaskContextCandidates(
   deps: TaskContextCollectionDeps,
 ): Promise<{ candidates: TaskContextCandidate[]; reliability: { mayBeIncomplete: boolean; capabilityStates: Record<string, string>; diagnostics: string[] } }> {
   const diagnostics: string[] = [];
+  const candidates: TaskContextCandidate[] = [];
   let graph: CodeGraph;
   try {
     graph = (await deps.loadGraph()).graph;
   } catch (error) {
-    return { candidates: [], reliability: { mayBeIncomplete: true, capabilityStates: { graph: "error" }, diagnostics: [error instanceof Error ? error.message : "graph unavailable"] } };
+    return { candidates, reliability: { mayBeIncomplete: true, capabilityStates: { graph: "error" }, diagnostics: [error instanceof Error ? error.message : "graph unavailable"] } };
+  }
+  for (const anchor of normalized.anchors) {
+    if (anchor.kind === "file") {
+      try {
+        await fs.access(`${deps.repositoryPath}/${anchor.path}`);
+        candidates.push(exactFileCandidate(anchor.path, { kind: "explicit_anchor", anchor }));
+      } catch { diagnostics.push(`anchor file is unavailable: ${anchor.path}`); }
+      continue;
+    }
+    const anchorResolution = resolveGraphEntity(graph, anchor.path ? `${anchor.path}:${anchor.name}` : anchor.name);
+    if (anchorResolution.status === "resolved" && anchorResolution.entity && anchorResolution.candidates.length === 1) {
+      const subject = subjectForNode(anchorResolution.entity);
+      candidates.push({ subject, evidence: [{ kind: "explicit_anchor", anchor }], sourceRanks: { explicit_anchor: 1 }, exact: true });
+    } else diagnostics.push(`symbol anchor is unresolved or ambiguous: ${anchor.name}`);
+  }
+  for (const changedPath of normalized.changedPaths) {
+    try {
+      await fs.access(`${deps.repositoryPath}/${changedPath}`);
+      candidates.push(exactFileCandidate(changedPath, { kind: "explicit_changed_path", path: changedPath }));
+    } catch { diagnostics.push(`changed path is unavailable: ${changedPath}`); }
   }
   const resolution = resolveGraphEntity(graph, normalized.task);
   if (resolution.status === "resolved" && isAuthoritativeTaskResolution(normalized.task, resolution)) {
     const subject = subjectForNode(resolution.entity);
-    return {
-      candidates: [{ subject, query: normalized.task, evidence: [{ kind: "task_exact_resolution", query: normalized.task, resolution: subject.kind }], sourceRanks: { task_exact_resolution: 1 }, exact: true }],
-      reliability: { mayBeIncomplete: false, capabilityStates: { graph: "ready" }, diagnostics },
-    };
+    candidates.push({ subject, query: normalized.task, evidence: [{ kind: "task_exact_resolution", query: normalized.task, resolution: subject.kind }], sourceRanks: { task_exact_resolution: 1 }, exact: true });
   }
   if (resolution.status === "resolved") diagnostics.push(`task target was not exact: ${normalized.task}`);
-  return { candidates: [], reliability: { mayBeIncomplete: false, capabilityStates: { graph: "ready" }, diagnostics } };
+  let mayBeIncomplete = false;
+  const queries = [normalized.task, ...normalized.anchors.filter((anchor) => anchor.kind === "symbol").map((anchor) => anchor.name)].slice(0, 20);
+  if (deps.lexicalSearch && !deps.hybridSearch) {
+    try {
+      for (const query of queries) {
+        const results = await deps.lexicalSearch(query, 20, deps.repositoryPath);
+        results.forEach((result, index) => {
+          const node = result.symbolName ? graph.nodes.filter((candidate) => candidate.file === result.file && candidate.name === result.symbolName) : [];
+          const subject = node.length === 1 ? subjectForNode(node[0]!) : { kind: "file" as const, path: result.file };
+          candidates.push({ subject, evidence: [{ kind: "lexical", rank: index + 1, query }], sourceRanks: { lexical: index + 1 }, exact: true });
+        });
+      }
+    } catch (error) { mayBeIncomplete = true; diagnostics.push(`lexical retrieval failed: ${error instanceof Error ? error.message : String(error)}`); }
+  }
+  if (deps.hybridSearch) {
+    try {
+      for (const query of queries) {
+        const stages = await deps.hybridSearch(query, 20, deps.repositoryPath);
+        for (const [kind, results] of [["semantic", stages.vectorResults], ["lexical", stages.lexicalResults]] as const) {
+          (results ?? []).forEach((result: any, index: number) => {
+            const subject = { kind: "file" as const, path: result.file };
+            candidates.push({ subject, evidence: [{ kind, rank: index + 1, query }], sourceRanks: { [kind]: index + 1 }, exact: true });
+          });
+        }
+        if (stages.semanticState === "error" || stages.semanticState === "unavailable") { mayBeIncomplete = true; diagnostics.push(`semantic retrieval is ${stages.semanticState}`); }
+      }
+    } catch (error) { mayBeIncomplete = true; diagnostics.push(`semantic retrieval failed: ${error instanceof Error ? error.message : String(error)}`); }
+  }
+  const capabilityStates: Record<string, string> = { graph: "ready" };
+  if (deps.getStatus) { try { const status = await deps.getStatus(deps.repositoryPath); capabilityStates.lexical = status.capabilities?.lexical?.state ?? "unknown"; capabilityStates.semantic = status.capabilities?.semantic?.state ?? "unknown"; } catch { mayBeIncomplete = true; diagnostics.push("repository capability status unavailable"); } }
+  return { candidates: mergeTaskContextCandidates(candidates), reliability: { mayBeIncomplete, capabilityStates, diagnostics } };
 }
 
 export function enrichTaskContextGraph(candidates: readonly TaskContextCandidate[], graph: CodeGraph): TaskContextCandidate[] {
@@ -130,4 +185,69 @@ export function enrichTaskContextGraph(candidates: readonly TaskContextCandidate
     });
   }
   return mergeTaskContextCandidates([...candidates, ...additions]);
+}
+
+function relevancePaths(normalized: NormalizedTaskContextInput, candidates: readonly TaskContextCandidate[]): Set<string> {
+  const paths = new Set(normalized.changedPaths.map(normalizedPath));
+  for (const candidate of candidates) {
+    if (candidate.priorityHint !== "required" && !candidate.evidence.some((evidence) => ["explicit_anchor", "explicit_changed_path", "task_exact_resolution"].includes(evidence.kind))) continue;
+    if (candidate.subject) paths.add(normalizedPath(candidate.subject.path));
+  }
+  return paths;
+}
+
+function isRelevantNode(node: GraphNode, paths: Set<string>): boolean {
+  return paths.has(normalizedPath(node.file));
+}
+
+function nodeQuery(node: GraphNode): string {
+  return node.file.includes("/") && node.qualifiedName ? `${node.file}:${node.qualifiedName}` : node.qualifiedName ?? node.name;
+}
+
+export async function enrichTaskContextCandidates(
+  candidates: readonly TaskContextCandidate[],
+  normalized: NormalizedTaskContextInput,
+  graph: CodeGraph,
+  deps: TaskContextCollectionDeps,
+): Promise<{ candidates: TaskContextCandidate[]; reliability: { mayBeIncomplete: boolean; diagnostics: string[] } }> {
+  const paths = relevancePaths(normalized, candidates);
+  if (!paths.size || (!deps.inspectChange && !deps.analyzeImpact && !deps.affectedTests)) return { candidates: [...candidates], reliability: { mayBeIncomplete: false, diagnostics: [] } };
+  const additions: TaskContextCandidate[] = [];
+  const diagnostics: string[] = [];
+  let mayBeIncomplete = false;
+  const seeds = graph.nodes.filter((node) => node.type !== "file" && paths.has(normalizedPath(node.file)) && candidates.some((candidate) => candidate.subject?.kind === "symbol" && candidate.subject.symbolId === node.id));
+
+  if (deps.inspectChange) {
+    try {
+      const change = await deps.inspectChange(deps.repositoryPath, { mode: "working", maxDepth: 1 });
+      mayBeIncomplete ||= Boolean(change.mayBeIncomplete);
+      for (const symbol of [...(change.changedSymbols ?? []), ...(change.affectedSymbols ?? [])].slice(0, 10)) {
+        const node = graph.nodes.find((candidate) => candidate.id === symbol.symbolId);
+        if (!node || !isRelevantNode(node, paths)) continue;
+        additions.push({ subject: subjectForNode(node), evidence: [{ kind: "change", relation: symbol.relation ?? symbol.changeKind ?? "changed", path: node.file }], sourceRanks: { change: 1 }, exact: true });
+      }
+    } catch (error) { mayBeIncomplete = true; diagnostics.push(`change enrichment failed: ${error instanceof Error ? error.message : String(error)}`); }
+  }
+  if (deps.analyzeImpact) {
+    try {
+      for (const seed of seeds.slice(0, 10)) {
+        const impact = await deps.analyzeImpact(graph, nodeQuery(seed), { maxDepth: 1, maxResults: 10 });
+        mayBeIncomplete ||= Boolean(impact.mayBeIncomplete);
+        for (const item of [...(impact.directImpact ?? []), ...(impact.transitiveImpact ?? [])].slice(0, 10)) {
+          if (!item.entity) continue;
+          additions.push({ subject: subjectForNode(item.entity), evidence: [{ kind: "impact", relation: item.reason ?? item.relation ?? "impact", depth: Math.min(1, item.depth ?? 1) as 1 }], sourceRanks: { impact: item.depth ?? 1 }, exact: true });
+        }
+      }
+    } catch (error) { mayBeIncomplete = true; diagnostics.push(`impact enrichment failed: ${error instanceof Error ? error.message : String(error)}`); }
+  }
+  if (deps.affectedTests) {
+    try {
+      const tests = await deps.affectedTests(deps.repositoryPath, { maxTests: 10, maxDepth: 1 });
+      mayBeIncomplete ||= Boolean(tests.mayBeIncomplete);
+      for (const test of (tests.tests ?? []).slice(0, 10)) {
+        additions.push({ subject: { kind: "file", path: test.file }, evidence: [{ kind: "affected_test", path: test.file, confidence: test.confidence }], sourceRanks: { affected_test: 1 }, exact: true });
+      }
+    } catch (error) { mayBeIncomplete = true; diagnostics.push(`affected-test enrichment failed: ${error instanceof Error ? error.message : String(error)}`); }
+  }
+  return { candidates: mergeTaskContextCandidates([...candidates, ...additions]), reliability: { mayBeIncomplete, diagnostics } };
 }

@@ -53,3 +53,19 @@ test("collector keeps a uniquely resolved prefix non-authoritative", async () =>
   assert.equal(result.candidates.some((candidate) => candidate.evidence.some((item) => item.kind === "task_exact_resolution")), false);
   assert.equal(result.candidates.some((candidate) => candidate.subject), false);
 });
+
+test("collector keeps retrieval content out of candidates and degrades semantic failure", async () => {
+  const result = await collectTaskContextCandidates(
+    { task: "search", anchors: [], changedPaths: [] },
+    {
+      repositoryPath: "/repo",
+      loadGraph: async () => ({ graph: { nodes: [entity], edges: [] } }),
+      lexicalSearch: async () => [{ file: "src/app.ts", symbolName: "main", content: "secret source body", snippet: "secret" }],
+      hybridSearch: async () => ({ vectorResults: [], lexicalResults: [], semanticState: "error" }),
+    },
+  );
+
+  assert.equal(result.reliability.mayBeIncomplete, true);
+  assert.equal(JSON.stringify(result.candidates).includes("secret"), false);
+  assert.equal(result.candidates.some((candidate) => candidate.evidence.some((item) => item.kind === "task_exact_resolution")), false);
+});
