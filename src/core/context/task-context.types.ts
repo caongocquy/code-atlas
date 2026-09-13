@@ -24,7 +24,8 @@ export type TaskContextPriority = "required" | "supporting" | "optional";
 export type TaskContextEvidence =
   | { kind: "explicit_anchor"; anchor: TaskContextAnchor }
   | { kind: "explicit_changed_path"; path: string }
-  | { kind: "task_exact_resolution"; query: string; resolution: "file" | "symbol" };
+  | { kind: "task_exact_resolution"; query: string; resolution: "file" | "symbol" }
+  | { kind: "diagnostic"; message: string };
 
 export type TaskContextCandidate = {
   subject?: ContextSubject;
