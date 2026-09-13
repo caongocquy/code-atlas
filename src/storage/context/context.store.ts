@@ -139,14 +139,13 @@ export class ContextStore {
       if (current.revision !== input.expectedRevision) throw this.lifecycleError("refresh", "lifecycle_conflict", input.taskContextId);
       if (current.state === "closed") throw this.lifecycleError("refresh", "context_closed", input.taskContextId);
       if (current.state === "expired") throw this.lifecycleError("refresh", "context_expired", input.taskContextId);
-      this.validatePreparedForLifecycle(current, input.prepared);
       if (current.expiresAt && Date.parse(input.now) >= Date.parse(current.expiresAt)) {
         const expired = this.database.prepare("UPDATE task_context_lifecycles SET state = 'expired', last_seen_at = ?, revision = revision + 1 WHERE task_context_id = ? AND revision = ? AND state = 'active'").run(input.now, input.taskContextId, input.expectedRevision);
         if (expired.changes !== 1) throw this.lifecycleError("refresh", "lifecycle_conflict", input.taskContextId);
-        const result = this.readLifecycle(input.taskContextId);
         this.database.exec("COMMIT");
         throw this.lifecycleError("refresh", "context_expired", input.taskContextId);
       }
+      this.validatePreparedForLifecycle(current, input.prepared);
       for (const prepared of input.prepared) this.writePublication(prepared.session, prepared.receipt, prepared.snapshot);
       const expiresAt = new Date(Date.parse(input.now) + current.ttlSeconds * 1000).toISOString();
       const update = this.database.prepare("UPDATE task_context_lifecycles SET last_seen_at = ?, expires_at = ?, latest_task_identity = ?, latest_plan_identity = ?, revision = revision + 1 WHERE task_context_id = ? AND revision = ? AND state = 'active'").run(input.now, expiresAt, input.latestTaskIdentity, input.latestPlanIdentity, input.taskContextId, input.expectedRevision);
@@ -166,7 +165,7 @@ export class ContextStore {
     return this.commitLifecycleChange(input, "expire", () => { this.database.prepare("UPDATE task_context_lifecycles SET state = 'expired', last_seen_at = ?, revision = revision + 1 WHERE task_context_id = ? AND revision = ? AND state = 'active'").run(input.now, input.taskContextId, input.expectedRevision); });
   }
 
-  private commitLifecycleChange(input: { taskContextId: string; expectedRevision: number; now: string; repositoryIdentity: string; workspaceIdentity: string }, operation: "refresh" | "close" | "expire", write: () => void): StoredTaskContextLifecycle {
+  private commitLifecycleChange(input: { taskContextId: string; expectedRevision: number; now: string; repositoryIdentity: string; workspaceIdentity: string; prepared?: Array<{ session: ContextSession; receipt: ContextReceipt; snapshot: DeliveredSnapshot }> }, operation: "refresh" | "close" | "expire", write: () => void): StoredTaskContextLifecycle {
     this.database.exec("BEGIN");
     try {
       const current = this.readLifecycle(input.taskContextId);
@@ -176,7 +175,7 @@ export class ContextStore {
       if (operation === "close" && (current.state === "closed" || current.state === "expired")) { this.database.exec("COMMIT"); return current; }
       if (current.state === "closed") throw this.lifecycleError(operation, "context_closed", input.taskContextId);
       if (current.state === "expired") throw this.lifecycleError(operation, "context_expired", input.taskContextId);
-      if (operation === "refresh") this.validatePreparedForLifecycle(current, (input as unknown as { prepared: Array<{ session: ContextSession; receipt: ContextReceipt; snapshot: DeliveredSnapshot }> }).prepared);
+      if (operation === "refresh" && input.prepared) this.validatePreparedForLifecycle(current, input.prepared);
       write();
       const result = this.readLifecycle(input.taskContextId);
       this.database.exec("COMMIT");

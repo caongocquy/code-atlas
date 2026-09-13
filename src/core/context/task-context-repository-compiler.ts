@@ -11,12 +11,12 @@ import { canonicalRepositoryPath, getRepositoryIdentity } from "../repository/re
 import { getWorkspaceIdentity } from "./context-identity.js";
 import { collectTaskContextCandidates, enrichTaskContextCandidates, enrichTaskContextGraph } from "./task-context-candidates.js";
 import { compileTaskContext } from "./task-context-compiler.js";
-import type { CompileTaskContextInput, TaskContextPlanDetail } from "./task-context.types.js";
+import type { CompileTaskContextInput, NormalizedTaskContextInput, TaskContextCandidate, TaskContextPlanDetail, TaskContextReliability } from "./task-context.types.js";
 
 export type RepositoryCompilerDeps = {
   compile?: typeof compileTaskContext;
   loadGraph?: typeof loadIndexedGraphReadOnly;
-  collect?: (repoPath: string, input: CompileTaskContextInput) => ReturnType<typeof compileTaskContext>;
+  collect?: (normalized: NormalizedTaskContextInput) => Promise<{ candidates: TaskContextCandidate[]; reliability: TaskContextReliability }>;
 };
 
 export async function compileTaskContextForRepository(repoPath: string, input: CompileTaskContextInput, deps: RepositoryCompilerDeps = {}): Promise<TaskContextPlanDetail> {
@@ -24,7 +24,7 @@ export async function compileTaskContextForRepository(repoPath: string, input: C
   const workspace = getWorkspaceIdentity(root);
   const repository = getRepositoryIdentity(root);
   const compiler = deps.compile ?? compileTaskContext;
-  if (deps.collect) return compiler(input, { repositoryPath: root, repositoryIdentity: repository.identityKey, workspaceIdentity: workspace.workspaceIdentity, collect: async () => deps.collect!(root, input) as never });
+  if (deps.collect) return compiler(input, { repositoryPath: root, repositoryIdentity: repository.identityKey, workspaceIdentity: workspace.workspaceIdentity, collect: deps.collect });
   const indexed = await (deps.loadGraph ?? loadIndexedGraphReadOnly)(root);
   const collectionDeps = {
     repositoryPath: root,

@@ -33,6 +33,9 @@ test("start creates an opaque revision-one lifecycle and persists the default bu
     assert.deepEqual(result.lifecycle.defaultBudget, { maxItems: 20, maxEstimatedTokens: 4000 });
     assert.equal(result.deliveries.length, 1);
     assert.equal(result.metrics.deliveredItems, 1);
+    assert.equal(result.metrics.fullReads, 1);
+    assert.ok(result.metrics.requestedBytes > 0);
+    assert.ok(result.metrics.returnedBytes > 0);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -55,7 +58,58 @@ test("refresh keeps session identity while recompiling current paths and uses th
     assert.equal(refreshed.lifecycle.contextGeneration, started.lifecycle.contextGeneration);
     assert.equal(refreshed.lifecycle.taskIdentity, "task-after");
     assert.ok(calls.every((call) => call.projection === CONTEXT_AWARE_SOURCE_PROJECTION));
+    assert.equal(refreshed.deliveries[0]?.mode, "delta");
+    assert.equal(refreshed.metrics.deltaReads, 1);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("concurrent refreshes use revision CAS and publish only one operation", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15c-refresh-race-"));
+  let release!: () => void;
+  let prepared = 0;
+  const barrier = new Promise<void>((resolve) => { release = resolve; });
+  try {
+    await writeFile(path.join(root, "source.ts"), "one\n");
+    const common = {
+      repositoryPath: root, now: () => new Date("2026-09-13T00:00:00.000Z"), readCurrentChangedPaths: async () => [],
+      compileTaskContextForRepository: async () => ({ taskIdentity: "task", planIdentity: "plan", repositoryIdentity: "repo", workspaceIdentity: "workspace", items: [{ subject: { kind: "file" as const, path: "source.ts" }, priority: "required" as const, rank: 1, reasons: [] }], budget: { maxItems: 20, maxEstimatedTokens: 4000, selectedItems: 1, estimatedTokens: 1, omittedItems: 0, budgetExceeded: false }, reliability: { mayBeIncomplete: false, capabilityStates: {}, diagnostics: [] }, capabilityFingerprint: "none", compiler: { schemaVersion: 1, strategyVersion: "task-context-v1" }, projection: { detail: "compact" as const, detailsAvailable: false, omitted: 0, truncated: false } } ),
+      prepareContextAwareRead: async (...args: Parameters<typeof import("../src/core/context/context-delivery-preparation.js").prepareContextAwareRead>) => { if (++prepared > 1) await barrier; return (await import("../src/core/context/context-delivery-preparation.js")).prepareContextAwareRead(...args); },
+    };
+    const started = await startTaskContext({ task: "value" }, { ...common, prepareContextAwareRead: undefined });
+    const first = refreshTaskContext({ taskContextId: started.lifecycle.taskContextId }, common);
+    const second = refreshTaskContext({ taskContextId: started.lifecycle.taskContextId }, common);
+    while (prepared < 2) await new Promise((resolve) => setTimeout(resolve, 1));
+    release();
+    const results = await Promise.allSettled([first, second]);
+    assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+    assert.equal(results.filter((result) => result.status === "rejected").length, 1);
+    const store = new ContextStore(path.join(root, ".codeatlas", "context.db"));
+    assert.equal((store as unknown as { database: { prepare(sql: string): { get(): { count: number } } } }).database.prepare("SELECT count(*) AS count FROM context_receipts").get().count, 2);
+    store.close();
+  } finally { release?.(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("refresh preparation crossing close does not publish stale rows", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15c-close-race-"));
+  let release!: () => void;
+  let resolvePrepared!: () => void;
+  const prepared = new Promise<void>((resolve) => { resolvePrepared = resolve; });
+  const barrier = new Promise<void>((resolve) => { release = resolve; });
+  try {
+    await writeFile(path.join(root, "source.ts"), "one\n");
+    const common = { repositoryPath: root, now: () => new Date("2026-09-13T00:00:00.000Z"), readCurrentChangedPaths: async () => [], compileTaskContextForRepository: async () => ({ taskIdentity: "task", planIdentity: "plan", repositoryIdentity: "repo", workspaceIdentity: "workspace", items: [{ subject: { kind: "file" as const, path: "source.ts" }, priority: "required" as const, rank: 1, reasons: [] }], budget: { maxItems: 20, maxEstimatedTokens: 4000, selectedItems: 1, estimatedTokens: 0, omittedItems: 0, budgetExceeded: false }, reliability: { mayBeIncomplete: false, capabilityStates: {}, diagnostics: [] }, capabilityFingerprint: "none", compiler: { schemaVersion: 1, strategyVersion: "task-context-v1" }, projection: { detail: "compact" as const, detailsAvailable: false, omitted: 0, truncated: false } }), prepareContextAwareRead: async (...args: Parameters<typeof import("../src/core/context/context-delivery-preparation.js").prepareContextAwareRead>) => { resolvePrepared(); await barrier; return (await import("../src/core/context/context-delivery-preparation.js")).prepareContextAwareRead(...args); } };
+    const started = await startTaskContext({ task: "value" }, { ...common, prepareContextAwareRead: undefined });
+    const refreshing = refreshTaskContext({ taskContextId: started.lifecycle.taskContextId }, common);
+    await prepared;
+    const closed = (await import("../src/core/context/task-context-lifecycle.service.js")).closeTaskContext({ taskContextId: started.lifecycle.taskContextId }, common);
+    assert.equal(closed.lifecycle.state, "closed");
+    release();
+    const result = await Promise.allSettled([refreshing]);
+    assert.equal(result[0]?.status, "rejected");
+    const store = new ContextStore(path.join(root, ".codeatlas", "context.db"));
+    assert.equal((store as unknown as { database: { prepare(sql: string): { get(): { count: number } } } }).database.prepare("SELECT count(*) AS count FROM context_receipts").get().count, 1);
+    store.close();
+  } finally { release?.(); await rm(root, { recursive: true, force: true }); }
 });
 
 test("refresh commits expiry without publishing prepared receipts when the final clock check expires", async () => {
@@ -83,10 +137,24 @@ test("all subject-local preparation failures still commit a valid lifecycle with
       now: () => new Date("2026-09-13T00:00:00.000Z"),
       readCurrentChangedPaths: async () => [],
       compileTaskContextForRepository: async () => ({ taskIdentity: "task", planIdentity: "plan", repositoryIdentity: "repo", workspaceIdentity: "workspace", items: [{ subject: { kind: "file" as const, path: "missing.ts" }, priority: "required" as const, rank: 1, reasons: [] }], budget: { maxItems: 20, maxEstimatedTokens: 4000, selectedItems: 1, estimatedTokens: 1, omittedItems: 0, budgetExceeded: false }, reliability: { mayBeIncomplete: false, capabilityStates: {}, diagnostics: [] }, capabilityFingerprint: "none", compiler: { schemaVersion: 1, strategyVersion: "task-context-v1" }, projection: { detail: "compact" as const, detailsAvailable: false, omitted: 0, truncated: false } }),
-      prepareContextAwareRead: async () => { throw new ContextDeliveryPreparationError("missing subject"); },
+      prepareContextAwareRead: async () => { throw Object.assign(new ContextDeliveryPreparationError("missing subject"), { code: "subject_unavailable" }); },
     });
     assert.equal(result.lifecycle.revision, 1);
     assert.equal(result.metrics.deliveredItems, 0);
     assert.equal(result.deliveries[0]?.mode, "error");
+    assert.deepEqual(result.deliveries[0]?.mode === "error" ? result.deliveries[0].error : undefined, { code: "subject_unavailable", message: "missing subject" });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("metrics are isolated per concurrent lifecycle operation", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15c-metrics-"));
+  try {
+    await writeFile(path.join(root, "source.ts"), "one\n");
+    const deps = { repositoryPath: root, readCurrentChangedPaths: async () => [], compileTaskContextForRepository: async () => ({ taskIdentity: "task", planIdentity: "plan", repositoryIdentity: "repo", workspaceIdentity: "workspace", items: [{ subject: { kind: "file" as const, path: "source.ts" }, priority: "required" as const, rank: 1, reasons: [] }], budget: { maxItems: 20, maxEstimatedTokens: 4000, selectedItems: 1, estimatedTokens: 0, omittedItems: 0, budgetExceeded: false }, reliability: { mayBeIncomplete: false, capabilityStates: {}, diagnostics: [] }, capabilityFingerprint: "none", compiler: { schemaVersion: 1, strategyVersion: "task-context-v1" }, projection: { detail: "compact" as const, detailsAvailable: false, omitted: 0, truncated: false } }) };
+    const first = await startTaskContext({ task: "value" }, deps);
+    const before = { ...first.metrics };
+    const second = await startTaskContext({ task: "value" }, deps);
+    assert.ok(second.metrics.requestedBytes > 0);
+    assert.deepEqual(first.metrics, before);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
