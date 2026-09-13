@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import { validateContextSession, validateContextSubject } from "../../core/context/context-identity.js";
 import { contentIdentity } from "../../core/context/context-snapshot.js";
-import type { ContextReceipt, ContextSession, DeliveredSnapshot } from "../../core/context/context.types.js";
+import type { ContextReceipt, ContextSession, DeliveredSnapshot, PreparedContextAwareRead } from "../../core/context/context.types.js";
 import type { TaskContextLifecycle } from "../../core/context/task-context-lifecycle.types.js";
 import { TaskContextLifecycleDomainError } from "../../core/context/task-context-lifecycle.types.js";
 import { CONTEXT_SCHEMA_VERSION, initializeContextSchema, UnsupportedContextSchemaError } from "./context.schema.js";
@@ -68,6 +68,11 @@ export class ContextStore {
   }
 
   publish(sessionValue: ContextSession, receipt: ContextReceipt, snapshot: DeliveredSnapshot): void {
+    this.publishPrepared({ session: sessionValue, receipt, snapshot });
+  }
+
+  publishPrepared(prepared: Pick<PreparedContextAwareRead, "session" | "receipt" | "snapshot">): void {
+    const { session: sessionValue, receipt, snapshot } = prepared;
     const session = validateContextSession(sessionValue);
     validateContextSubject(receipt.subject);
     if (receipt.sessionId !== session.sessionId || receipt.snapshotId !== snapshot.snapshotId || snapshot.receiptId !== receipt.receiptId) throw new TypeError("receipt and snapshot linkage is invalid");

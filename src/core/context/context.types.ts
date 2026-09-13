@@ -56,3 +56,24 @@ export type ContextAwareReadResult = {
   delta?: unknown;
   reason?: string;
 };
+
+export type ContextDeliveryPreparationMetrics = {
+  requestedBytes: number;
+  returnedBytes: number;
+  savedBytes: number;
+};
+
+export class ContextDeliveryPreparationError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "ContextDeliveryPreparationError";
+  }
+}
+
+export type PreparedContextAwareRead = {
+  session: ContextSession;
+  receipt: ContextReceipt;
+  snapshot: DeliveredSnapshot;
+  result: ContextAwareReadResult;
+  metrics: ContextDeliveryPreparationMetrics;
+};
