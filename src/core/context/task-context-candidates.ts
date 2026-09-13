@@ -1,5 +1,9 @@
 import type { ContextSubject } from "./context.types.js";
 import type { GraphEntityResolution } from "../graph/query/graph-query.types.js";
+import { resolveGraphEntity } from "../graph/query/graph-query-entity-resolver.js";
+import type { CodeGraph, GraphNode } from "../graph/types.js";
+import { CONTEXT_SUBJECT_SELECTOR_VERSION } from "./context.types.js";
+import type { NormalizedTaskContextInput } from "./task-context.types.js";
 import { canonicalContextSubjectKey } from "./task-context-normalizer.js";
 import type { TaskContextCandidate, TaskContextEvidence } from "./task-context.types.js";
 
@@ -73,4 +77,37 @@ export function mergeTaskContextCandidates(candidates: readonly TaskContextCandi
 export function exactFileCandidate(path: string, evidence: TaskContextEvidence): TaskContextCandidate {
   const subject: ContextSubject = { kind: "file", path };
   return { subject, evidence: [evidence], sourceRanks: { [evidence.kind]: 1 }, exact: true };
+}
+
+export type TaskContextCollectionDeps = {
+  repositoryPath: string;
+  loadGraph: () => Promise<{ graph: CodeGraph }>;
+};
+
+function subjectForNode(node: GraphNode): ContextSubject {
+  if (node.type === "file") return { kind: "file", path: node.file };
+  return { kind: "symbol", path: node.file, symbolId: node.id, selectorVersion: CONTEXT_SUBJECT_SELECTOR_VERSION };
+}
+
+export async function collectTaskContextCandidates(
+  normalized: NormalizedTaskContextInput,
+  deps: TaskContextCollectionDeps,
+): Promise<{ candidates: TaskContextCandidate[]; reliability: { mayBeIncomplete: boolean; capabilityStates: Record<string, string>; diagnostics: string[] } }> {
+  const diagnostics: string[] = [];
+  let graph: CodeGraph;
+  try {
+    graph = (await deps.loadGraph()).graph;
+  } catch (error) {
+    return { candidates: [], reliability: { mayBeIncomplete: true, capabilityStates: { graph: "error" }, diagnostics: [error instanceof Error ? error.message : "graph unavailable"] } };
+  }
+  const resolution = resolveGraphEntity(graph, normalized.task);
+  if (isAuthoritativeTaskResolution(normalized.task, resolution)) {
+    const subject = subjectForNode(resolution.entity);
+    return {
+      candidates: [{ subject, query: normalized.task, evidence: [{ kind: "task_exact_resolution", query: normalized.task, resolution: subject.kind }], sourceRanks: { task_exact_resolution: 1 }, exact: true }],
+      reliability: { mayBeIncomplete: false, capabilityStates: { graph: "ready" }, diagnostics },
+    };
+  }
+  if (resolution.status === "resolved") diagnostics.push(`task target was not exact: ${normalized.task}`);
+  return { candidates: [], reliability: { mayBeIncomplete: false, capabilityStates: { graph: "ready" }, diagnostics } };
 }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { isAuthoritativeTaskResolution } from "../src/core/context/task-context-candidates.js";
+import { collectTaskContextCandidates, isAuthoritativeTaskResolution } from "../src/core/context/task-context-candidates.js";
 import type { GraphEntityResolution } from "../src/core/graph/query/graph-query.types.js";
 import type { GraphNode } from "../src/core/graph/types.js";
 
@@ -31,4 +31,25 @@ test("requires exact path and symbol equality for file-qualified task targets", 
 test("never authorizes unresolved or ambiguous results", () => {
   assert.equal(isAuthoritativeTaskResolution("main", { status: "ambiguous", query: "main", candidates: [] }), false);
   assert.equal(isAuthoritativeTaskResolution("main", { status: "not_found", query: "main", candidates: [] }), false);
+});
+
+test("collector promotes only an authoritative exact task target", async () => {
+  const result = await collectTaskContextCandidates(
+    { task: "main", anchors: [], changedPaths: [] },
+    { repositoryPath: "/repo", loadGraph: async () => ({ graph: { nodes: [entity], edges: [] } }) },
+  );
+
+  assert.equal(result.candidates.length, 1);
+  assert.deepEqual(result.candidates[0]!.evidence, [{ kind: "task_exact_resolution", query: "main", resolution: "symbol" }]);
+  assert.equal(result.candidates[0]!.exact, true);
+});
+
+test("collector keeps a uniquely resolved prefix non-authoritative", async () => {
+  const result = await collectTaskContextCandidates(
+    { task: "mai", anchors: [], changedPaths: [] },
+    { repositoryPath: "/repo", loadGraph: async () => ({ graph: { nodes: [entity], edges: [] } }) },
+  );
+
+  assert.equal(result.candidates.some((candidate) => candidate.evidence.some((item) => item.kind === "task_exact_resolution")), false);
+  assert.equal(result.candidates.some((candidate) => candidate.subject), false);
 });
