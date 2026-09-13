@@ -78,6 +78,26 @@ test("subject delivery rejects traversal and symlink escapes outside the reposit
   }
 });
 
+test("symbol subject delivery rejects symlink escapes before graph selection", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15c-symbol-symlink-"));
+  const outside = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15c-symbol-outside-"));
+  try {
+    await writeFile(path.join(outside, "secret.ts"), "export function secret() {}\n");
+    await symlink(outside, path.join(root, "linked"));
+    await assert.rejects(
+      prepareContextAwareRead(root, {
+        sessionId: "s",
+        contextGeneration: "g",
+        subject: { kind: "symbol", path: "linked/secret.ts", symbolId: "missing", selectorVersion: "1" },
+        projection: CONTEXT_AWARE_SOURCE_PROJECTION,
+      }),
+      ContextDeliveryPreparationError,
+    );
+  } finally {
+    await Promise.all([rm(root, { recursive: true, force: true }), rm(outside, { recursive: true, force: true })]);
+  }
+});
+
 test("context database corruption falls back to current delivery without changing source state", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15c-context-corruption-"));
   const databasePath = path.join(root, ".codeatlas", "context.db");
