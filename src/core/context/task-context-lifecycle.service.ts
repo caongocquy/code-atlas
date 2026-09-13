@@ -9,7 +9,7 @@ import { CONTEXT_AWARE_SOURCE_PROJECTION, prepareContextAwareRead } from "./cont
 import { readCurrentChangedPaths } from "./task-context-lifecycle-changes.js";
 import { createTaskIntentIdentity, normalizeLifecycleBudget, normalizeLifecycleTtlSeconds, validateTaskContextId } from "./task-context-lifecycle-identity.js";
 import { normalizeTaskContextInput } from "./task-context-normalizer.js";
-import { compileTaskContextForRepository } from "./task-context-repository-compiler.js";
+import { compileTaskContextForRepository, TaskContextRepositoryCompilerError } from "./task-context-repository-compiler.js";
 import { ContextDeliveryPreparationError, type PreparedContextAwareRead } from "./context.types.js";
 import type { TaskContextPlanDetail } from "./task-context.types.js";
 import type { CloseTaskContextInput, CloseTaskContextResult, StartTaskContextInput, RefreshTaskContextInput, TaskContextDelivery, TaskContextLifecycleResult } from "./task-context-lifecycle.types.js";
@@ -90,7 +90,7 @@ export async function startTaskContext(input: StartTaskContextInput, deps: TaskC
   const changedPaths = await (deps.readCurrentChangedPaths ?? readCurrentChangedPaths)(root);
   let plan: TaskContextPlanDetail;
   try { plan = await (deps.compileTaskContextForRepository ?? compileTaskContextForRepository)(root, { task: normalized.task, anchors: normalized.anchors, changedPaths, budget, detail: input.detail }); }
-  catch (error) { if (error instanceof TypeError) operationError("compiler_validation_failed", "start", error.message, taskContextId); throw error; }
+  catch (error) { if (error instanceof TaskContextRepositoryCompilerError || error instanceof TypeError) operationError("compiler_validation_failed", "start", error.message, taskContextId); throw error; }
   const storeInfo = storeFor(root, deps, "start");
   try {
     const deliveries = await prepareItems(root, plan, sessionId, generation, ttlSeconds, storeInfo.store, deps);
@@ -118,7 +118,7 @@ export async function refreshTaskContext(input: RefreshTaskContextInput, deps: T
     const changedPaths = await (deps.readCurrentChangedPaths ?? readCurrentChangedPaths)(root);
     let plan: TaskContextPlanDetail;
     try { plan = await (deps.compileTaskContextForRepository ?? compileTaskContextForRepository)(root, { task: current.task, anchors: [...current.anchors], changedPaths, budget, detail: input.detail }); }
-    catch (error) { if (error instanceof TypeError) operationError("compiler_validation_failed", "refresh", error.message, taskContextId); throw error; }
+    catch (error) { if (error instanceof TaskContextRepositoryCompilerError || error instanceof TypeError) operationError("compiler_validation_failed", "refresh", error.message, taskContextId); throw error; }
     const deliveries = await prepareItems(root, plan, current.sessionId, current.contextGeneration, current.ttlSeconds, storeInfo.store, deps);
     const committed = storeInfo.store.commitRefresh({ taskContextId, expectedRevision: current.revision, now: (deps.now ?? (() => new Date()))().toISOString(), repositoryIdentity: workspace.repositoryIdentity, workspaceIdentity: workspace.workspaceIdentity, prepared: deliveries.prepared, latestTaskIdentity: plan.taskIdentity, latestPlanIdentity: plan.planIdentity });
     return { lifecycle: committed, deliveries: deliveries.deliveries, metrics: metrics(plan, deliveries.prepared, deliveries.deliveries), budget: plan.budget };
@@ -126,7 +126,9 @@ export async function refreshTaskContext(input: RefreshTaskContextInput, deps: T
 }
 
 export function closeTaskContext(input: CloseTaskContextInput, deps: TaskContextLifecycleDeps = {}): CloseTaskContextResult {
-  const taskContextId = validateTaskContextId(input.taskContextId);
+  let taskContextId: string;
+  try { taskContextId = validateTaskContextId(input.taskContextId); }
+  catch (error) { return operationError("invalid_task_context_id", "close", error instanceof Error ? error.message : String(error), input.taskContextId); }
   const root = canonicalRepositoryPath(path.resolve(deps.repositoryPath ?? process.cwd()));
   const workspace = getWorkspaceIdentity(root);
   const storeInfo = storeFor(root, deps, "close");

@@ -51,7 +51,7 @@ import { changeGate } from "../../core/gate/change-gate.service.js";
 import type { ChangeGateInput } from "../../core/gate/change-gate.types.js";
 import { readContextAware } from "../../core/context/context-aware-read.service.js";
 import { CONTEXT_AWARE_SOURCE_PROJECTION } from "../../core/context/context-delivery-preparation.js";
-import { compileTaskContextForRepository } from "../../core/context/task-context-repository-compiler.js";
+import { compileTaskContextForRepository, TaskContextRepositoryCompilerError } from "../../core/context/task-context-repository-compiler.js";
 import { closeTaskContext, refreshTaskContext, startTaskContext } from "../../core/context/task-context-lifecycle.service.js";
 import { TaskContextLifecycleDomainError } from "../../core/context/task-context-lifecycle.types.js";
 
@@ -571,7 +571,7 @@ export function createMcpServer(): McpServer {
       detail: args.detail as "compact" | "full" | undefined,
       });
     } catch (error) {
-      if (error instanceof Error && error.message === "Repository graph is not indexed.") throw new McpToolError("index_required", error.message, { repositoryPath: repoPath, next: "Call index_repository or sync_repository first." });
+      if (error instanceof TaskContextRepositoryCompilerError && error.code === "index_required") throw new McpToolError("index_required", error.message, { repositoryPath: repoPath, next: "Call index_repository or sync_repository first." });
       throw error;
     }
   });
@@ -589,7 +589,7 @@ export function createMcpServer(): McpServer {
     detail: z.enum(["compact", "full"]).optional(),
   }).strict(), async (args) => {
     try { return await startTaskContext({ task: args.task as string, anchors: args.anchors as never, budget: args.budget as never, ttlSeconds: args.ttlSeconds as number | undefined, detail: args.detail as "compact" | "full" | undefined }, { repositoryPath: resolveRepo(args.repoPath as string | undefined) }); }
-    catch (error) { if (error instanceof Error && error.message === "Repository graph is not indexed.") throw new McpToolError("index_required", error.message, { repositoryPath: resolveRepo(args.repoPath as string | undefined), next: "Call index_repository or sync_repository first." }); throw error; }
+    catch (error) { if (error instanceof TaskContextLifecycleDomainError && error.operationError.code === "compiler_validation_failed" && error.operationError.message === "Repository graph is not indexed.") throw new McpToolError("index_required", error.operationError.message, { repositoryPath: resolveRepo(args.repoPath as string | undefined), next: "Call index_repository or sync_repository first." }); throw error; }
   });
   registerJsonTool(server, "refresh_task_context", "Refresh a durable task context lifecycle.", z.object({ repoPath: repoInput, taskContextId: z.string().min(1), budget: z.object({ maxItems: z.number().int().positive().optional(), maxEstimatedTokens: z.number().int().positive().optional() }).strict().optional(), detail: z.enum(["compact", "full"]).optional() }).strict(), async (args) => refreshTaskContext({ taskContextId: args.taskContextId as string, budget: args.budget as never, detail: args.detail as "compact" | "full" | undefined }, { repositoryPath: resolveRepo(args.repoPath as string | undefined) }));
   registerJsonTool(server, "close_task_context", "Close a durable task context lifecycle.", z.object({ repoPath: repoInput, taskContextId: z.string().min(1) }).strict(), async (args) => closeTaskContext({ taskContextId: args.taskContextId as string }, { repositoryPath: resolveRepo(args.repoPath as string | undefined) }));

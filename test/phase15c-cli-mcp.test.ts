@@ -10,6 +10,9 @@ import { parseContextLifecycleArgs } from "../src/adapters/cli/context-lifecycle
 import { parseContextCompileArgs } from "../src/adapters/cli/context-compile.command.js";
 import { parseContextReadArgs } from "../src/adapters/cli/context-read.command.js";
 import { CONTEXT_AWARE_SOURCE_PROJECTION } from "../src/core/context/context-delivery-preparation.js";
+import { closeTaskContext, startTaskContext } from "../src/core/context/task-context-lifecycle.service.js";
+import { TaskContextLifecycleDomainError } from "../src/core/context/task-context-lifecycle.types.js";
+import { TaskContextRepositoryCompilerError, compileTaskContextForRepository } from "../src/core/context/task-context-repository-compiler.js";
 
 async function connectedClient() {
   const server = createMcpServer();
@@ -76,4 +79,43 @@ test("MCP maps missing index from lifecycle start to the existing index_required
     await client.close();
     await server.close();
   }
+});
+
+test("close maps an invalid UUID to the structured lifecycle error", () => {
+  assert.throws(() => closeTaskContext({ taskContextId: "not-a-uuid" }, { repositoryPath: "." }), (error: unknown) => {
+    assert.ok(error instanceof TaskContextLifecycleDomainError);
+    assert.equal(error.operationError.code, "invalid_task_context_id");
+    assert.equal(error.operationError.operation, "close");
+    return true;
+  });
+});
+
+test("MCP preserves structured invalid_task_context_id for close", async () => {
+  const { client, server } = await connectedClient();
+  try {
+    const result = await client.callTool({ name: "close_task_context", arguments: { taskContextId: "not-a-uuid" } });
+    assert.equal(result.isError, true);
+    const text = result.content.find((item) => item.type === "text");
+    assert.ok(text && text.type === "text");
+    const value = JSON.parse(text.text) as { error: { code: string } };
+    assert.equal(value.error.code, "invalid_task_context_id");
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test("repository compiler types missing indexes and lifecycle maps that boundary error", async () => {
+  const missingIndex = new Error("Repository graph is not indexed.");
+  await assert.rejects(() => compileTaskContextForRepository(".", { task: "Find source" }, { loadGraph: async () => { throw missingIndex; } }), (error: unknown) => {
+    assert.ok(error instanceof TaskContextRepositoryCompilerError);
+    assert.equal(error.code, "index_required");
+    assert.equal(error.cause, missingIndex);
+    return true;
+  });
+  await assert.rejects(() => startTaskContext({ task: "Find source" }, { repositoryPath: ".", readCurrentChangedPaths: async () => [], compileTaskContextForRepository: async () => { throw new TaskContextRepositoryCompilerError("index_required", missingIndex.message); } }), (error: unknown) => {
+    assert.ok(error instanceof TaskContextLifecycleDomainError);
+    assert.equal(error.operationError.code, "compiler_validation_failed");
+    return true;
+  });
 });

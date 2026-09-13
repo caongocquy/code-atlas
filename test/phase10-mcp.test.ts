@@ -42,6 +42,7 @@ test("MCP exposes the structured CodeAtlas capability surface", async () => {
       "graph_delta",
       "architecture_drift",
       "change_gate",
+      "close_task_context",
       "compile_task_context",
       "context_read",
       "get_community",
@@ -54,6 +55,8 @@ test("MCP exposes the structured CodeAtlas capability surface", async () => {
       "list_communities",
       "repository_status",
       "search_code",
+      "refresh_task_context",
+      "start_task_context",
       "sync_repository",
       "trace",
     ].sort());

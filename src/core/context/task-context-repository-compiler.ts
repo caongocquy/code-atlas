@@ -19,13 +19,28 @@ export type RepositoryCompilerDeps = {
   collect?: (normalized: NormalizedTaskContextInput) => Promise<{ candidates: TaskContextCandidate[]; reliability: TaskContextReliability }>;
 };
 
+export class TaskContextRepositoryCompilerError extends Error {
+  constructor(readonly code: "index_required", message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "TaskContextRepositoryCompilerError";
+  }
+}
+
 export async function compileTaskContextForRepository(repoPath: string, input: CompileTaskContextInput, deps: RepositoryCompilerDeps = {}): Promise<TaskContextPlanDetail> {
   const root = canonicalRepositoryPath(path.resolve(repoPath));
   const workspace = getWorkspaceIdentity(root);
   const repository = getRepositoryIdentity(root);
   const compiler = deps.compile ?? compileTaskContext;
   if (deps.collect) return compiler(input, { repositoryPath: root, repositoryIdentity: repository.identityKey, workspaceIdentity: workspace.workspaceIdentity, collect: deps.collect });
-  const indexed = await (deps.loadGraph ?? loadIndexedGraphReadOnly)(root);
+  let indexed;
+  try {
+    indexed = await (deps.loadGraph ?? loadIndexedGraphReadOnly)(root);
+  } catch (error) {
+    if (error instanceof Error && error.message === "Repository graph is not indexed.") {
+      throw new TaskContextRepositoryCompilerError("index_required", error.message, { cause: error });
+    }
+    throw error;
+  }
   const collectionDeps = {
     repositoryPath: root,
     loadGraph: async () => indexed,
