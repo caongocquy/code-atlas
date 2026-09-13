@@ -161,7 +161,7 @@ export class ContextStore {
   }
 
   private lifecycleError(operation: "refresh" | "close" | "expire", code: "context_not_found" | "workspace_mismatch" | "context_closed" | "context_expired" | "lifecycle_conflict", taskContextId: string): TaskContextLifecycleDomainError {
-    return new TaskContextLifecycleDomainError({ code, operation: operation as "refresh", taskContextId, message: `${code}: ${taskContextId}` });
+    return new TaskContextLifecycleDomainError({ code, operation, taskContextId, message: `${code}: ${taskContextId}` });
   }
 
   private readLifecycle(taskContextId: string): StoredTaskContextLifecycle | undefined {

@@ -83,3 +83,25 @@ test("a v2 database missing the lifecycle table fails with a typed open error", 
     assert.throws(() => new ContextStore(databasePath), ContextStoreOpenError);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test("a v2 lifecycle table missing a required column or index fails closed", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15c-schema-shape-"));
+  const databasePath = path.join(root, "context.db");
+  try {
+    const database = new DatabaseSync(databasePath);
+    database.exec("CREATE TABLE context_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL); INSERT INTO context_metadata VALUES ('contextSchemaVersion', '2'); CREATE TABLE context_sessions (session_id TEXT PRIMARY KEY, repository_identity TEXT NOT NULL, workspace_identity TEXT NOT NULL, consumer_json TEXT, created_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, context_generation TEXT NOT NULL, schema_version INTEGER NOT NULL); CREATE TABLE context_snapshots (snapshot_id TEXT PRIMARY KEY, receipt_id TEXT NOT NULL, subject_identity TEXT NOT NULL, projection_identity TEXT NOT NULL, content TEXT NOT NULL, content_identity TEXT NOT NULL, created_at TEXT NOT NULL, schema_version INTEGER NOT NULL); CREATE TABLE context_receipts (receipt_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, repository_identity TEXT NOT NULL, workspace_identity TEXT NOT NULL, subject_json TEXT NOT NULL, subject_identity TEXT NOT NULL, projection_identity TEXT NOT NULL, context_generation TEXT NOT NULL, delivery_mode TEXT NOT NULL, delivered_content_identity TEXT NOT NULL, snapshot_id TEXT NOT NULL, reliability_json TEXT NOT NULL, delivered_at TEXT NOT NULL, expires_at TEXT, prior_receipt_id TEXT, state TEXT NOT NULL, schema_version INTEGER NOT NULL); CREATE TABLE task_context_lifecycles (task_context_id TEXT PRIMARY KEY, repository_identity TEXT NOT NULL, workspace_identity TEXT NOT NULL, session_id TEXT NOT NULL, context_generation TEXT NOT NULL, task TEXT NOT NULL, anchors_json TEXT NOT NULL, task_intent_identity TEXT NOT NULL, latest_task_identity TEXT, max_items INTEGER NOT NULL, max_estimated_tokens INTEGER NOT NULL, ttl_seconds INTEGER NOT NULL, latest_plan_identity TEXT, revision INTEGER NOT NULL, state TEXT NOT NULL, created_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, expires_at TEXT, schema_version INTEGER NOT NULL);");
+    database.close();
+    assert.throws(() => new ContextStore(databasePath), ContextStoreOpenError);
+
+    const validRoot = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15c-schema-index-"));
+    try {
+      const validPath = path.join(validRoot, "context.db");
+      const store = new ContextStore(validPath);
+      store.close();
+      const valid = new DatabaseSync(validPath);
+      valid.exec("DROP INDEX context_receipts_latest_idx;");
+      valid.close();
+      assert.throws(() => new ContextStore(validPath), ContextStoreOpenError);
+    } finally { await rm(validRoot, { recursive: true, force: true }); }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

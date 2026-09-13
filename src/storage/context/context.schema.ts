@@ -44,10 +44,10 @@ function lifecycleTableSql(): string {
 function validateV2Shape(database: DatabaseSync): void {
   const required = {
     context_metadata: ["key", "value"],
-    context_sessions: ["session_id", "repository_identity", "workspace_identity", "context_generation"],
-    context_snapshots: ["snapshot_id", "receipt_id", "content_identity"],
-    context_receipts: ["receipt_id", "session_id", "snapshot_id", "context_generation"],
-    task_context_lifecycles: ["task_context_id", "session_id", "context_generation", "task_intent_identity", "revision", "state"],
+    context_sessions: ["session_id", "repository_identity", "workspace_identity", "consumer_json", "created_at", "last_seen_at", "context_generation", "schema_version"],
+    context_snapshots: ["snapshot_id", "receipt_id", "subject_identity", "projection_identity", "content", "content_identity", "created_at", "schema_version"],
+    context_receipts: ["receipt_id", "session_id", "repository_identity", "workspace_identity", "subject_json", "subject_identity", "projection_identity", "context_generation", "delivery_mode", "delivered_content_identity", "snapshot_id", "reliability_json", "delivered_at", "expires_at", "prior_receipt_id", "state", "schema_version"],
+    task_context_lifecycles: ["task_context_id", "repository_identity", "workspace_identity", "session_id", "context_generation", "task", "anchors_json", "task_intent_identity", "latest_task_identity", "max_items", "max_estimated_tokens", "ttl_seconds", "latest_plan_identity", "revision", "state", "created_at", "last_seen_at", "expires_at", "closed_at", "schema_version"],
   };
   for (const [table, columns] of Object.entries(required)) {
     const present = database.prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
@@ -55,6 +55,7 @@ function validateV2Shape(database: DatabaseSync): void {
     const actual = new Set(database.prepare(`PRAGMA table_info(${table})`).all().map((row) => (row as { name: string }).name));
     for (const column of columns) if (!actual.has(column)) throw new InvalidContextSchemaError(`Missing context schema column: ${table}.${column}`);
   }
+  if (!database.prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'index' AND name = 'context_receipts_latest_idx'").get()) throw new InvalidContextSchemaError("Missing context schema index: context_receipts_latest_idx");
 }
 
 export function initializeContextSchema(database: DatabaseSync): void {
@@ -113,6 +114,7 @@ export function initializeContextSchema(database: DatabaseSync): void {
       schema_version INTEGER NOT NULL
     );
     ${lifecycleTableSql()}
+    CREATE INDEX IF NOT EXISTS context_receipts_latest_idx ON context_receipts(session_id, subject_identity, projection_identity, delivered_at, receipt_id);
     INSERT OR IGNORE INTO context_metadata(key, value) VALUES ('contextSchemaVersion', '${CONTEXT_SCHEMA_VERSION}');
     UPDATE context_metadata SET value = '${CONTEXT_SCHEMA_VERSION}' WHERE key = 'contextSchemaVersion';
   `);

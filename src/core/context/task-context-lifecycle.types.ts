@@ -73,7 +73,7 @@ export type StartTaskContextResult = TaskContextLifecycleResult;
 export type RefreshTaskContextResult = TaskContextLifecycleResult;
 export type CloseTaskContextResult = { lifecycle: TaskContextLifecycle };
 
-export type TaskContextLifecycleOperation = "start" | "refresh" | "close";
+export type TaskContextLifecycleOperation = "start" | "refresh" | "close" | "expire";
 export type TaskContextLifecycleOperationErrorCode =
   | "invalid_task_context_id"
   | "context_not_found"

@@ -7,8 +7,10 @@ import test from "node:test";
 import { contentIdentity } from "../src/core/context/context-snapshot.js";
 import type { ContextReceipt, ContextSession, DeliveredSnapshot } from "../src/core/context/context.types.js";
 import { TaskContextLifecycleDomainError } from "../src/core/context/task-context-lifecycle.types.js";
-import type { TaskContextLifecycle } from "../src/core/context/task-context-lifecycle.types.js";
+import type { TaskContextLifecycle, TaskContextLifecycleOperation } from "../src/core/context/task-context-lifecycle.types.js";
 import { ContextStore } from "../src/storage/context/context.store.js";
+
+const expiryOperation: TaskContextLifecycleOperation = "expire";
 
 const session: ContextSession = { sessionId: "session-1", repositoryIdentity: "repo-1", workspaceIdentity: "workspace-1", createdAt: "2026-09-13T00:00:00.000Z", lastSeenAt: "2026-09-13T00:00:00.000Z", contextGeneration: "generation-1", schemaVersion: 1 };
 const receipt: ContextReceipt = { receiptId: "receipt-1", sessionId: "session-1", repositoryIdentity: "repo-1", workspaceIdentity: "workspace-1", subject: { kind: "file", path: "src/index.ts" }, subjectIdentity: "subject-1", projectionIdentity: "projection-1", contextGeneration: "generation-1", deliveryMode: "full", deliveredContentIdentity: contentIdentity("hello"), snapshotId: "snapshot-1", reliability: { mayBeIncomplete: false }, deliveredAt: "2026-09-13T00:00:00.000Z", state: "active", schemaVersion: 1 };
@@ -47,6 +49,8 @@ test("close is idempotent and does not change an expired lifecycle", async () =>
       const expiredStore = new ContextStore(path.join(expiredRoot, "context.db"));
       expiredStore.createAndCommitStart({ lifecycle: { ...lifecycle, taskContextId: "00000000-0000-4000-8000-000000000002" }, session, prepared: [] });
       const expired = expiredStore.expireLifecycle({ taskContextId: "00000000-0000-4000-8000-000000000002", expectedRevision: 1, now: "2026-09-13T00:03:00.000Z", repositoryIdentity: "repo-1", workspaceIdentity: "workspace-1" });
+      assert.equal(expiryOperation, "expire");
+      assert.throws(() => expiredStore.expireLifecycle({ taskContextId: expired.taskContextId, expectedRevision: expired.revision, now: "2026-09-13T00:04:00.000Z", repositoryIdentity: "repo-1", workspaceIdentity: "workspace-1" }), (error: unknown) => error instanceof TaskContextLifecycleDomainError && error.operationError.operation === "expire" && error.operationError.code === "context_expired");
       assert.equal(expiredStore.closeLifecycle({ taskContextId: expired.taskContextId, expectedRevision: expired.revision, now: "2026-09-13T00:04:00.000Z", repositoryIdentity: "repo-1", workspaceIdentity: "workspace-1" }).state, "expired");
       expiredStore.close();
     } finally { await rm(expiredRoot, { recursive: true, force: true }); }
