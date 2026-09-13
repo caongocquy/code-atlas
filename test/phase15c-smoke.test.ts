@@ -142,8 +142,9 @@ test("real Git repository smoke preserves delivery history across CLI/process re
     await writeFile(path.join(root, "auth.ts"), "export const auth = \"one\";\n");
     await git(root, "config", "user.email", "phase15c-smoke@example.invalid");
     await git(root, "config", "user.name", "Phase15C smoke");
-    await git(root, "add", "package.json", "auth.ts");
+    await git(root, "add", "package.json", "auth.ts", "codeatlas-head.ts");
     await git(root, "commit", "-qm", "smoke fixture sourced from CodeAtlas HEAD");
+    assert.equal(await git(root, "show", "HEAD:codeatlas-head.ts"), await readFile(path.join(root, "codeatlas-head.ts"), "utf8"));
     await git(root, "clone", "-q", "--no-local", root, repo);
     await git(repo, "worktree", "add", "-q", second, "HEAD");
 
