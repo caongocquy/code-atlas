@@ -7,6 +7,7 @@ import { loadIndexedGraphReadOnly } from "../../core/graph/indexed-graph.service
 import { getRepositoryIdentity } from "../../core/repository/repository-identity.js";
 import { getRepositoryStatus } from "../../core/repository/repository-status.service.js";
 import { searchLexical } from "../../core/lexical/lexical-search.service.js";
+import { inspectHybridSearch } from "../../core/retrieval/hybrid-search.service.js";
 import { inspectChange } from "../../core/change/inspect-change.service.js";
 import { affectedTests } from "../../core/change/affected-tests.service.js";
 import { analyzeImpact } from "../../core/graph/query/impact.service.js";
@@ -28,7 +29,7 @@ export async function runContextCompileCommand(args: string[]): Promise<void> {
   const graph = await loadIndexedGraphReadOnly(parsed.repoPath);
   const workspace = getWorkspaceIdentity(parsed.repoPath);
   const repository = getRepositoryIdentity(parsed.repoPath);
-  const deps = { repositoryPath: parsed.repoPath, loadGraph: async () => graph, getStatus: getRepositoryStatus, lexicalSearch: searchLexical, inspectChange, analyzeImpact: async (...args: Parameters<typeof analyzeImpact>) => analyzeImpact(...args), affectedTests };
+  const deps = { repositoryPath: parsed.repoPath, loadGraph: async () => graph, getStatus: getRepositoryStatus, lexicalSearch: searchLexical, hybridSearch: inspectHybridSearch, inspectChange, analyzeImpact: async (...args: Parameters<typeof analyzeImpact>) => analyzeImpact(...args), affectedTests };
   const result = await compileTaskContext(parsed.input, { repositoryPath: parsed.repoPath, repositoryIdentity: repository.identityKey, workspaceIdentity: workspace.workspaceIdentity, collect: async (normalized) => {
     const collected = await collectTaskContextCandidates(normalized, deps);
     const enriched = await enrichTaskContextCandidates(collected.candidates, normalized, graph.graph, deps);

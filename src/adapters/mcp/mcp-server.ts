@@ -9,6 +9,7 @@ import { getRepositoryStatus } from "../../core/repository/repository-status.ser
 import { canonicalRepositoryPath } from "../../core/repository/repository-identity.js";
 import { loadIndexedGraphReadOnly, type IndexedGraph } from "../../core/graph/indexed-graph.service.js";
 import { searchLexical } from "../../core/lexical/lexical-search.service.js";
+import { inspectHybridSearch } from "../../core/retrieval/hybrid-search.service.js";
 import {
   indexRepository,
   syncRepository,
@@ -576,6 +577,7 @@ export function createMcpServer(): McpServer {
           loadGraph: async () => indexed,
           getStatus: getRepositoryStatus,
           lexicalSearch: searchLexical,
+          hybridSearch: inspectHybridSearch,
           inspectChange,
           analyzeImpact: async (...args: Parameters<typeof analyzeImpact>) => analyzeImpact(...args),
           affectedTests,
