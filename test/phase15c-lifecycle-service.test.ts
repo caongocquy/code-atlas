@@ -34,6 +34,11 @@ test("start creates an opaque revision-one lifecycle and persists the default bu
     assert.equal(result.deliveries.length, 1);
     assert.equal(result.metrics.deliveredItems, 1);
     assert.equal(result.metrics.fullReads, 1);
+    assert.equal(result.metrics.failedItems, 0);
+    assert.equal(result.metrics.unchangedReads, 0);
+    assert.equal(result.metrics.deltaReads, 0);
+    assert.equal(result.metrics.rehydrates, 0);
+    assert.equal(result.metrics.returnedBytes > 0, true);
     assert.ok(result.metrics.requestedBytes > 0);
     assert.ok(result.metrics.returnedBytes > 0);
   } finally { await rm(root, { recursive: true, force: true }); }
@@ -116,11 +121,18 @@ test("refresh commits expiry without publishing prepared receipts when the final
   const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15c-expiry-"));
   const times = ["2026-09-13T00:00:00.000Z", "2026-09-13T00:00:00.500Z", "2026-09-13T00:00:02.000Z"];
   const compile = async () => ({ taskIdentity: "task", planIdentity: "plan", repositoryIdentity: "repo", workspaceIdentity: "workspace", items: [{ subject: { kind: "file" as const, path: "source.ts" }, priority: "required" as const, rank: 1, reasons: [] }], budget: { maxItems: 20, maxEstimatedTokens: 4000, selectedItems: 1, estimatedTokens: 1, omittedItems: 0, budgetExceeded: false }, reliability: { mayBeIncomplete: false, capabilityStates: {}, diagnostics: [] }, capabilityFingerprint: "none", compiler: { schemaVersion: 1, strategyVersion: "task-context-v1" }, projection: { detail: "compact" as const, detailsAvailable: false, omitted: 0, truncated: false } });
+  let releasePreparation!: () => void;
+  let preparationStarted!: () => void;
+  const preparationBarrier = new Promise<void>((resolve) => { releasePreparation = resolve; });
+  const preparationStartedSignal = new Promise<void>((resolve) => { preparationStarted = resolve; });
   try {
     await writeFile(path.join(root, "source.ts"), "one\n");
     const common = { repositoryPath: root, now: () => new Date(times.shift() ?? times.at(-1)!), compileTaskContextForRepository: compile, readCurrentChangedPaths: async () => [] };
     const started = await startTaskContext({ task: "value", ttlSeconds: 1 }, common);
-    await assert.rejects(refreshTaskContext({ taskContextId: started.lifecycle.taskContextId }, common), (error: unknown) => error instanceof Error && "operationError" in error && (error as { operationError: { code: string } }).operationError.code === "context_expired");
+    const refreshing = refreshTaskContext({ taskContextId: started.lifecycle.taskContextId }, { ...common, prepareContextAwareRead: async (...args: Parameters<typeof import("../src/core/context/context-delivery-preparation.js").prepareContextAwareRead>) => { preparationStarted(); await preparationBarrier; return (await import("../src/core/context/context-delivery-preparation.js")).prepareContextAwareRead(...args); } });
+    await preparationStartedSignal;
+    releasePreparation();
+    await assert.rejects(refreshing, (error: unknown) => error instanceof Error && "operationError" in error && (error as { operationError: { code: string } }).operationError.code === "context_expired");
     const store = new ContextStore(path.join(root, ".codeatlas", "context.db"));
     const expired = store.loadLifecycle(started.lifecycle.taskContextId);
     assert.equal(expired?.state, "expired");
@@ -151,10 +163,16 @@ test("metrics are isolated per concurrent lifecycle operation", async () => {
   try {
     await writeFile(path.join(root, "source.ts"), "one\n");
     const deps = { repositoryPath: root, readCurrentChangedPaths: async () => [], compileTaskContextForRepository: async () => ({ taskIdentity: "task", planIdentity: "plan", repositoryIdentity: "repo", workspaceIdentity: "workspace", items: [{ subject: { kind: "file" as const, path: "source.ts" }, priority: "required" as const, rank: 1, reasons: [] }], budget: { maxItems: 20, maxEstimatedTokens: 4000, selectedItems: 1, estimatedTokens: 0, omittedItems: 0, budgetExceeded: false }, reliability: { mayBeIncomplete: false, capabilityStates: {}, diagnostics: [] }, capabilityFingerprint: "none", compiler: { schemaVersion: 1, strategyVersion: "task-context-v1" }, projection: { detail: "compact" as const, detailsAvailable: false, omitted: 0, truncated: false } }) };
-    const first = await startTaskContext({ task: "value" }, deps);
-    const before = { ...first.metrics };
-    const second = await startTaskContext({ task: "value" }, deps);
+    const store = new ContextStore(path.join(root, ".codeatlas", "context.db"));
+    let preparedCount = 0;
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => { release = resolve; });
+    const concurrentDeps = { ...deps, store, prepareContextAwareRead: async (...args: Parameters<typeof import("../src/core/context/context-delivery-preparation.js").prepareContextAwareRead>) => { preparedCount += 1; if (preparedCount === 2) release(); await barrier; return (await import("../src/core/context/context-delivery-preparation.js")).prepareContextAwareRead(...args); } };
+    const [first, second] = await Promise.all([startTaskContext({ task: "value" }, concurrentDeps), startTaskContext({ task: "value" }, concurrentDeps)]);
+    assert.ok(first.metrics.requestedBytes > 0);
     assert.ok(second.metrics.requestedBytes > 0);
-    assert.deepEqual(first.metrics, before);
+    assert.notEqual(first.lifecycle.taskContextId, second.lifecycle.taskContextId);
+    assert.equal(first.metrics.requestedBytes, second.metrics.requestedBytes);
+    store.close();
   } finally { await rm(root, { recursive: true, force: true }); }
 });

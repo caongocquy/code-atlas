@@ -10,8 +10,16 @@ export type TaskContextLifecycleBudget = {
 export type TaskContextLifecycleMetrics = {
   compiledItems: number;
   deliveredItems: number;
+  failedItems: number;
   omittedItems: number;
   estimatedTokens: number;
+  requestedBytes: number;
+  returnedBytes: number;
+  savedBytes: number;
+  fullReads: number;
+  unchangedReads: number;
+  deltaReads: number;
+  rehydrates: number;
 };
 
 export type PreparedContextDelivery = {
