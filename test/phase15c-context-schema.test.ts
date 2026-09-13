@@ -84,7 +84,7 @@ test("a v2 database missing the lifecycle table fails with a typed open error", 
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test("a v2 lifecycle table missing a required column or index fails closed", async () => {
+test("a v2 lifecycle table missing a required column fails closed", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15c-schema-shape-"));
   const databasePath = path.join(root, "context.db");
   try {
@@ -93,15 +93,23 @@ test("a v2 lifecycle table missing a required column or index fails closed", asy
     database.close();
     assert.throws(() => new ContextStore(databasePath), ContextStoreOpenError);
 
-    const validRoot = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15c-schema-index-"));
-    try {
-      const validPath = path.join(validRoot, "context.db");
-      const store = new ContextStore(validPath);
-      store.close();
-      const valid = new DatabaseSync(validPath);
-      valid.exec("DROP INDEX context_receipts_latest_idx;");
-      valid.close();
-      assert.throws(() => new ContextStore(validPath), ContextStoreOpenError);
-    } finally { await rm(validRoot, { recursive: true, force: true }); }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("a supported d35e30d v2 database without the compatibility index opens and repairs it", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15c-schema-compat-"));
+  const databasePath = path.join(root, "context.db");
+  try {
+    const created = new ContextStore(databasePath);
+    created.close();
+    const database = new DatabaseSync(databasePath);
+    database.exec("DROP INDEX context_receipts_latest_idx;");
+    database.close();
+    const repaired = new ContextStore(databasePath);
+    assert.equal(repaired.schemaVersion, 2);
+    repaired.close();
+    const reopened = new DatabaseSync(databasePath);
+    assert.ok(reopened.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'context_receipts_latest_idx'").get());
+    reopened.close();
   } finally { await rm(root, { recursive: true, force: true }); }
 });

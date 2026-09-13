@@ -41,7 +41,7 @@ function lifecycleTableSql(): string {
   );`;
 }
 
-function validateV2Shape(database: DatabaseSync): void {
+function validateV2Columns(database: DatabaseSync): void {
   const required = {
     context_metadata: ["key", "value"],
     context_sessions: ["session_id", "repository_identity", "workspace_identity", "consumer_json", "created_at", "last_seen_at", "context_generation", "schema_version"],
@@ -55,7 +55,21 @@ function validateV2Shape(database: DatabaseSync): void {
     const actual = new Set(database.prepare(`PRAGMA table_info(${table})`).all().map((row) => (row as { name: string }).name));
     for (const column of columns) if (!actual.has(column)) throw new InvalidContextSchemaError(`Missing context schema column: ${table}.${column}`);
   }
-  if (!database.prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'index' AND name = 'context_receipts_latest_idx'").get()) throw new InvalidContextSchemaError("Missing context schema index: context_receipts_latest_idx");
+}
+
+function repairAndValidateV2Shape(database: DatabaseSync): void {
+  database.exec("BEGIN IMMEDIATE;");
+  try {
+    validateV2Columns(database);
+    const index = database.prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'index' AND name = 'context_receipts_latest_idx'").get();
+    if (!index) database.exec("CREATE INDEX context_receipts_latest_idx ON context_receipts(session_id, subject_identity, projection_identity, delivered_at, receipt_id);");
+    const columns = database.prepare("PRAGMA index_info(context_receipts_latest_idx)").all().map((row) => (row as { name: string }).name);
+    if (columns.join("\0") !== ["session_id", "subject_identity", "projection_identity", "delivered_at", "receipt_id"].join("\0")) throw new InvalidContextSchemaError("Invalid context schema index: context_receipts_latest_idx");
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 export function initializeContextSchema(database: DatabaseSync): void {
@@ -64,7 +78,7 @@ export function initializeContextSchema(database: DatabaseSync): void {
   if (metadataExists) {
     const version = database.prepare("SELECT value FROM context_metadata WHERE key = 'contextSchemaVersion'").get() as { value?: string } | undefined;
     if (version?.value !== "1" && version?.value !== String(CONTEXT_SCHEMA_VERSION)) throw new UnsupportedContextSchemaError(version?.value ?? "missing");
-    if (version.value === String(CONTEXT_SCHEMA_VERSION)) { validateV2Shape(database); return; }
+    if (version.value === String(CONTEXT_SCHEMA_VERSION)) { repairAndValidateV2Shape(database); return; }
   }
 
   database.exec("BEGIN IMMEDIATE;");
