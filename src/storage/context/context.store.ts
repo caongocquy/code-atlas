@@ -5,10 +5,19 @@ import { DatabaseSync } from "node:sqlite";
 import { validateContextSession, validateContextSubject } from "../../core/context/context-identity.js";
 import { contentIdentity } from "../../core/context/context-snapshot.js";
 import type { ContextReceipt, ContextSession, DeliveredSnapshot } from "../../core/context/context.types.js";
-import { CONTEXT_SCHEMA_VERSION, initializeContextSchema } from "./context.schema.js";
+import type { TaskContextLifecycle } from "../../core/context/task-context-lifecycle.types.js";
+import { TaskContextLifecycleDomainError } from "../../core/context/task-context-lifecycle.types.js";
+import { CONTEXT_SCHEMA_VERSION, initializeContextSchema, UnsupportedContextSchemaError } from "./context.schema.js";
 
 export { CONTEXT_SCHEMA_VERSION };
 export const DEFAULT_CONTEXT_DB_PATH = ".codeatlas/context.db";
+
+export class ContextStoreOpenError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "ContextStoreOpenError";
+  }
+}
 
 function json(value: unknown): string {
   return JSON.stringify(value, Object.keys(value as object).sort()) ?? "null";
@@ -23,9 +32,17 @@ export class ContextStore {
   private readonly database: DatabaseSync;
 
   constructor(databasePath = DEFAULT_CONTEXT_DB_PATH) {
-    ensureParent(databasePath);
-    this.database = new DatabaseSync(databasePath);
-    try { initializeContextSchema(this.database); } catch (error) { this.database.close(); throw new Error(`Context database is unavailable: ${error instanceof Error ? error.message : String(error)}`, { cause: error }); }
+    let opened: DatabaseSync | undefined;
+    try {
+      ensureParent(databasePath);
+      opened = new DatabaseSync(databasePath);
+      this.database = opened;
+      initializeContextSchema(this.database);
+    } catch (error) {
+      try { opened?.close(); } catch { /* opening may have failed */ }
+      if (error instanceof UnsupportedContextSchemaError) throw error;
+      throw new ContextStoreOpenError(`Context database is unavailable: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    }
   }
 
   saveSession(value: ContextSession): void {
@@ -54,13 +71,96 @@ export class ContextStore {
     if (receipt.sessionId !== session.sessionId || receipt.snapshotId !== snapshot.snapshotId || snapshot.receiptId !== receipt.receiptId) throw new TypeError("receipt and snapshot linkage is invalid");
     if (receipt.repositoryIdentity !== session.repositoryIdentity || receipt.workspaceIdentity !== session.workspaceIdentity) throw new TypeError("receipt and session identity is invalid");
     if (snapshot.subjectIdentity !== receipt.subjectIdentity || snapshot.projectionIdentity !== receipt.projectionIdentity || snapshot.contentIdentity !== receipt.deliveredContentIdentity || snapshot.contentIdentity !== contentIdentity(snapshot.content)) throw new TypeError("receipt and snapshot identity is invalid");
-    this.saveSession(session);
     this.database.exec("BEGIN");
     try {
+      this.writeSession(session);
       this.database.prepare("INSERT INTO context_snapshots(snapshot_id, receipt_id, subject_identity, projection_identity, content, content_identity, created_at, schema_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(snapshot.snapshotId, snapshot.receiptId, snapshot.subjectIdentity, snapshot.projectionIdentity, snapshot.content, snapshot.contentIdentity, snapshot.createdAt, snapshot.schemaVersion);
       this.database.prepare("INSERT INTO context_receipts(receipt_id, session_id, repository_identity, workspace_identity, subject_json, subject_identity, projection_identity, context_generation, delivery_mode, delivered_content_identity, snapshot_id, reliability_json, delivered_at, expires_at, prior_receipt_id, state, schema_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(receipt.receiptId, receipt.sessionId, receipt.repositoryIdentity, receipt.workspaceIdentity, json(receipt.subject), receipt.subjectIdentity, receipt.projectionIdentity, receipt.contextGeneration, receipt.deliveryMode, receipt.deliveredContentIdentity, receipt.snapshotId, json(receipt.reliability), receipt.deliveredAt, receipt.expiresAt ?? null, receipt.priorReceiptId ?? null, receipt.state, receipt.schemaVersion);
       this.database.exec("COMMIT");
     } catch (error) { this.database.exec("ROLLBACK"); throw error; }
+  }
+
+  private writeSession(session: ContextSession): void {
+    this.database.prepare(`INSERT INTO context_sessions(session_id, repository_identity, workspace_identity, consumer_json, created_at, last_seen_at, context_generation, schema_version)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(session_id) DO UPDATE SET repository_identity=excluded.repository_identity, workspace_identity=excluded.workspace_identity, consumer_json=excluded.consumer_json, last_seen_at=excluded.last_seen_at, context_generation=excluded.context_generation, schema_version=excluded.schema_version`).run(
+      session.sessionId, session.repositoryIdentity, session.workspaceIdentity, session.consumer ? json(session.consumer) : null,
+      session.createdAt, session.lastSeenAt, session.contextGeneration, session.schemaVersion,
+    );
+  }
+
+  private validatePublication(sessionValue: ContextSession, receipt: ContextReceipt, snapshot: DeliveredSnapshot): ContextSession {
+    const session = validateContextSession(sessionValue);
+    validateContextSubject(receipt.subject);
+    if (receipt.sessionId !== session.sessionId || receipt.snapshotId !== snapshot.snapshotId || snapshot.receiptId !== receipt.receiptId) throw new TypeError("receipt and snapshot linkage is invalid");
+    if (receipt.repositoryIdentity !== session.repositoryIdentity || receipt.workspaceIdentity !== session.workspaceIdentity) throw new TypeError("receipt and session identity is invalid");
+    if (snapshot.subjectIdentity !== receipt.subjectIdentity || snapshot.projectionIdentity !== receipt.projectionIdentity || snapshot.contentIdentity !== receipt.deliveredContentIdentity || snapshot.contentIdentity !== contentIdentity(snapshot.content)) throw new TypeError("receipt and snapshot identity is invalid");
+    return session;
+  }
+
+  private writePublication(session: ContextSession, receipt: ContextReceipt, snapshot: DeliveredSnapshot): void {
+    this.validatePublication(session, receipt, snapshot);
+    this.writeSession(session);
+    this.database.prepare("INSERT INTO context_snapshots(snapshot_id, receipt_id, subject_identity, projection_identity, content, content_identity, created_at, schema_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(snapshot.snapshotId, snapshot.receiptId, snapshot.subjectIdentity, snapshot.projectionIdentity, snapshot.content, snapshot.contentIdentity, snapshot.createdAt, snapshot.schemaVersion);
+    this.database.prepare("INSERT INTO context_receipts(receipt_id, session_id, repository_identity, workspace_identity, subject_json, subject_identity, projection_identity, context_generation, delivery_mode, delivered_content_identity, snapshot_id, reliability_json, delivered_at, expires_at, prior_receipt_id, state, schema_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(receipt.receiptId, receipt.sessionId, receipt.repositoryIdentity, receipt.workspaceIdentity, json(receipt.subject), receipt.subjectIdentity, receipt.projectionIdentity, receipt.contextGeneration, receipt.deliveryMode, receipt.deliveredContentIdentity, receipt.snapshotId, json(receipt.reliability), receipt.deliveredAt, receipt.expiresAt ?? null, receipt.priorReceiptId ?? null, receipt.state, receipt.schemaVersion);
+  }
+
+  createAndCommitStart(input: { lifecycle: TaskContextLifecycle; session: ContextSession; prepared: Array<{ session: ContextSession; receipt: ContextReceipt; snapshot: DeliveredSnapshot }> }): TaskContextLifecycle {
+    this.database.exec("BEGIN");
+    try {
+      this.writeSession(input.session);
+      this.database.prepare("INSERT INTO task_context_lifecycles (task_context_id, repository_identity, workspace_identity, session_id, context_generation, task, anchors_json, task_intent_identity, latest_task_identity, max_items, max_estimated_tokens, ttl_seconds, latest_plan_identity, revision, state, created_at, last_seen_at, expires_at, closed_at, schema_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(input.lifecycle.taskContextId, input.lifecycle.repositoryIdentity, input.lifecycle.workspaceIdentity, input.lifecycle.sessionId, input.lifecycle.contextGeneration, input.lifecycle.task, json(input.lifecycle.anchors), input.lifecycle.taskIdentity, input.lifecycle.latestTaskIdentity ?? null, input.lifecycle.defaultBudget.maxItems, input.lifecycle.defaultBudget.maxEstimatedTokens, input.lifecycle.ttlSeconds, input.lifecycle.latestPlanIdentity ?? null, 0, input.lifecycle.state, input.lifecycle.createdAt, input.lifecycle.lastSeenAt, input.lifecycle.expiresAt ?? null, input.lifecycle.closedAt ?? null, input.lifecycle.schemaVersion);
+      for (const prepared of input.prepared) this.writePublication(prepared.session, prepared.receipt, prepared.snapshot);
+      this.database.prepare("UPDATE task_context_lifecycles SET revision = 1 WHERE task_context_id = ? AND revision = 0").run(input.lifecycle.taskContextId);
+      const result = this.readLifecycle(input.lifecycle.taskContextId);
+      this.database.exec("COMMIT");
+      if (!result) throw new Error("lifecycle disappeared during commit");
+      return result;
+    } catch (error) { this.database.exec("ROLLBACK"); throw error; }
+  }
+
+  loadLifecycle(taskContextId: string): TaskContextLifecycle | undefined { return this.readLifecycle(taskContextId); }
+
+  commitRefresh(input: { taskContextId: string; expectedRevision: number; now: string; repositoryIdentity: string; workspaceIdentity: string; prepared: Array<{ session: ContextSession; receipt: ContextReceipt; snapshot: DeliveredSnapshot }>; latestTaskIdentity: string; latestPlanIdentity: string }): TaskContextLifecycle {
+    return this.commitLifecycleChange(input, "refresh", () => {
+      for (const prepared of input.prepared) this.writePublication(prepared.session, prepared.receipt, prepared.snapshot);
+      this.database.prepare("UPDATE task_context_lifecycles SET last_seen_at = ?, latest_task_identity = ?, latest_plan_identity = ?, revision = revision + 1 WHERE task_context_id = ? AND revision = ? AND state = 'active'").run(input.now, input.latestTaskIdentity, input.latestPlanIdentity, input.taskContextId, input.expectedRevision);
+    });
+  }
+
+  closeLifecycle(input: { taskContextId: string; expectedRevision: number; now: string; repositoryIdentity: string; workspaceIdentity: string }): TaskContextLifecycle {
+    return this.commitLifecycleChange(input, "close", () => { this.database.prepare("UPDATE task_context_lifecycles SET state = CASE WHEN state = 'active' THEN 'closed' ELSE state END, closed_at = CASE WHEN state = 'active' THEN ? ELSE closed_at END, last_seen_at = CASE WHEN state = 'active' THEN ? ELSE last_seen_at END, revision = CASE WHEN state = 'active' THEN revision + 1 ELSE revision END WHERE task_context_id = ? AND revision = ?").run(input.now, input.now, input.taskContextId, input.expectedRevision); });
+  }
+
+  expireLifecycle(input: { taskContextId: string; expectedRevision: number; now: string; repositoryIdentity: string; workspaceIdentity: string }): TaskContextLifecycle {
+    return this.commitLifecycleChange(input, "refresh", () => { this.database.prepare("UPDATE task_context_lifecycles SET state = 'expired', last_seen_at = ?, revision = revision + 1 WHERE task_context_id = ? AND revision = ? AND state = 'active'").run(input.now, input.taskContextId, input.expectedRevision); });
+  }
+
+  private commitLifecycleChange(input: { taskContextId: string; expectedRevision: number; now: string; repositoryIdentity: string; workspaceIdentity: string }, operation: "refresh" | "close", write: () => void): TaskContextLifecycle {
+    this.database.exec("BEGIN");
+    try {
+      const current = this.readLifecycle(input.taskContextId);
+      if (!current) throw this.lifecycleError(operation, "context_not_found", input.taskContextId);
+      if (current.repositoryIdentity !== input.repositoryIdentity || current.workspaceIdentity !== input.workspaceIdentity) throw this.lifecycleError(operation, "workspace_mismatch", input.taskContextId);
+      if (current.state === "closed") throw this.lifecycleError(operation, "context_closed", input.taskContextId);
+      if (current.state === "expired") throw this.lifecycleError(operation, "context_expired", input.taskContextId);
+      if (current.revision !== input.expectedRevision) throw this.lifecycleError(operation, "lifecycle_conflict", input.taskContextId);
+      write();
+      const result = this.readLifecycle(input.taskContextId);
+      this.database.exec("COMMIT");
+      if (!result) throw new Error("lifecycle disappeared during commit");
+      return result;
+    } catch (error) { this.database.exec("ROLLBACK"); throw error; }
+  }
+
+  private lifecycleError(operation: "refresh" | "close", code: "context_not_found" | "workspace_mismatch" | "context_closed" | "context_expired" | "lifecycle_conflict", taskContextId: string): TaskContextLifecycleDomainError {
+    return new TaskContextLifecycleDomainError({ code, operation, taskContextId, message: `${code}: ${taskContextId}` });
+  }
+
+  private readLifecycle(taskContextId: string): TaskContextLifecycle | undefined {
+    const row = this.database.prepare("SELECT * FROM task_context_lifecycles WHERE task_context_id = ?").get(taskContextId) as Record<string, unknown> | undefined;
+    if (!row) return undefined;
+    return { taskContextId: row.task_context_id as string, repositoryIdentity: row.repository_identity as string, workspaceIdentity: row.workspace_identity as string, sessionId: row.session_id as string, contextGeneration: row.context_generation as string, task: row.task as string, anchors: JSON.parse(row.anchors_json as string), taskIdentity: row.task_intent_identity as string, ...(row.latest_task_identity ? { latestTaskIdentity: row.latest_task_identity as string } : {}), defaultBudget: { maxItems: row.max_items as number, maxEstimatedTokens: row.max_estimated_tokens as number }, ttlSeconds: row.ttl_seconds as number, ...(row.latest_plan_identity ? { latestPlanIdentity: row.latest_plan_identity as string } : {}), revision: row.revision as number, state: row.state as TaskContextLifecycle["state"], createdAt: row.created_at as string, lastSeenAt: row.last_seen_at as string, ...(row.expires_at ? { expiresAt: row.expires_at as string } : {}), ...(row.closed_at ? { closedAt: row.closed_at as string } : {}), schemaVersion: row.schema_version as number };
   }
 
   getReceipt(receiptId: string): ContextReceipt | undefined {

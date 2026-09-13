@@ -1,10 +1,51 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export const CONTEXT_SCHEMA_VERSION = 1;
+export const CONTEXT_SCHEMA_VERSION = 2;
+
+export class UnsupportedContextSchemaError extends Error {
+  constructor(version: string) {
+    super(`Unsupported context schema version: ${version}`);
+    this.name = "UnsupportedContextSchemaError";
+  }
+}
+
+function lifecycleTableSql(): string {
+  return `CREATE TABLE IF NOT EXISTS task_context_lifecycles (
+    task_context_id TEXT PRIMARY KEY,
+    repository_identity TEXT NOT NULL,
+    workspace_identity TEXT NOT NULL,
+    session_id TEXT NOT NULL REFERENCES context_sessions(session_id),
+    context_generation TEXT NOT NULL,
+    task TEXT NOT NULL,
+    anchors_json TEXT NOT NULL,
+    task_intent_identity TEXT NOT NULL,
+    latest_task_identity TEXT,
+    max_items INTEGER NOT NULL,
+    max_estimated_tokens INTEGER NOT NULL,
+    ttl_seconds INTEGER NOT NULL,
+    latest_plan_identity TEXT,
+    revision INTEGER NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('active', 'expired', 'closed')),
+    created_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    expires_at TEXT,
+    closed_at TEXT,
+    schema_version INTEGER NOT NULL
+  );`;
+}
 
 export function initializeContextSchema(database: DatabaseSync): void {
   database.exec("PRAGMA foreign_keys = ON;");
-  database.exec(`
+  const metadataExists = database.prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'context_metadata'").get() as { present?: number } | undefined;
+  if (metadataExists) {
+    const version = database.prepare("SELECT value FROM context_metadata WHERE key = 'contextSchemaVersion'").get() as { value?: string } | undefined;
+    if (version?.value !== "1" && version?.value !== String(CONTEXT_SCHEMA_VERSION)) throw new UnsupportedContextSchemaError(version?.value ?? "missing");
+    if (version.value === String(CONTEXT_SCHEMA_VERSION)) return;
+  }
+
+  database.exec("BEGIN IMMEDIATE;");
+  try {
+    database.exec(`
     CREATE TABLE IF NOT EXISTS context_metadata (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -48,8 +89,13 @@ export function initializeContextSchema(database: DatabaseSync): void {
       state TEXT NOT NULL CHECK (state IN ('active', 'expired', 'invalid')),
       schema_version INTEGER NOT NULL
     );
+    ${lifecycleTableSql()}
     INSERT OR IGNORE INTO context_metadata(key, value) VALUES ('contextSchemaVersion', '${CONTEXT_SCHEMA_VERSION}');
+    UPDATE context_metadata SET value = '${CONTEXT_SCHEMA_VERSION}' WHERE key = 'contextSchemaVersion';
   `);
-  const version = database.prepare("SELECT value FROM context_metadata WHERE key = 'contextSchemaVersion'").get() as { value?: string } | undefined;
-  if (version?.value !== String(CONTEXT_SCHEMA_VERSION)) throw new Error(`Unsupported context schema version: ${version?.value ?? "missing"}`);
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
 }
