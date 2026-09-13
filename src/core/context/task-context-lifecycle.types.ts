@@ -16,7 +16,7 @@ export type TaskContextLifecycleMetrics = {
 
 export type PreparedContextDelivery = {
   item: TaskContextItem;
-  mode: "full" | "delta" | "rehydrate" | "unchanged" | "error";
+  mode: "full" | "delta" | "rehydrate" | "unchanged";
 };
 
 export type TaskContextDelivery = PreparedContextDelivery | {
@@ -26,23 +26,25 @@ export type TaskContextDelivery = PreparedContextDelivery | {
 };
 
 export type TaskContextLifecycle = {
-  taskContextId: string;
-  repositoryIdentity: string;
-  workspaceIdentity: string;
-  sessionId: string;
-  contextGeneration: string;
-  task: string;
-  anchors: TaskContextAnchor[];
-  taskIntentIdentity: string;
-  latestTaskIdentity: string;
-  budget: TaskContextLifecycleBudget;
-  ttlSeconds: number;
+  readonly taskContextId: string;
+  readonly repositoryIdentity: string;
+  readonly workspaceIdentity: string;
+  readonly sessionId: string;
+  readonly contextGeneration: string;
+  readonly task: string;
+  readonly anchors: readonly TaskContextAnchor[];
+  readonly taskIdentity: string;
+  readonly defaultBudget: Readonly<TaskContextLifecycleBudget>;
+  readonly ttlSeconds: number;
+  latestTaskIdentity?: string;
+  latestPlanIdentity?: string;
   revision: number;
   state: TaskContextLifecycleState;
-  createdAt: number;
-  lastSeenAt: number;
-  expiresAt: number;
-  closedAt?: number;
+  createdAt: string;
+  lastSeenAt: string;
+  expiresAt?: string;
+  closedAt?: string;
+  readonly schemaVersion: number;
 };
 
 export type TaskContextLifecycleResult = {
