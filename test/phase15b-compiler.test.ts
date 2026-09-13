@@ -26,3 +26,14 @@ test("compiler returns deterministic compact plans without delivery calls", asyn
   assert.equal(first.items[0]!.subject.kind, "file");
   assert.equal(first.projection.detail, "compact");
 });
+
+test("full projection caps evidence and omitted candidates", async () => {
+  const candidates = [
+    { subject: { kind: "file" as const, path: "src/required.ts" }, evidence: [{ kind: "explicit_changed_path" as const, path: "src/required.ts" }], sourceRanks: {}, exact: true },
+    ...Array.from({ length: 25 }, (_, index) => ({ subject: { kind: "file" as const, path: `src/optional-${index}.ts` }, evidence: Array.from({ length: 10 }, (_, rank) => ({ kind: "lexical" as const, query: `${index}-${rank}`, rank: rank + 1 })), sourceRanks: {}, exact: true })),
+  ];
+  const plan = await compileTaskContext({ task: "required", changedPaths: ["src/required.ts"], detail: "full", budget: { maxItems: 1, maxEstimatedTokens: 1 } }, { repositoryPath: "/repo", repositoryIdentity: "repo", workspaceIdentity: "workspace", collect: async () => ({ candidates, reliability: { mayBeIncomplete: false, capabilityStates: {}, diagnostics: [] } }) });
+  assert.equal(plan.fullItems?.every((item) => item.evidence.length <= 8), true);
+  assert.equal(plan.projection.omitted, 20);
+  assert.equal(plan.projection.truncated, true);
+});
