@@ -17,11 +17,13 @@ import type { ContextStore } from "../../storage/context/context.store.js";
 export const CONTEXT_AWARE_SOURCE_PROJECTION = "source-v1";
 
 async function readSubject(root: string, subject: ContextSubject): Promise<string> {
-  const source = await fs.readFile(path.join(root, subject.path), "utf8");
+  let source: string;
+  try { source = await fs.readFile(path.join(root, subject.path), "utf8"); }
+  catch (error) { throw new PreparationError(`Context-aware source read failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error }); }
   if (subject.kind === "file") return source;
   const graph = await loadIndexedGraphReadOnly(root);
   const nodes = graph.graph.nodes.filter((node) => node.id === subject.symbolId && node.file === subject.path && node.startLine !== undefined && node.endLine !== undefined);
-  if (nodes.length !== 1) throw new Error("Symbol selector is not uniquely indexed");
+  if (nodes.length !== 1) throw new PreparationError("Context-aware source read failed: Symbol selector is not uniquely indexed");
   const lines = source.split(/\r?\n/);
   return lines.slice(nodes[0]!.startLine! - 1, nodes[0]!.endLine!).join("\n");
 }
@@ -50,9 +52,7 @@ export async function prepareContextAwareRead(repoPath: string, request: Context
   let status;
   try { status = await getRepositoryStatusReadOnly(root); } catch { status = undefined; }
 
-  let content: string;
-  try { content = await readSubject(root, request.subject); }
-  catch (error) { throw new PreparationError(`Context-aware source read failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error }); }
+  const content = await readSubject(root, request.subject);
 
   const currentIdentity = contentIdentity(content);
   if (!store) {

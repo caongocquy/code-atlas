@@ -9,6 +9,7 @@ import {
   CONTEXT_AWARE_SOURCE_PROJECTION,
   prepareContextAwareRead,
 } from "../src/core/context/context-delivery-preparation.js";
+import { ContextDeliveryPreparationError } from "../src/core/context/context.types.js";
 import { readContextAware } from "../src/core/context/context-aware-read.service.js";
 import { ContextStore } from "../src/storage/context/context.store.js";
 
@@ -46,5 +47,19 @@ test("public reads preserve full, unchanged, delta, and rehydrate behavior", asy
     const rehydrated = await readContextAware(root, request);
     assert.equal(rehydrated.mode, "rehydrate");
     assert.equal(rehydrated.content, "two\n");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("graph storage failures remain hard failures instead of preparation errors", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15c-preparation-graph-failure-"));
+  try {
+    await writeFile(path.join(root, "source.ts"), "export function target() { return 1; }\n");
+    const store = new ContextStore(path.join(root, ".codeatlas", "context.db"));
+    await writeFile(path.join(root, ".codeatlas", "atlas.db"), "corrupt graph database");
+    await assert.rejects(
+      prepareContextAwareRead(root, { sessionId: "s", contextGeneration: "g", subject: { kind: "symbol", path: "source.ts", symbolId: "missing", selectorVersion: "1" }, projection: CONTEXT_AWARE_SOURCE_PROJECTION }, store),
+      (error: unknown) => !(error instanceof ContextDeliveryPreparationError),
+    );
+    store.close();
   } finally { await rm(root, { recursive: true, force: true }); }
 });
