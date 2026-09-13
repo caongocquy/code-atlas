@@ -1,4 +1,5 @@
 import type { ContextSubject } from "./context.types.js";
+import type { GraphEntityResolution } from "../graph/query/graph-query.types.js";
 import { canonicalContextSubjectKey } from "./task-context-normalizer.js";
 import type { TaskContextCandidate, TaskContextEvidence } from "./task-context.types.js";
 
@@ -10,6 +11,29 @@ function stableJson(value: unknown): string {
 
 function evidenceKey(evidence: TaskContextEvidence): string {
   return stableJson(evidence);
+}
+
+function normalizeIdentifier(value: string): string {
+  return value.normalize("NFC").replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_./\\:#$-]+/g, " ").replace(/[^a-zA-Z0-9 ]+/g, " ").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function normalizedPath(value: string): string {
+  return value.replaceAll("\\", "/").replace(/^\.\//, "").toLowerCase();
+}
+
+export function isAuthoritativeTaskResolution(query: string, resolution: GraphEntityResolution): boolean {
+  if (resolution.status !== "resolved") return false;
+  const match = resolution.candidates.find((candidate) => candidate.entity.id === resolution.entity.id);
+  if (!match) return false;
+  const separator = query.lastIndexOf(":");
+  const fileQualified = separator > 0 && /[\\/]/.test(query.slice(0, separator));
+  if (fileQualified) {
+    const requestedPath = normalizedPath(query.slice(0, separator));
+    const requestedSymbol = query.slice(separator + 1);
+    const symbolMatches = requestedSymbol.toLowerCase() === resolution.entity.name.toLowerCase() || requestedSymbol.toLowerCase() === (resolution.entity.qualifiedName ?? "").toLowerCase() || normalizeIdentifier(requestedSymbol) === normalizeIdentifier(resolution.entity.name) || normalizeIdentifier(requestedSymbol) === normalizeIdentifier(resolution.entity.qualifiedName ?? "");
+    return match.reason === "file_path_context" && requestedPath === normalizedPath(resolution.entity.file) && symbolMatches;
+  }
+  return match.reason === "exact_qualified_name" || match.reason === "exact_symbol_name" || match.reason === "exact_normalized_token";
 }
 
 function candidateKey(candidate: TaskContextCandidate): string {
