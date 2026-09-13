@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, mkdir, symlink, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import { collectTaskContextCandidates, isAuthoritativeTaskResolution } from "../src/core/context/task-context-candidates.js";
@@ -76,4 +79,19 @@ test("collector keeps retrieval content out of candidates and degrades semantic 
   assert.equal(result.reliability.mayBeIncomplete, true);
   assert.equal(JSON.stringify(result.candidates).includes("secret"), false);
   assert.equal(result.candidates.some((candidate) => candidate.evidence.some((item) => item.kind === "task_exact_resolution")), false);
+});
+
+test("collector rejects repository-relative symlinks that escape the repository", async () => {
+  const repo = await mkdtemp(path.join(tmpdir(), "phase15b-path-"));
+  const outside = await mkdtemp(path.join(tmpdir(), "phase15b-outside-"));
+  try {
+    await mkdir(path.join(repo, "src"));
+    await writeFile(path.join(outside, "secret.ts"), "secret");
+    await symlink(path.join(outside, "secret.ts"), path.join(repo, "src", "link.ts"));
+    const result = await collectTaskContextCandidates({ task: "missing", anchors: [{ kind: "file", path: "src/link.ts" }], changedPaths: [] }, { repositoryPath: repo, loadGraph: async () => ({ graph: { nodes: [], edges: [] } }) });
+    assert.equal(result.candidates.length, 0);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
 });

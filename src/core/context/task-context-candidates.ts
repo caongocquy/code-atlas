@@ -1,5 +1,6 @@
 import type { ContextSubject } from "./context.types.js";
 import fs from "node:fs/promises";
+import path from "node:path";
 import type { GraphEntityResolution } from "../graph/query/graph-query.types.js";
 import { resolveGraphEntity } from "../graph/query/graph-query-entity-resolver.js";
 import type { CodeGraph, GraphNode } from "../graph/types.js";
@@ -24,6 +25,17 @@ function normalizeIdentifier(value: string): string {
 
 function normalizedPath(value: string): string {
   return value.replaceAll("\\", "/").replace(/^\.\//, "").toLowerCase();
+}
+
+async function isReadableRepositoryPath(repositoryPath: string, relativePath: string): Promise<boolean> {
+  try {
+    const root = await fs.realpath(repositoryPath);
+    const target = await fs.realpath(path.join(root, relativePath));
+    const relative = path.relative(root, target);
+    return relative.length > 0 && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+  } catch {
+    return false;
+  }
 }
 
 export function isAuthoritativeTaskResolution(query: string, resolution: GraphEntityResolution): boolean {
@@ -111,7 +123,7 @@ export async function collectTaskContextCandidates(
   for (const anchor of normalized.anchors) {
     if (anchor.kind === "file") {
       try {
-        await fs.access(`${deps.repositoryPath}/${anchor.path}`);
+        if (!(await isReadableRepositoryPath(deps.repositoryPath, anchor.path))) throw new Error("outside repository or unavailable");
         candidates.push(exactFileCandidate(anchor.path, { kind: "explicit_anchor", anchor }));
       } catch { diagnostics.push(`anchor file is unavailable: ${anchor.path}`); }
       continue;
@@ -124,7 +136,7 @@ export async function collectTaskContextCandidates(
   }
   for (const changedPath of normalized.changedPaths) {
     try {
-      await fs.access(`${deps.repositoryPath}/${changedPath}`);
+      if (!(await isReadableRepositoryPath(deps.repositoryPath, changedPath))) throw new Error("outside repository or unavailable");
       candidates.push(exactFileCandidate(changedPath, { kind: "explicit_changed_path", path: changedPath }));
     } catch { diagnostics.push(`changed path is unavailable: ${changedPath}`); }
   }
@@ -244,7 +256,12 @@ export async function enrichTaskContextCandidates(
     try {
       const tests = await deps.affectedTests(deps.repositoryPath, { maxTests: 10, maxDepth: 1 });
       mayBeIncomplete ||= Boolean(tests.mayBeIncomplete);
+      const relevantIds = new Set(seeds.map((seed) => seed.id));
+      for (const seed of seeds) {
+        for (const edge of graph.edges) if (edge.from === seed.id || edge.to === seed.id) relevantIds.add(edge.from === seed.id ? edge.to : edge.from);
+      }
       for (const test of (tests.tests ?? []).slice(0, 10)) {
+        if (!test.testSymbols?.some((symbol: { symbolId: string }) => relevantIds.has(symbol.symbolId))) continue;
         additions.push({ subject: { kind: "file", path: test.file }, evidence: [{ kind: "affected_test", path: test.file, confidence: test.confidence }], sourceRanks: { affected_test: 1 }, exact: true });
       }
     } catch (error) { mayBeIncomplete = true; diagnostics.push(`affected-test enrichment failed: ${error instanceof Error ? error.message : String(error)}`); }

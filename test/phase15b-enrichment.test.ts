@@ -41,7 +41,7 @@ test("change, impact, and affected-test enrichment is relevant, bounded, and inc
       mayBeIncomplete: false,
     }),
     analyzeImpact: async () => ({ status: "resolved", directImpact: [{ entity: graph.nodes[1], relation: "calls", depth: 1 }], transitiveImpact: [], mayBeIncomplete: true, truncated: false }),
-    affectedTests: async () => ({ tests: [{ file: "test/a.test.ts", confidence: "high" }], mayBeIncomplete: false }),
+    affectedTests: async () => ({ tests: [{ file: "test/a.test.ts", confidence: "high", testSymbols: [{ symbolId: "a", name: "a", kind: "function", file: "test/a.test.ts" }] }, { file: "test/other.test.ts", confidence: "high", testSymbols: [{ symbolId: "unrelated", name: "other", kind: "function", file: "test/other.test.ts" }] }], mayBeIncomplete: false }),
   });
   assert.equal(result.reliability.mayBeIncomplete, true);
   assert.equal(result.candidates.some((candidate) => candidate.subject?.path === "src/b.ts"), true);
