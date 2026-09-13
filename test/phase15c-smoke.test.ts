@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -37,10 +38,13 @@ test("real lifecycle smoke preserves exact deliveries across restart and detail 
     const startedDelivery = started.deliveries[0] as unknown as { mode: string; content?: string; delta?: unknown };
     assert.equal(startedDelivery.mode, "full");
     assert.equal(startedDelivery.content, "one\ntwo\n");
+    assert.match((started.deliveries[0] as { current: { contentIdentity: string } }).current.contentIdentity, /.+/);
+    assert.equal((started.deliveries[0] as { reason: string }).reason, "first_read");
 
     const restarted = await refreshTaskContext({ taskContextId: started.lifecycle.taskContextId, detail: "compact" }, common);
     const unchanged = restarted.deliveries[0] as unknown as { mode: string; content?: string; delta?: unknown };
     assert.equal(unchanged.mode, "unchanged");
+    assert.match((restarted.deliveries[0] as { current: { contentIdentity: string } }).current.contentIdentity, /.+/);
     assert.equal("content" in unchanged, false);
     assert.equal("delta" in unchanged, false);
 
@@ -50,11 +54,22 @@ test("real lifecycle smoke preserves exact deliveries across restart and detail 
     assert.equal(delta.mode, "delta");
     assert.ok(delta.delta);
     assert.equal("content" in delta, false);
-    assert.deepEqual(changed.plan.items, started.plan.items);
+    assert.match((changed.deliveries[0] as { current: { contentIdentity: string } }).current.contentIdentity, /.+/);
     assert.equal(changed.lifecycle.sessionId, started.lifecycle.sessionId);
     assert.equal(changed.lifecycle.contextGeneration, started.lifecycle.contextGeneration);
-    assert.equal(changed.plan.taskIdentity, started.plan.taskIdentity);
-    assert.notDeepEqual(changed.plan.projection, started.plan.projection);
+
+    const database = new DatabaseSync(path.join(root, ".codeatlas", "context.db"));
+    const latestReceipt = database.prepare("SELECT receipt_id AS receiptId FROM context_receipts ORDER BY delivered_at DESC, receipt_id DESC LIMIT 1").get() as { receiptId: string };
+    database.prepare("UPDATE context_receipts SET workspace_identity = 'other-workspace' WHERE receipt_id = ?").run(latestReceipt.receiptId);
+    database.close();
+    await writeFile(sourcePath, "one\ntwo\nthree\nfour\n");
+    const rehydrated = await refreshTaskContext({ taskContextId: started.lifecycle.taskContextId, detail: "full" }, common);
+    const rehydrateDelivery = rehydrated.deliveries[0] as unknown as { mode: string; content?: string; delta?: unknown; reason?: string; current?: unknown };
+    assert.equal(rehydrateDelivery.mode, "rehydrate");
+    assert.equal(rehydrateDelivery.content, "one\ntwo\nthree\nfour\n");
+    assert.equal("delta" in rehydrateDelivery, false);
+    assert.equal(rehydrateDelivery.reason, "identity_mismatch");
+    assert.ok(rehydrateDelivery.current);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

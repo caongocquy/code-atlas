@@ -1,4 +1,5 @@
 import type { TaskContextAnchor, TaskContextBudget, TaskContextItem } from "./task-context.types.js";
+import type { ContextAwareReadResult } from "./context.types.js";
 
 export type TaskContextLifecycleState = "active" | "expired" | "closed";
 
@@ -22,10 +23,15 @@ export type TaskContextLifecycleMetrics = {
   rehydrates: number;
 };
 
-export type PreparedContextDelivery = {
+type TaskContextDeliveryBase = {
   item: TaskContextItem;
-  mode: "full" | "delta" | "rehydrate" | "unchanged";
+  current: ContextAwareReadResult["current"];
 };
+
+export type PreparedContextDelivery =
+  | (TaskContextDeliveryBase & { mode: "full" | "rehydrate"; content: string; reason?: string })
+  | (TaskContextDeliveryBase & { mode: "delta"; delta: unknown })
+  | (TaskContextDeliveryBase & { mode: "unchanged" });
 
 export type TaskContextDelivery = PreparedContextDelivery | {
   item: TaskContextItem;
@@ -84,7 +90,7 @@ export type CloseTaskContextResult = { lifecycle: TaskContextLifecycle };
 export type TaskContextLifecycleOperation = "start" | "refresh" | "close" | "expire";
 export type TaskContextLifecycleOperationErrorCode =
   | "invalid_task_context_id"
-  | "context_not_found"
+  | "lifecycle_not_found"
   | "workspace_mismatch"
   | "lifecycle_conflict"
   | "context_closed"

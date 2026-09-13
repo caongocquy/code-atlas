@@ -25,7 +25,7 @@ export type TaskContextLifecycleDeps = {
   readCurrentChangedPaths?: typeof readCurrentChangedPaths;
 };
 
-type LifecycleErrorCode = "invalid_task_context_id" | "context_not_found" | "workspace_mismatch" | "lifecycle_conflict" | "context_closed" | "context_expired" | "unsupported_context_schema" | "context_database_unavailable" | "compiler_validation_failed";
+type LifecycleErrorCode = "invalid_task_context_id" | "lifecycle_not_found" | "workspace_mismatch" | "lifecycle_conflict" | "context_closed" | "context_expired" | "unsupported_context_schema" | "context_database_unavailable" | "compiler_validation_failed";
 
 function operationError(code: LifecycleErrorCode, operation: "start" | "refresh" | "close", message: string, taskContextId?: string): never {
   throw new TaskContextLifecycleDomainError({ code, operation, message, ...(taskContextId ? { taskContextId } : {}) });
@@ -46,7 +46,12 @@ function metrics(plan: TaskContextPlanDetail, prepared: PreparedContextAwareRead
 }
 
 function mapPrepared(item: TaskContextPlanDetail["items"][number], prepared: PreparedContextAwareRead | undefined): TaskContextDelivery {
-  if (prepared) return { item, mode: prepared.result.mode };
+  if (prepared) {
+    const { mode, current, content, delta, reason } = prepared.result;
+    if (mode === "full" || mode === "rehydrate") return { item, mode, current, content: content as string, ...(reason ? { reason } : {}) };
+    if (mode === "delta") return { item, mode, current, delta };
+    return { item, mode, current };
+  }
   return { item, mode: "error", error: { code: "context_delivery_failed", message: "Context delivery preparation failed" } };
 }
 
@@ -108,7 +113,7 @@ export async function refreshTaskContext(input: RefreshTaskContextInput, deps: T
   const storeInfo = storeFor(root, deps, "refresh");
   try {
     const current = storeInfo.store.loadLifecycle(taskContextId);
-    if (!current) operationError("context_not_found", "refresh", `context_not_found: ${taskContextId}`, taskContextId);
+    if (!current) operationError("lifecycle_not_found", "refresh", `lifecycle_not_found: ${taskContextId}`, taskContextId);
     if (current.repositoryIdentity !== workspace.repositoryIdentity || current.workspaceIdentity !== workspace.workspaceIdentity) operationError("workspace_mismatch", "refresh", `workspace_mismatch: ${taskContextId}`, taskContextId);
     if (current.state === "closed") operationError("context_closed", "refresh", `context_closed: ${taskContextId}`, taskContextId);
     if (current.state === "expired") operationError("context_expired", "refresh", `context_expired: ${taskContextId}`, taskContextId);
@@ -134,7 +139,7 @@ export function closeTaskContext(input: CloseTaskContextInput, deps: TaskContext
   const storeInfo = storeFor(root, deps, "close");
   try {
     const current = storeInfo.store.loadLifecycle(taskContextId);
-    if (!current) operationError("context_not_found", "close", `context_not_found: ${taskContextId}`, taskContextId);
+    if (!current) operationError("lifecycle_not_found", "close", `lifecycle_not_found: ${taskContextId}`, taskContextId);
     return { lifecycle: storeInfo.store.closeLifecycle({ taskContextId, expectedRevision: current.revision, now: (deps.now ?? (() => new Date()))().toISOString(), repositoryIdentity: workspace.repositoryIdentity, workspaceIdentity: workspace.workspaceIdentity }) };
   } finally { if (storeInfo.owned) storeInfo.store.close(); }
 }

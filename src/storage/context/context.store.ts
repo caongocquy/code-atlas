@@ -134,7 +134,7 @@ export class ContextStore {
     this.database.exec("BEGIN");
     try {
       const current = this.readLifecycle(input.taskContextId);
-      if (!current) throw this.lifecycleError("refresh", "context_not_found", input.taskContextId);
+      if (!current) throw this.lifecycleError("refresh", "lifecycle_not_found", input.taskContextId);
       if (current.repositoryIdentity !== input.repositoryIdentity || current.workspaceIdentity !== input.workspaceIdentity) throw this.lifecycleError("refresh", "workspace_mismatch", input.taskContextId);
       if (current.revision !== input.expectedRevision) throw this.lifecycleError("refresh", "lifecycle_conflict", input.taskContextId);
       if (current.state === "closed") throw this.lifecycleError("refresh", "context_closed", input.taskContextId);
@@ -169,7 +169,7 @@ export class ContextStore {
     this.database.exec("BEGIN");
     try {
       const current = this.readLifecycle(input.taskContextId);
-      if (!current) throw this.lifecycleError(operation, "context_not_found", input.taskContextId);
+      if (!current) throw this.lifecycleError(operation, "lifecycle_not_found", input.taskContextId);
       if (current.repositoryIdentity !== input.repositoryIdentity || current.workspaceIdentity !== input.workspaceIdentity) throw this.lifecycleError(operation, "workspace_mismatch", input.taskContextId);
       if (current.revision !== input.expectedRevision) throw this.lifecycleError(operation, "lifecycle_conflict", input.taskContextId);
       if (operation === "close" && (current.state === "closed" || current.state === "expired")) { this.database.exec("COMMIT"); return current; }
@@ -184,7 +184,7 @@ export class ContextStore {
     } catch (error) { this.database.exec("ROLLBACK"); throw error; }
   }
 
-  private lifecycleError(operation: "refresh" | "close" | "expire", code: "context_not_found" | "workspace_mismatch" | "context_closed" | "context_expired" | "lifecycle_conflict", taskContextId: string): TaskContextLifecycleDomainError {
+  private lifecycleError(operation: "refresh" | "close" | "expire", code: "lifecycle_not_found" | "workspace_mismatch" | "context_closed" | "context_expired" | "lifecycle_conflict", taskContextId: string): TaskContextLifecycleDomainError {
     return new TaskContextLifecycleDomainError({ code, operation, taskContextId, message: `${code}: ${taskContextId}` });
   }
 
