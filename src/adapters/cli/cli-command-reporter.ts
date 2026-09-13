@@ -19,6 +19,9 @@ export type CliCommandReporter = {
 export type CliCommand =
   | "context-compile"
   | "context-read"
+  | "context-start"
+  | "context-refresh"
+  | "context-close"
   | "affected-tests"
   | "architecture-drift"
   | "connect"
@@ -37,6 +40,9 @@ export type CliCommand =
 const commandSubtitles: Record<CliCommand, string> = {
   "context-compile": "Task context compilation",
   "context-read": "Context-aware read",
+  "context-start": "Task context lifecycle",
+  "context-refresh": "Task context lifecycle",
+  "context-close": "Task context lifecycle",
   "affected-tests": "Affected tests",
   "architecture-drift": "Architecture analysis",
   connect: "Agent integrations",

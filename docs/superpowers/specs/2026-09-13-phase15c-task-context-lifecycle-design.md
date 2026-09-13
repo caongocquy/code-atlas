@@ -473,11 +473,23 @@ not silently changed to infer or join a task lifecycle.
 
 ## 17. Security and safety
 
-The implementation must enforce canonical repository/workspace validation,
-realpath boundary checks, symlink escape rejection, opaque lifecycle IDs, and
-no arbitrary path authority through a lifecycle handle. It must prevent
-cross-worktree resume, avoid fake receipts on failed delivery, isolate context
-database corruption, and fail closed for unsupported future schemas.
+Phase15C v1 guarantees canonical repository/workspace validation, realpath
+boundary checks, symlink escape rejection, opaque lifecycle IDs, and no
+arbitrary path authority through a lifecycle handle when the filesystem
+namespace is stable during the operation. It prevents cross-worktree resume,
+avoids fake receipts on failed delivery, isolates context database corruption,
+and fails closed for unsupported future schemas.
+
+The stable-filesystem guarantee covers ordinary path traversal, symlink escape,
+canonicalization mismatch, repository/workspace boundary escape, canonical path
+aliases, and normal path replacement cases that the supported Node filesystem
+APIs can detect safely. It does not claim protection against a hostile local
+actor concurrently replacing parent directories or mounting/symlinking path
+components during the validate-to-open window. Fully closing that window
+requires descriptor-relative native filesystem primitives, such as POSIX
+`openat`/`openat2` and the Windows equivalent, which are not exposed by the
+supported Node runtime. Phase15C v1 uses no native addon, FFI, `/proc/self/fd`
+or `/dev/fd` shim, or other unsafe path-check/reopen workaround.
 
 ## 18. Acceptance tests
 
@@ -518,9 +530,24 @@ unchanged subject body resend            0%
 immutable task mutation accepted         0%
 Phase15A reconstruction invariant      100%
 Phase15B required-authority invariant  100%
+stable-filesystem containment          100%
 ```
 
-## 20. Real-repository lifecycle smoke
+There is deliberately no `symlink-race isolation` gate in Phase15C v1. The
+concurrent parent-directory namespace-swap threat is an explicit limitation,
+not an untested guarantee.
+
+## 20. Follow-up design backlog
+
+### Secure Descriptor-Relative File Access
+
+Design a future repository-relative source access layer using POSIX
+`openat`/`openat2` and the equivalent Windows descriptor-relative primitives.
+It must define component-by-component no-follow traversal, containment and
+rename semantics, portability requirements, and safe Node integration. This
+backlog item is not implemented in Phase15C v1.
+
+## 21. Real-repository lifecycle smoke
 
 The real stack smoke must:
 
@@ -534,7 +561,7 @@ The real stack smoke must:
 5. Exercise a second Git worktree and verify the same handle cannot resume;
    `lifecycle_not_found` is the expected result when its local store has no row.
 
-## 21. Non-goals
+## 22. Non-goals
 
 Phase15C v1 explicitly excludes agent memory, conversation history,
 cross-worktree continuation, auto-rebind, lifecycle deduplication by
@@ -544,7 +571,7 @@ interception, generic RAG, an LLM
 planner, autonomous agent execution, and Phase15D evaluation framework
 expansion.
 
-## 22. Design rationale
+## 23. Design rationale
 
 - A dedicated lifecycle table keeps task ownership separate from Phase15A's
   reusable session contract and avoids task-specific columns in
@@ -594,6 +621,9 @@ checks pass:
   after restart and never derives its duration from timestamps;
 - close and expiry use state/revision-aware CAS writes, so stale refreshes
   cannot commit after closure/expiry;
+- stable-filesystem containment is guaranteed for ordinary traversal, symlink,
+  alias, boundary, and safely detectable replacement cases; hostile concurrent
+  parent-directory namespace swaps are explicitly outside the v1 guarantee;
 - Phase15D, cross-worktree continuation, and rebind remain excluded;
 - v1-to-v2 migration preserves history and rejects unsupported versions;
 - every public lifecycle error has deterministic semantics.

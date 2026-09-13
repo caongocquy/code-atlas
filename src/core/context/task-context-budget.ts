@@ -1,15 +1,21 @@
 import type { CompileTaskContextInput, TaskContextBudget, TaskContextFullItem } from "./task-context.types.js";
 
-const DEFAULT_MAX_ITEMS = 20;
-const DEFAULT_MAX_TOKENS = 4_000;
+export const DEFAULT_TASK_CONTEXT_BUDGET = { maxItems: 20, maxEstimatedTokens: 4_000 } as const;
+
+export function resolveTaskContextBudget(
+  request?: CompileTaskContextInput["budget"],
+): { maxItems: number; maxEstimatedTokens: number } {
+  const maxItems = request?.maxItems ?? DEFAULT_TASK_CONTEXT_BUDGET.maxItems;
+  const maxEstimatedTokens = request?.maxEstimatedTokens ?? DEFAULT_TASK_CONTEXT_BUDGET.maxEstimatedTokens;
+  if (!Number.isInteger(maxItems) || maxItems <= 0 || !Number.isInteger(maxEstimatedTokens) || maxEstimatedTokens <= 0) throw new TypeError("budget limits must be positive integers");
+  return { maxItems, maxEstimatedTokens };
+}
 
 export function budgetTaskContext(
   items: readonly TaskContextFullItem[],
   request?: CompileTaskContextInput["budget"],
 ): { items: TaskContextFullItem[]; budget: TaskContextBudget; diagnostics: string[] } {
-  const maxItems = request?.maxItems ?? DEFAULT_MAX_ITEMS;
-  const maxEstimatedTokens = request?.maxEstimatedTokens ?? DEFAULT_MAX_TOKENS;
-  if (!Number.isInteger(maxItems) || maxItems <= 0 || !Number.isInteger(maxEstimatedTokens) || maxEstimatedTokens <= 0) throw new TypeError("budget limits must be positive integers");
+  const { maxItems, maxEstimatedTokens } = resolveTaskContextBudget(request);
   const selected: TaskContextFullItem[] = [];
   let estimatedTokens = 0;
   for (const item of items) {

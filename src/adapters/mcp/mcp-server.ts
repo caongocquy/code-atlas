@@ -50,10 +50,10 @@ import type { ArchitectureDriftInput } from "../../core/architecture/architectur
 import { changeGate } from "../../core/gate/change-gate.service.js";
 import type { ChangeGateInput } from "../../core/gate/change-gate.types.js";
 import { readContextAware } from "../../core/context/context-aware-read.service.js";
-import { compileTaskContext } from "../../core/context/task-context-compiler.js";
-import { collectTaskContextCandidates, enrichTaskContextCandidates, enrichTaskContextGraph } from "../../core/context/task-context-candidates.js";
-import { getWorkspaceIdentity } from "../../core/context/context-identity.js";
-import { getRepositoryIdentity } from "../../core/repository/repository-identity.js";
+import { CONTEXT_AWARE_SOURCE_PROJECTION } from "../../core/context/context-delivery-preparation.js";
+import { compileTaskContextForRepository, TaskContextRepositoryCompilerError } from "../../core/context/task-context-repository-compiler.js";
+import { closeTaskContext, refreshTaskContext, startTaskContext } from "../../core/context/task-context-lifecycle.service.js";
+import { TaskContextLifecycleDomainError } from "../../core/context/task-context-lifecycle.types.js";
 
 const MAX_LIMIT = 1_000;
 const MAX_CANDIDATES = 20;
@@ -90,7 +90,9 @@ function resolveRepo(repoPath?: string): string {
 }
 
 function errorResult(error: unknown): CallToolResult {
-  const failure = error instanceof McpToolError
+  const failure = error instanceof TaskContextLifecycleDomainError
+    ? { code: error.operationError.code, message: error.operationError.message, details: error.operationError }
+    : error instanceof McpToolError
     ? { code: error.code, message: error.message, ...(error.details ? { details: error.details } : {}) }
     : { code: "internal_error", message: error instanceof Error ? error.message : String(error) };
   const value = { error: failure };
@@ -544,7 +546,7 @@ export function createMcpServer(): McpServer {
     sessionId: args.sessionId as string,
     contextGeneration: args.contextGeneration as string,
     subject: { kind: "file", path: args.file as string },
-    projection: "source-v1",
+    projection: CONTEXT_AWARE_SOURCE_PROJECTION,
   }));
 
   registerJsonTool(server, "compile_task_context", "Compile bounded, evidence-backed Phase15A context subjects for a task.", z.object({
@@ -559,45 +561,38 @@ export function createMcpServer(): McpServer {
     detail: z.enum(["compact", "full"]).optional(),
   }).strict(), async (args) => {
     const repoPath = resolveRepo(args.repoPath as string | undefined);
-    const indexed = await withGraph(repoPath, async (context) => context);
-    const workspace = getWorkspaceIdentity(repoPath);
-    const repository = getRepositoryIdentity(repoPath);
-    return compileTaskContext({
+    try {
+      return await compileTaskContextForRepository(repoPath, {
       task: args.task as string,
       repoPath,
       anchors: args.anchors as never,
       changedPaths: args.changedPaths as string[] | undefined,
       budget: args.budget as { maxItems?: number; maxEstimatedTokens?: number } | undefined,
       detail: args.detail as "compact" | "full" | undefined,
-    }, {
-      repositoryPath: repoPath,
-      repositoryIdentity: repository.identityKey,
-      workspaceIdentity: workspace.workspaceIdentity,
-      collect: async (normalized) => {
-        const deps = {
-          repositoryPath: repoPath,
-          loadGraph: async () => indexed,
-          getStatus: getRepositoryStatus,
-          lexicalSearch: searchLexical,
-          hybridSearch: inspectHybridSearch,
-          inspectChange,
-          analyzeImpact: async (...args: Parameters<typeof analyzeImpact>) => analyzeImpact(...args),
-          affectedTests,
-        };
-        const collected = await collectTaskContextCandidates(normalized, deps);
-        const enriched = await enrichTaskContextCandidates(collected.candidates, normalized, indexed.graph, deps);
-        const graphCandidates = enrichTaskContextGraph(enriched.candidates, indexed.graph);
-        return {
-          candidates: graphCandidates,
-          reliability: {
-            ...collected.reliability,
-            mayBeIncomplete: collected.reliability.mayBeIncomplete || enriched.reliability.mayBeIncomplete,
-            diagnostics: [...collected.reliability.diagnostics, ...enriched.reliability.diagnostics],
-          },
-        };
-      },
-    });
+      });
+    } catch (error) {
+      if (error instanceof TaskContextRepositoryCompilerError && error.code === "index_required") throw new McpToolError("index_required", error.message, { repositoryPath: repoPath, next: "Call index_repository or sync_repository first." });
+      throw error;
+    }
   });
+
+  const lifecycleAnchor = z.union([
+    z.object({ kind: z.literal("file"), path: z.string().min(1) }).strict(),
+    z.object({ kind: z.literal("symbol"), path: z.string().min(1).optional(), name: z.string().min(1) }).strict(),
+  ]);
+  registerJsonTool(server, "start_task_context", "Start a durable task context lifecycle.", z.object({
+    repoPath: repoInput,
+    task: z.string().min(1),
+    anchors: z.array(lifecycleAnchor).optional(),
+    budget: z.object({ maxItems: z.number().int().positive().optional(), maxEstimatedTokens: z.number().int().positive().optional() }).strict().optional(),
+    ttlSeconds: z.number().int().positive().optional(),
+    detail: z.enum(["compact", "full"]).optional(),
+  }).strict(), async (args) => {
+    try { return await startTaskContext({ task: args.task as string, anchors: args.anchors as never, budget: args.budget as never, ttlSeconds: args.ttlSeconds as number | undefined, detail: args.detail as "compact" | "full" | undefined }, { repositoryPath: resolveRepo(args.repoPath as string | undefined) }); }
+    catch (error) { if (error instanceof TaskContextLifecycleDomainError && error.operationError.code === "compiler_validation_failed" && error.operationError.message === "Repository graph is not indexed.") throw new McpToolError("index_required", error.operationError.message, { repositoryPath: resolveRepo(args.repoPath as string | undefined), next: "Call index_repository or sync_repository first." }); throw error; }
+  });
+  registerJsonTool(server, "refresh_task_context", "Refresh a durable task context lifecycle.", z.object({ repoPath: repoInput, taskContextId: z.string().min(1), budget: z.object({ maxItems: z.number().int().positive().optional(), maxEstimatedTokens: z.number().int().positive().optional() }).strict().optional(), detail: z.enum(["compact", "full"]).optional() }).strict(), async (args) => refreshTaskContext({ taskContextId: args.taskContextId as string, budget: args.budget as never, detail: args.detail as "compact" | "full" | undefined }, { repositoryPath: resolveRepo(args.repoPath as string | undefined) }));
+  registerJsonTool(server, "close_task_context", "Close a durable task context lifecycle.", z.object({ repoPath: repoInput, taskContextId: z.string().min(1) }).strict(), async (args) => closeTaskContext({ taskContextId: args.taskContextId as string }, { repositoryPath: resolveRepo(args.repoPath as string | undefined) }));
 
   const relationTools = [
     ["find_callers", findCallers, "Find callers of a resolved symbol."],

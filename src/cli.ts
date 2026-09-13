@@ -81,6 +81,13 @@ async function main(): Promise<void> {
       await runContextCompileCommand(args);
       return;
     }
+    case "context-start":
+    case "context-refresh":
+    case "context-close": {
+      const { runContextLifecycleCommand } = await import("./adapters/cli/context-lifecycle.command.js");
+      await runContextLifecycleCommand(command.slice("context-".length) as "start" | "refresh" | "close", args);
+      return;
+    }
     case "inspect-change": {
       const { runInspectChangeCommand } = await import("./adapters/cli/inspect-change.command.js");
       await runInspectChangeCommand(args);
