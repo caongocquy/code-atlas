@@ -117,7 +117,7 @@ export async function collectTaskContextCandidates(
       continue;
     }
     const anchorResolution = resolveGraphEntity(graph, anchor.path ? `${anchor.path}:${anchor.name}` : anchor.name);
-    if (anchorResolution.status === "resolved" && anchorResolution.entity && anchorResolution.candidates.length === 1) {
+    if (anchorResolution.status === "resolved" && anchorResolution.entity && anchorResolution.candidates.length === 1 && isAuthoritativeTaskResolution(anchor.path ? `${anchor.path}:${anchor.name}` : anchor.name, anchorResolution)) {
       const subject = subjectForNode(anchorResolution.entity);
       candidates.push({ subject, evidence: [{ kind: "explicit_anchor", anchor }], sourceRanks: { explicit_anchor: 1 }, exact: true });
     } else diagnostics.push(`symbol anchor is unresolved or ambiguous: ${anchor.name}`);

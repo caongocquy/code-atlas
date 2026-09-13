@@ -54,6 +54,14 @@ test("collector keeps a uniquely resolved prefix non-authoritative", async () =>
   assert.equal(result.candidates.some((candidate) => candidate.subject), false);
 });
 
+test("collector drops a fuzzy explicit symbol anchor", async () => {
+  const result = await collectTaskContextCandidates({ task: "unrelated", anchors: [{ kind: "symbol", path: "src/app.ts", name: "app" }], changedPaths: [] }, {
+    repositoryPath: "/repo",
+    loadGraph: async () => ({ graph: { nodes: [{ id: "app-main", type: "function", name: "appMain", file: "src/app.ts" }], edges: [] } }),
+  });
+  assert.equal(result.candidates.some((candidate) => candidate.evidence.some((evidence) => evidence.kind === "explicit_anchor")), false);
+});
+
 test("collector keeps retrieval content out of candidates and degrades semantic failure", async () => {
   const result = await collectTaskContextCandidates(
     { task: "search", anchors: [], changedPaths: [] },
