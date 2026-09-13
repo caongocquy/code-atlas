@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import test from "node:test";
+import { promisify } from "node:util";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -13,6 +17,9 @@ import { CONTEXT_AWARE_SOURCE_PROJECTION } from "../src/core/context/context-del
 import { closeTaskContext, startTaskContext } from "../src/core/context/task-context-lifecycle.service.js";
 import { TaskContextLifecycleDomainError } from "../src/core/context/task-context-lifecycle.types.js";
 import { TaskContextRepositoryCompilerError, compileTaskContextForRepository } from "../src/core/context/task-context-repository-compiler.js";
+import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
+
+const execFileAsync = promisify(execFile);
 
 async function connectedClient() {
   const server = createMcpServer();
@@ -69,8 +76,13 @@ test("MCP exposes lifecycle tools with strict refresh and close schemas", async 
 
 test("MCP maps missing index from lifecycle start to the existing index_required error", async () => {
   const { client, server } = await connectedClient();
+  const repoPath = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15c-missing-index-"));
   try {
-    const result = await client.callTool({ name: "start_task_context", arguments: { repoPath: ".", task: "Find source", anchors: [], budget: { maxItems: 1 }, ttlSeconds: 60, detail: "full" } });
+    await mkdir(path.join(repoPath, ".codeatlas"));
+    const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
+    store.close();
+    await execFileAsync("git", ["init", "--quiet"], { cwd: repoPath });
+    const result = await client.callTool({ name: "start_task_context", arguments: { repoPath, task: "Find source", anchors: [], budget: { maxItems: 1 }, ttlSeconds: 60, detail: "full" } });
     assert.equal(result.isError, true);
     const text = result.content.find((item) => item.type === "text");
     assert.ok(text && text.type === "text");
@@ -78,6 +90,7 @@ test("MCP maps missing index from lifecycle start to the existing index_required
   } finally {
     await client.close();
     await server.close();
+    await rm(repoPath, { recursive: true, force: true });
   }
 });
 
