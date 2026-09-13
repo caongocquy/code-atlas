@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -61,5 +61,37 @@ test("graph storage failures remain hard failures instead of preparation errors"
       (error: unknown) => !(error instanceof ContextDeliveryPreparationError),
     );
     store.close();
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("subject delivery rejects traversal and symlink escapes outside the repository", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15c-symlink-"));
+  const outside = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15c-outside-"));
+  try {
+    await writeFile(path.join(outside, "secret.ts"), "secret\n");
+    await symlink(outside, path.join(root, "linked"));
+    const request = { sessionId: "s", contextGeneration: "g", subject: { kind: "file" as const, path: "linked/secret.ts" }, projection: CONTEXT_AWARE_SOURCE_PROJECTION };
+    await assert.rejects(prepareContextAwareRead(root, request), ContextDeliveryPreparationError);
+    await assert.rejects(prepareContextAwareRead(root, { ...request, subject: { kind: "file", path: "../secret.ts" } }), ContextDeliveryPreparationError);
+  } finally {
+    await Promise.all([rm(root, { recursive: true, force: true }), rm(outside, { recursive: true, force: true })]);
+  }
+});
+
+test("context database corruption falls back to current delivery without changing source state", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15c-context-corruption-"));
+  const databasePath = path.join(root, ".codeatlas", "context.db");
+  try {
+    const source = path.join(root, "source.ts");
+    await writeFile(source, "current\n");
+    const request = { sessionId: "s", contextGeneration: "g", subject: { kind: "file" as const, path: "source.ts" }, projection: CONTEXT_AWARE_SOURCE_PROJECTION };
+    const first = await readContextAware(root, request);
+    assert.equal(first.mode, "full");
+    await writeFile(databasePath, "corrupt sqlite");
+    const recovered = await readContextAware(root, request);
+    assert.equal(recovered.mode, "rehydrate");
+    assert.equal(recovered.content, "current\n");
+    assert.match(recovered.reason ?? "", /context|database/i);
+    assert.equal(await readFile(source, "utf8"), "current\n");
   } finally { await rm(root, { recursive: true, force: true }); }
 });

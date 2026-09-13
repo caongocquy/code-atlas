@@ -17,8 +17,21 @@ import type { ContextStore } from "../../storage/context/context.store.js";
 export const CONTEXT_AWARE_SOURCE_PROJECTION = "source-v1";
 
 async function readSubject(root: string, subject: ContextSubject): Promise<string> {
+  let sourcePath = path.join(root, subject.path);
+  if (subject.kind === "file") {
+    try {
+      const resolvedPath = await fs.realpath(sourcePath);
+      const relativePath = path.relative(root, resolvedPath);
+      if (relativePath.startsWith(".." + path.sep) || path.isAbsolute(relativePath)) {
+        throw new Error("Subject path escapes the repository");
+      }
+      sourcePath = resolvedPath;
+    } catch (error) {
+      throw new PreparationError(`Context-aware source read failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    }
+  }
   let source: string;
-  try { source = await fs.readFile(path.join(root, subject.path), "utf8"); }
+  try { source = await fs.readFile(sourcePath, "utf8"); }
   catch (error) { throw new PreparationError(`Context-aware source read failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error }); }
   if (subject.kind === "file") return source;
   const graph = await loadIndexedGraphReadOnly(root);

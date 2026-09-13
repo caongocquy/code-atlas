@@ -9,6 +9,26 @@ import { startTaskContext } from "../src/core/context/task-context-lifecycle.ser
 import { refreshTaskContext } from "../src/core/context/task-context-lifecycle.service.js";
 import { ContextDeliveryPreparationError } from "../src/core/context/context.types.js";
 import { ContextStore } from "../src/storage/context/context.store.js";
+import type { TaskContextPlanDetail } from "../src/core/context/task-context.types.js";
+
+function fileItem(filePath: string): TaskContextPlanDetail["items"][number] {
+  return { subject: { kind: "file", path: filePath }, priority: "required", rank: 1, reasons: ["acceptance"] };
+}
+
+function testPlan(items: TaskContextPlanDetail["items"], budget = { maxItems: 20, maxEstimatedTokens: 4000 }, detail: "compact" | "full" = "compact"): TaskContextPlanDetail {
+  return {
+    taskIdentity: `task-${items.map((item) => item.subject.path).join("-") || "empty"}`,
+    planIdentity: `plan-${items.map((item) => item.subject.path).join("-") || "empty"}`,
+    repositoryIdentity: "repo",
+    workspaceIdentity: "workspace",
+    items,
+    budget: { ...budget, selectedItems: items.length, estimatedTokens: items.length, omittedItems: 0, budgetExceeded: false },
+    reliability: { mayBeIncomplete: false, capabilityStates: {}, diagnostics: [] },
+    capabilityFingerprint: "none",
+    compiler: { schemaVersion: 1, strategyVersion: "task-context-v1" },
+    projection: { detail, detailsAvailable: detail === "full", omitted: 0, truncated: false },
+  };
+}
 
 test("start creates an opaque revision-one lifecycle and persists the default budget", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15c-lifecycle-"));
@@ -155,6 +175,116 @@ test("all subject-local preparation failures still commit a valid lifecycle with
     assert.equal(result.metrics.deliveredItems, 0);
     assert.equal(result.deliveries[0]?.mode, "error");
     assert.deepEqual(result.deliveries[0]?.mode === "error" ? result.deliveries[0].error : undefined, { code: "subject_unavailable", message: "missing subject" });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("refresh delivers a newly selected subject fully and omits a dropped subject", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15c-subject-changes-"));
+  try {
+    await writeFile(path.join(root, "kept.ts"), "kept-v1\n");
+    await writeFile(path.join(root, "new.ts"), "new-v1\n");
+    let refresh = false;
+    const compileTaskContextForRepository = async () => testPlan(refresh ? [fileItem("new.ts")] : [fileItem("kept.ts")]);
+    const deps = { repositoryPath: root, now: () => new Date("2026-09-13T00:00:00.000Z"), readCurrentChangedPaths: async () => [], compileTaskContextForRepository };
+    const started = await startTaskContext({ task: "subjects" }, deps);
+    assert.deepEqual(started.deliveries.map((delivery) => delivery.item.subject.path), ["kept.ts"]);
+    refresh = true;
+    const refreshed = await refreshTaskContext({ taskContextId: started.lifecycle.taskContextId }, deps);
+    assert.deepEqual(refreshed.deliveries.map((delivery) => delivery.item.subject.path), ["new.ts"]);
+    assert.equal(refreshed.deliveries[0]?.mode, "full");
+    assert.equal(refreshed.deliveries[0]?.mode === "full" ? refreshed.deliveries[0].content : undefined, "new-v1\n");
+    assert.equal(refreshed.metrics.deliveredItems, 1);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("partial refresh commits successful items without a receipt for the failed item", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15c-partial-failure-"));
+  try {
+    await writeFile(path.join(root, "good.ts"), "good\n");
+    const items = [fileItem("good.ts"), fileItem("missing.ts")];
+    const deps = {
+      repositoryPath: root,
+      now: () => new Date("2026-09-13T00:00:00.000Z"),
+      readCurrentChangedPaths: async () => [],
+      compileTaskContextForRepository: async () => testPlan(items),
+    };
+    const result = await startTaskContext({ task: "partial" }, deps);
+    assert.equal(result.lifecycle.revision, 1);
+    assert.equal(result.metrics.deliveredItems, 1);
+    assert.equal(result.metrics.failedItems, 1);
+    assert.deepEqual(result.deliveries.map((delivery) => delivery.mode), ["full", "error"]);
+    const store = new ContextStore(path.join(root, ".codeatlas", "context.db"));
+    assert.equal((store as unknown as { database: { prepare(sql: string): { get(): { count: number } } } }).database.prepare("SELECT count(*) AS count FROM context_receipts").get().count, 1);
+    store.close();
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("all selected item failures return a partial lifecycle result without durable deliveries", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15c-all-failure-"));
+  try {
+    const items = [fileItem("missing-a.ts"), fileItem("missing-b.ts")];
+    const result = await startTaskContext({ task: "all fail" }, {
+      repositoryPath: root,
+      now: () => new Date("2026-09-13T00:00:00.000Z"),
+      readCurrentChangedPaths: async () => [],
+      compileTaskContextForRepository: async () => testPlan(items),
+    });
+    assert.equal(result.lifecycle.state, "active");
+    assert.equal(result.metrics.deliveredItems, 0);
+    assert.equal(result.metrics.failedItems, 2);
+    assert.deepEqual(result.deliveries.map((delivery) => delivery.mode), ["error", "error"]);
+    const store = new ContextStore(path.join(root, ".codeatlas", "context.db"));
+    assert.equal((store as unknown as { database: { prepare(sql: string): { get(): { count: number } } } }).database.prepare("SELECT count(*) AS count FROM context_receipts").get().count, 0);
+    store.close();
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("refresh budget overrides are ephemeral while persisted TTL is reused after restart", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15c-budget-ttl-"));
+  const calls: Array<{ maxItems: number | undefined; maxEstimatedTokens: number | undefined }> = [];
+  try {
+    await writeFile(path.join(root, "source.ts"), "source\n");
+    const compileTaskContextForRepository = async (_repoPath: string, input: { budget?: { maxItems?: number; maxEstimatedTokens?: number } }) => {
+      calls.push({ maxItems: input.budget?.maxItems, maxEstimatedTokens: input.budget?.maxEstimatedTokens });
+      const budget = { maxItems: input.budget?.maxItems ?? 3, maxEstimatedTokens: input.budget?.maxEstimatedTokens ?? 300 };
+      return testPlan([fileItem("source.ts")], budget);
+    };
+    const common = { repositoryPath: root, readCurrentChangedPaths: async () => [], compileTaskContextForRepository };
+    const started = await startTaskContext({ task: "budget", budget: { maxItems: 3, maxEstimatedTokens: 300 }, ttlSeconds: 10 }, { ...common, now: () => new Date("2026-09-13T00:00:00.000Z") });
+    const refreshed = await refreshTaskContext({ taskContextId: started.lifecycle.taskContextId, budget: { maxItems: 1, maxEstimatedTokens: 2 } }, { ...common, now: () => new Date("2026-09-13T00:00:05.000Z") });
+    assert.deepEqual(calls, [{ maxItems: 3, maxEstimatedTokens: 300 }, { maxItems: 1, maxEstimatedTokens: 2 }]);
+    assert.deepEqual(refreshed.lifecycle.defaultBudget, { maxItems: 3, maxEstimatedTokens: 300 });
+    assert.deepEqual(refreshed.budget, { maxItems: 1, maxEstimatedTokens: 2, selectedItems: 1, estimatedTokens: 1, omittedItems: 0, budgetExceeded: false });
+    assert.equal(refreshed.lifecycle.ttlSeconds, 10);
+    assert.equal(refreshed.lifecycle.expiresAt, "2026-09-13T00:00:15.000Z");
+    const restarted = await refreshTaskContext({ taskContextId: started.lifecycle.taskContextId }, { ...common, now: () => new Date("2026-09-13T00:00:14.000Z") });
+    assert.deepEqual(calls[2], { maxItems: 3, maxEstimatedTokens: 300 });
+    assert.equal(restarted.lifecycle.ttlSeconds, 10);
+    assert.equal(restarted.lifecycle.expiresAt, "2026-09-13T00:00:24.000Z");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("equivalent independent lifecycles keep exact delivery equal across compact and full detail modes", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15c-parity-"));
+  try {
+    const sourcePath = path.join(root, "source.ts");
+    await writeFile(sourcePath, "one\n");
+    let content = "one\n";
+    const item = fileItem("source.ts");
+    const compileTaskContextForRepository = async (_repoPath: string, input: { detail?: "compact" | "full" }) => ({ ...testPlan([item], undefined, input.detail ?? "compact"), projection: { detail: input.detail ?? "compact", detailsAvailable: input.detail === "full", omitted: 0, truncated: false } });
+    const deps = { repositoryPath: root, now: () => new Date("2026-09-13T00:00:00.000Z"), readCurrentChangedPaths: async () => [], compileTaskContextForRepository };
+    const lifecycleA = await startTaskContext({ task: "same" }, { ...deps, detail: undefined });
+    const lifecycleB = await startTaskContext({ task: "same" }, { ...deps, detail: undefined });
+    content = "one\ntwo\n";
+    await writeFile(sourcePath, content);
+    const compact = await refreshTaskContext({ taskContextId: lifecycleA.lifecycle.taskContextId, detail: "compact" }, deps);
+    const full = await refreshTaskContext({ taskContextId: lifecycleB.lifecycle.taskContextId, detail: "full" }, deps);
+    const shape = (delivery: (typeof compact.deliveries)[number]) => delivery.mode === "error" ? { path: delivery.item.subject.path, mode: delivery.mode, error: delivery.error } : { path: delivery.item.subject.path, mode: delivery.mode, current: delivery.current, ...(delivery.mode === "delta" ? { delta: delivery.delta } : {}), ...(delivery.mode === "full" || delivery.mode === "rehydrate" ? { content: delivery.content } : {}) };
+    assert.deepEqual(compact.deliveries.map(shape), full.deliveries.map(shape));
+    assert.equal(compact.deliveries.some((delivery) => delivery.mode === "unchanged" && "content" in delivery), false);
+    assert.deepEqual(compact.budget, full.budget);
+    assert.equal(compact.lifecycle.taskIdentity, full.lifecycle.taskIdentity);
+    assert.equal(compact.lifecycle.latestPlanIdentity, full.lifecycle.latestPlanIdentity);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
