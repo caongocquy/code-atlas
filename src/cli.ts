@@ -76,6 +76,11 @@ async function main(): Promise<void> {
       await runContextReadCommand(args);
       return;
     }
+    case "context-compile": {
+      const { runContextCompileCommand } = await import("./adapters/cli/context-compile.command.js");
+      await runContextCompileCommand(args);
+      return;
+    }
     case "inspect-change": {
       const { runInspectChangeCommand } = await import("./adapters/cli/inspect-change.command.js");
       await runInspectChangeCommand(args);
