@@ -80,7 +80,7 @@ jobs:
             throw new Error(`Local-only runtime dependency specifier found: ${serialized}`);
           }
           if (manifest.name !== "@showdar2112/code-atlas") throw new Error(`Unexpected package name: ${manifest.name}`);
-          if (manifest.version !== "1.0.8") throw new Error(`Unexpected package version: ${manifest.version}`);
+          if (manifest.version !== "1.2.0") throw new Error(`Unexpected package version: ${manifest.version}`);
           if (manifest.bin?.["code-atlas"] !== "dist/cli.js") throw new Error("Unexpected CLI bin target");
           if (manifest.publishConfig?.access !== "public") throw new Error("Package is not public");
           console.log(JSON.stringify({ name: manifest.name, version: manifest.version, bin: manifest.bin }, null, 2));
@@ -116,10 +116,12 @@ jobs:
             run_clean "$bin" "$flag" > "$RUNNER_TEMP/code-atlas-$flag.stdout" 2> "$RUNNER_TEMP/code-atlas-$flag.stderr"
             test ! -s "$RUNNER_TEMP/code-atlas-$flag.stderr"
           done
-          test "$(cat "$RUNNER_TEMP/code-atlas---version.stdout")" = "1.0.8"
-          test "$(cat "$RUNNER_TEMP/code-atlas--v.stdout")" = "1.0.8"
+          test "$(cat "$RUNNER_TEMP/code-atlas---version.stdout")" = "1.2.0"
+          test "$(cat "$RUNNER_TEMP/code-atlas--v.stdout")" = "1.2.0"
           grep -q 'Usage: code-atlas' "$RUNNER_TEMP/code-atlas---help.stdout"
           grep -q 'Usage: code-atlas' "$RUNNER_TEMP/code-atlas--h.stdout"
+          run_clean "$bin" context-compile --help > "$RUNNER_TEMP/code-atlas-context-compile-help.stdout" 2> "$RUNNER_TEMP/code-atlas-context-compile-help.stderr"
+          grep -q 'Usage: code-atlas context-compile' "$RUNNER_TEMP/code-atlas-context-compile-help.stdout"
           (
             cd "$fixture"
             run_clean "$bin" init --no-guidance > "$RUNNER_TEMP/code-atlas-init.stdout" 2> "$RUNNER_TEMP/code-atlas-init.stderr"
@@ -128,8 +130,9 @@ jobs:
           )
           run_clean "$bin" init --no-index --no-guidance --json > "$RUNNER_TEMP/code-atlas-json.stdout" 2> "$RUNNER_TEMP/code-atlas-json.stderr"
           JSON_FILE="$RUNNER_TEMP/code-atlas-json.stdout" node -e 'JSON.parse(require("node:fs").readFileSync(process.env.JSON_FILE, "utf8"))'
-          printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"release-smoke","version":"1"}}}' | run_clean "$bin" mcp > "$RUNNER_TEMP/code-atlas-mcp.stdout" 2> "$RUNNER_TEMP/code-atlas-mcp.stderr"
+          printf '%s\n%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"release-smoke","version":"1"}}}' '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | run_clean "$bin" mcp > "$RUNNER_TEMP/code-atlas-mcp.stdout" 2> "$RUNNER_TEMP/code-atlas-mcp.stderr"
           MCP_FILE="$RUNNER_TEMP/code-atlas-mcp.stdout" node -e 'const s=require("node:fs").readFileSync(process.env.MCP_FILE,"utf8").trim(); if(!s||/\u001b\[/.test(s)) process.exit(1); for(const line of s.split(/\n/)) JSON.parse(line)'
+          grep -q 'compile_task_context' "$RUNNER_TEMP/code-atlas-mcp.stdout"
 
       - name: Simulate global npm install
         shell: bash
@@ -143,7 +146,7 @@ jobs:
             cat "$RUNNER_TEMP/npm-global-install.stderr" >&2
             exit 1
           fi
-          HOME="$RUNNER_TEMP/global-home" XDG_CONFIG_HOME="$RUNNER_TEMP/global-xdg" "$prefix/bin/code-atlas" --version | grep -qx '1.0.8'
+          HOME="$RUNNER_TEMP/global-home" XDG_CONFIG_HOME="$RUNNER_TEMP/global-xdg" "$prefix/bin/code-atlas" --version | grep -qx '1.2.0'
           HOME="$RUNNER_TEMP/global-home" XDG_CONFIG_HOME="$RUNNER_TEMP/global-xdg" "$prefix/bin/code-atlas" --help | grep -q 'Usage: code-atlas'
 
       - name: Publish release smoke summary
@@ -153,9 +156,9 @@ jobs:
           WARNING_COUNT: ${{ steps.consumer.outputs.warning_count }}
         run: |
           {
-            echo '## CodeAtlas 1.0.8 release smoke'
+            echo '## CodeAtlas 1.2.0 release smoke'
             echo
-            echo 'Package: `@showdar2112/code-atlas@1.0.8`'
+            echo 'Package: `@showdar2112/code-atlas@1.2.0`'
             echo
             echo '| Check | Result |'
             echo '| --- | --- |'

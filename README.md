@@ -70,6 +70,20 @@ code-atlas disconnect codex
 code-atlas disconnect --all
 ```
 
+## Task context compiler
+
+Phase15B selects what is worth reading before Phase15A decides how much to
+deliver. Compile a bounded, deterministic `ContextSubject` plan from a task:
+
+```bash
+code-atlas context-compile --task "Fix repository status handling"
+code-atlas context-compile --task "Fix repository status handling" --json
+```
+
+The same capability is available through the MCP `compile_task_context` tool.
+It returns file/symbol references and evidence metadata, not source bodies;
+`context_read` remains the explicit delivery step.
+
 ## Why CodeAtlas
 
 ### Understand before editing

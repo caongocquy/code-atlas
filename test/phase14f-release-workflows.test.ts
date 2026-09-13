@@ -3,6 +3,9 @@ import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import test from "node:test";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { createMcpServer } from "../src/adapters/mcp/mcp-server.js";
 
 const root = path.resolve(".");
 const packageJson = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as Record<string, unknown>;
@@ -30,6 +33,8 @@ test("manual release smoke verifies a real clean npm consumer", () => {
   assert.match(smoke, /code-atlas-init|init --no-guidance/);
   assert.match(smoke, /code-atlas-status|status/);
   assert.match(smoke, /code-atlas-mcp|initialize/);
+  assert.match(smoke, /context-compile --help/);
+  assert.match(smoke, /compile_task_context/);
   assert.match(smoke, /GITHUB_STEP_SUMMARY/);
   assert.match(smoke, /upload-artifact@v4/);
   assert.doesNotMatch(smoke, /--legacy-peer-deps|--force|--ignore-scripts/);
@@ -74,7 +79,7 @@ test("publish workflow validates the exact tag and package contract", () => {
 
 test("public package metadata points to the canonical repository", () => {
   assert.equal(packageJson.name, "@showdar2112/code-atlas");
-  assert.equal(packageJson.version, "1.1.1");
+  assert.equal(packageJson.version, "1.2.0");
   assert.deepEqual(packageJson.bin, { "code-atlas": "dist/cli.js" });
   assert.deepEqual(packageJson.publishConfig, { access: "public" });
   assert.equal(packageJson.license, "ISC");
@@ -86,6 +91,20 @@ test("public package metadata points to the canonical repository", () => {
   assert.deepEqual(packageJson.bugs, {
     url: "https://github.com/caongocquy/code-atlas/issues",
   });
+});
+
+test("CLI and MCP advertise the package release version", async () => {
+  const server = createMcpServer();
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: "release-version-test", version: "1" });
+  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+  try {
+    const result = await client.getServerVersion();
+    assert.equal(result?.version, packageJson.version);
+  } finally {
+    await client.close();
+    await server.close();
+  }
 });
 
 test("publish workflow validates package contents and real packed consumers", () => {

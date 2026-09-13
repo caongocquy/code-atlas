@@ -1,4 +1,5 @@
 import path from "node:path";
+import { createRequire } from "node:module";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -60,6 +61,7 @@ const MAX_COMMUNITIES = 10_000;
 const MAX_TEXT = 2_000;
 const DEFAULT_LIMIT = 20;
 const DEFAULT_DETAIL_LIMIT = 20;
+const packageJson = createRequire(import.meta.url)("../../../package.json") as { version: string };
 
 const repoInput = z.string().min(1).optional();
 const limitInput = z.number().int().min(1).max(MAX_LIMIT).optional();
@@ -449,7 +451,7 @@ async function closeProviders(providers: DefaultProviderSet | undefined): Promis
 export function createMcpServer(): McpServer {
   const server = new McpServer({
     name: "code-atlas",
-    version: process.env.npm_package_version ?? "1.0.0",
+    version: packageJson.version,
   });
 
   registerJsonTool(server, "repository_status", "Return repository identity and capability status.", z.object({
