@@ -9,6 +9,13 @@ export class UnsupportedContextSchemaError extends Error {
   }
 }
 
+export class InvalidContextSchemaError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidContextSchemaError";
+  }
+}
+
 function lifecycleTableSql(): string {
   return `CREATE TABLE IF NOT EXISTS task_context_lifecycles (
     task_context_id TEXT PRIMARY KEY,
@@ -34,13 +41,29 @@ function lifecycleTableSql(): string {
   );`;
 }
 
+function validateV2Shape(database: DatabaseSync): void {
+  const required = {
+    context_metadata: ["key", "value"],
+    context_sessions: ["session_id", "repository_identity", "workspace_identity", "context_generation"],
+    context_snapshots: ["snapshot_id", "receipt_id", "content_identity"],
+    context_receipts: ["receipt_id", "session_id", "snapshot_id", "context_generation"],
+    task_context_lifecycles: ["task_context_id", "session_id", "context_generation", "task_intent_identity", "revision", "state"],
+  };
+  for (const [table, columns] of Object.entries(required)) {
+    const present = database.prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
+    if (!present) throw new InvalidContextSchemaError(`Missing context schema table: ${table}`);
+    const actual = new Set(database.prepare(`PRAGMA table_info(${table})`).all().map((row) => (row as { name: string }).name));
+    for (const column of columns) if (!actual.has(column)) throw new InvalidContextSchemaError(`Missing context schema column: ${table}.${column}`);
+  }
+}
+
 export function initializeContextSchema(database: DatabaseSync): void {
   database.exec("PRAGMA foreign_keys = ON;");
   const metadataExists = database.prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'context_metadata'").get() as { present?: number } | undefined;
   if (metadataExists) {
     const version = database.prepare("SELECT value FROM context_metadata WHERE key = 'contextSchemaVersion'").get() as { value?: string } | undefined;
     if (version?.value !== "1" && version?.value !== String(CONTEXT_SCHEMA_VERSION)) throw new UnsupportedContextSchemaError(version?.value ?? "missing");
-    if (version.value === String(CONTEXT_SCHEMA_VERSION)) return;
+    if (version.value === String(CONTEXT_SCHEMA_VERSION)) { validateV2Shape(database); return; }
   }
 
   database.exec("BEGIN IMMEDIATE;");

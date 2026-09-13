@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { ContextStore, CONTEXT_SCHEMA_VERSION } from "../src/storage/context/context.store.js";
+import { ContextStore, CONTEXT_SCHEMA_VERSION, ContextStoreOpenError } from "../src/storage/context/context.store.js";
 import { UnsupportedContextSchemaError } from "../src/storage/context/context.schema.js";
 
 test("opening a v1 context database migrates to v2 without changing Phase15A rows", async () => {
@@ -36,6 +36,9 @@ test("opening a v1 context database migrates to v2 without changing Phase15A row
     const migrated = new DatabaseSync(databasePath);
     assert.equal((migrated.prepare("SELECT value FROM context_metadata WHERE key = 'contextSchemaVersion'").get() as { value: string }).value, "2");
     assert.equal((migrated.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'task_context_lifecycles'").get() as { name: string }).name, "task_context_lifecycles");
+    assert.deepEqual(migrated.prepare("SELECT * FROM context_sessions").all().map((row) => ({ ...row })), [{ session_id: "session-1", repository_identity: "repo-1", workspace_identity: "workspace-1", consumer_json: null, created_at: "created", last_seen_at: "seen", context_generation: "generation-1", schema_version: 1 }]);
+    assert.deepEqual(migrated.prepare("SELECT * FROM context_receipts").all().map((row) => ({ ...row })), [{ receipt_id: "receipt-1", session_id: "session-1", repository_identity: "repo-1", workspace_identity: "workspace-1", subject_json: '{"kind":"file","path":"src/index.ts"}', subject_identity: "subject-1", projection_identity: "projection-1", context_generation: "generation-1", delivery_mode: "full", delivered_content_identity: "sha256:content", snapshot_id: "snapshot-1", reliability_json: '{"mayBeIncomplete":false}', delivered_at: "delivered", expires_at: null, prior_receipt_id: null, state: "active", schema_version: 1 }]);
+    assert.deepEqual(migrated.prepare("SELECT * FROM context_snapshots").all().map((row) => ({ ...row })), [{ snapshot_id: "snapshot-1", receipt_id: "receipt-1", subject_identity: "subject-1", projection_identity: "projection-1", content: "content", content_identity: "sha256:content", created_at: "created", schema_version: 1 }]);
     migrated.close();
   } finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -67,5 +70,16 @@ test("future context schema versions fail closed before migration writes", async
     const reopened = new DatabaseSync(databasePath);
     assert.equal((reopened.prepare("SELECT value FROM context_metadata WHERE key = 'contextSchemaVersion'").get() as { value: string }).value, "3");
     reopened.close();
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("a v2 database missing the lifecycle table fails with a typed open error", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15c-schema-malformed-"));
+  const databasePath = path.join(root, "context.db");
+  try {
+    const database = new DatabaseSync(databasePath);
+    database.exec("CREATE TABLE context_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL); INSERT INTO context_metadata VALUES ('contextSchemaVersion', '2');");
+    database.close();
+    assert.throws(() => new ContextStore(databasePath), ContextStoreOpenError);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
