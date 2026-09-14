@@ -20,6 +20,7 @@ function unique(values: readonly { [key: string]: string }[], key: string): bool
 }
 
 const identifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._/-]*$/, "must be a stable identifier");
+const snapshotIdentifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, "must be a stable snapshot identifier without path separators");
 const canonicalPath = z.string().refine(isCanonicalRelativePath, "must be a canonical repository-relative path");
 const language = z.string().refine((value) => LANGUAGE_CONFIGS.map(({ language }) => language).includes(value as (typeof LANGUAGE_CONFIGS)[number]["language"]), "must be a production supported language");
 const nonNegative = z.number().finite().nonnegative();
@@ -69,7 +70,7 @@ const evalCase = z.object({
 });
 
 const snapshotProvenance = z.object({
-  snapshotId: identifier,
+  snapshotId: snapshotIdentifier,
   sourceRepository: z.string().trim().min(1),
   sourceCommitSha: z.string().regex(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i, "must be a full git commit SHA"),
   license: z.string().trim().min(1),

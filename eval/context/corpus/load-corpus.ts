@@ -38,31 +38,44 @@ function ensureUnique(values: readonly string[], label: string): void {
   if (new Set(values).size !== values.length) throw new Error(`Corpus integrity failure: duplicate ${label}`);
 }
 
-function snapshotRoot(manifestPath: string, snapshotId: string): string {
-  return path.resolve(path.dirname(manifestPath), "snapshots", snapshotId);
+function isSnapshotIdentifier(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value);
+}
+
+function isChildPath(root: string, value: string): boolean {
+  const relative = path.relative(root, value);
+  return Boolean(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+function snapshotRoot(manifestPath: string, snapshotId: string): { snapshotsRoot: string; root: string } {
+  if (!isSnapshotIdentifier(snapshotId)) throw new Error(`Corpus integrity failure: invalid snapshot ID ${snapshotId}`);
+  const snapshotsRoot = path.resolve(path.dirname(manifestPath), "snapshots");
+  const root = path.resolve(snapshotsRoot, snapshotId);
+  if (!isChildPath(snapshotsRoot, root)) throw new Error(`Corpus integrity failure: snapshot ${snapshotId} escapes the corpus snapshots root`);
+  return { snapshotsRoot, root };
 }
 
 function validateLicenseNotice(manifestPath: string, snapshot: CorpusManifest["snapshots"][number]): void {
-  if (!snapshot.licenseNoticeRequired) return;
+  const { snapshotsRoot, root } = snapshotRoot(manifestPath, snapshot.snapshotId);
+  if (!snapshot.licenseNoticeRequired && !snapshot.licenseNoticePath) return;
   if (!snapshot.licenseNoticePath) throw new Error(`Corpus integrity failure: snapshot ${snapshot.snapshotId} requires a license notice path`);
 
-  const root = snapshotRoot(manifestPath, snapshot.snapshotId);
   const notice = path.resolve(root, snapshot.licenseNoticePath);
-  const lexicalRelative = path.relative(root, notice);
-  if (!lexicalRelative || lexicalRelative === ".." || lexicalRelative.startsWith(`..${path.sep}`) || path.isAbsolute(lexicalRelative)) {
+  if (!isChildPath(root, notice)) {
     throw new Error(`Corpus integrity failure: snapshot ${snapshot.snapshotId} license notice escapes its snapshot root`);
   }
 
+  let resolvedSnapshotsRoot: string;
   let resolvedRoot: string;
   let resolvedNotice: string;
   try {
+    resolvedSnapshotsRoot = realpathSync(snapshotsRoot);
     resolvedRoot = realpathSync(root);
     resolvedNotice = realpathSync(notice);
   } catch (error) {
     throw new Error(`Corpus integrity failure: snapshot ${snapshot.snapshotId} license notice is missing`, { cause: error });
   }
-  const resolvedRelative = path.relative(resolvedRoot, resolvedNotice);
-  if (!resolvedRelative || resolvedRelative === ".." || resolvedRelative.startsWith(`..${path.sep}`) || path.isAbsolute(resolvedRelative)) {
+  if (!isChildPath(resolvedSnapshotsRoot, resolvedRoot) || !isChildPath(resolvedRoot, resolvedNotice)) {
     throw new Error(`Corpus integrity failure: snapshot ${snapshot.snapshotId} license notice escapes its snapshot root`);
   }
   const details = statSync(resolvedNotice);
@@ -104,9 +117,11 @@ export function validateCorpusIntegrity(input: {
   const snapshots = new Map(manifest.snapshots.map((snapshot) => [snapshot.snapshotId, snapshot]));
   for (const value of manifest.cases.filter(({ kind }) => kind === "snapshot")) {
     const snapshotId = path.posix.basename(value.workspaceRef);
-    if (!snapshots.has(snapshotId) || value.workspaceRef !== `snapshots/${snapshotId}`) {
+    const snapshot = snapshots.get(snapshotId);
+    if (!snapshot || value.workspaceRef !== `snapshots/${snapshotId}`) {
       throw new Error(`Corpus integrity failure: snapshot case ${value.caseId} has no matching snapshot provenance`);
     }
+    if (snapshot.language !== value.language) throw new Error(`Corpus integrity failure: snapshot case ${value.caseId} language does not match snapshot ${snapshotId}`);
   }
   for (const snapshot of manifest.snapshots) validateLicenseNotice(input.manifestPath, snapshot);
 }

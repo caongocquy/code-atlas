@@ -97,6 +97,69 @@ test("validates registry-derived synthetic coverage and exact corpus relationshi
   }
 });
 
+test("rejects snapshot identifiers with separators and roots outside the corpus snapshots directory", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15d-snapshot-root-"));
+  try {
+    const snapshot = {
+      snapshotId: "sample",
+      sourceRepository: "https://example.invalid/source",
+      sourceCommitSha: "0123456789abcdef0123456789abcdef01234567",
+      license: "MIT",
+      licenseNoticeRequired: true,
+      licenseNoticePath: "LICENSE",
+      includedPaths: ["src/app.ts"],
+      language: "typescript",
+      inclusionReason: "Focused regression fixture",
+    };
+    for (const snapshotId of ["nested/sample", "sample/../../outside"]) {
+      assert.throws(() => parseCorpusManifest({ corpusVersion: "context-eval-v1", cases: syntheticCases(), snapshots: [{ ...snapshot, snapshotId }] }));
+    }
+
+    await mkdir(path.join(root, "outside"), { recursive: true });
+    await writeFile(path.join(root, "outside", "LICENSE"), "outside\n");
+    const values = parsedInputs(syntheticCases(), [snapshot]);
+    const escapedManifest = {
+      ...values.manifest,
+      snapshots: [{ ...values.manifest.snapshots[0]!, snapshotId: "sample/../../outside" }],
+    } as typeof values.manifest;
+    const escapedPaths = await paths(root);
+    assert.throws(() => validateCorpusIntegrity({ manifest: escapedManifest, baseline: values.baseline, policy: values.policy, ...escapedPaths }));
+  } finally {
+    await (await import("node:fs/promises")).rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects a snapshot case whose language differs from its provenance", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15d-snapshot-language-"));
+  try {
+    const snapshotCase = {
+      caseId: "snapshot-language-mismatch",
+      kind: "snapshot",
+      language: "python",
+      workspaceRef: "snapshots/sample",
+      task: "Evaluate snapshot context",
+      anchors: [{ kind: "file", path: "src/app.py" }],
+      changedPaths: [],
+      truth: { requiredSubjects: [{ kind: "file", path: "src/app.py" }], supportingSubjects: [], forbiddenRequiredSubjects: [] },
+    };
+    const snapshot = {
+      snapshotId: "sample",
+      sourceRepository: "https://example.invalid/source",
+      sourceCommitSha: "0123456789abcdef0123456789abcdef01234567",
+      license: "MIT",
+      licenseNoticeRequired: false,
+      includedPaths: ["src/app.ts"],
+      language: "typescript",
+      inclusionReason: "Focused regression fixture",
+    };
+    const values = parsedInputs([...syntheticCases(), snapshotCase], [snapshot]);
+    const valuePaths = await paths(root);
+    assert.throws(() => validateCorpusIntegrity({ ...values, ...valuePaths }));
+  } finally {
+    await (await import("node:fs/promises")).rm(root, { recursive: true, force: true });
+  }
+});
+
 test("requires applicable notices to be regular files inside the declared snapshot root", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15d-notice-"));
   try {
@@ -121,6 +184,14 @@ test("requires applicable notices to be regular files inside the declared snapsh
     const missingNoticePaths = await paths(root);
     assert.throws(() => validateCorpusIntegrity({ ...missingNotice, ...missingNoticePaths }));
 
+    const optionalValid = parsedInputs(syntheticCases(), [{ ...snapshot, licenseNoticeRequired: false }]);
+    const optionalValidPaths = await paths(root);
+    assert.doesNotThrow(() => validateCorpusIntegrity({ ...optionalValid, ...optionalValidPaths }));
+
+    const optionalMissing = parsedInputs(syntheticCases(), [{ ...snapshot, licenseNoticeRequired: false, licenseNoticePath: "missing" }]);
+    const optionalMissingPaths = await paths(root);
+    assert.throws(() => validateCorpusIntegrity({ ...optionalMissing, ...optionalMissingPaths }));
+
     assert.throws(() => parsedInputs(syntheticCases(), [{ ...snapshot, licenseNoticePath: "../LICENSE" }]));
 
     const outsideNotice = path.join(root, "outside-license");
@@ -129,6 +200,10 @@ test("requires applicable notices to be regular files inside the declared snapsh
     const escapedSymlink = parsedInputs(syntheticCases(), [{ ...snapshot, licenseNoticePath: "ESCAPED_LICENSE" }]);
     const escapedSymlinkPaths = await paths(root);
     assert.throws(() => validateCorpusIntegrity({ ...escapedSymlink, ...escapedSymlinkPaths }));
+
+    const optionalEscapedSymlink = parsedInputs(syntheticCases(), [{ ...snapshot, licenseNoticeRequired: false, licenseNoticePath: "ESCAPED_LICENSE" }]);
+    const optionalEscapedSymlinkPaths = await paths(root);
+    assert.throws(() => validateCorpusIntegrity({ ...optionalEscapedSymlink, ...optionalEscapedSymlinkPaths }));
 
     const optionalNotice = parsedInputs(syntheticCases(), [{ ...snapshot, licenseNoticeRequired: false, licenseNoticePath: undefined }]);
     const optionalNoticePaths = await paths(root);
