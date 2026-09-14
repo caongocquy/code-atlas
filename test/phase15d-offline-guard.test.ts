@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFile as execFileCallback } from "node:child_process";
 import dns from "node:dns";
 import http from "node:http";
 import { request as namedHttpRequest } from "node:http";
@@ -11,6 +12,7 @@ import { promisify } from "node:util";
 import { execFile, installOfflineGuard } from "../eval/context/offline-guard.js";
 
 const execFileAsync = promisify(execFile);
+const childExecFile = promisify(execFileCallback);
 
 test("installOfflineGuard blocks evaluator network primitives and Git network commands reversibly", async () => {
   const originalFetch = globalThis.fetch;
@@ -33,4 +35,63 @@ test("installOfflineGuard blocks evaluator network primitives and Git network co
     restore();
   }
   assert.equal(globalThis.fetch, originalFetch);
+});
+
+test("installOfflineGuard synchronizes named ESM HTTP, HTTPS, and DNS imports", async () => {
+  const guardModule = new URL("../eval/context/offline-guard.ts", import.meta.url).href;
+  const program = `
+    import assert from "node:assert/strict";
+    import { lookup as dnsLookup } from "node:dns";
+    import { lookup as dnsPromisesLookup } from "node:dns/promises";
+    import { request as httpRequest } from "node:http";
+    import { request as httpsRequest } from "node:https";
+    import { installOfflineGuard } from ${JSON.stringify(guardModule)};
+
+    const restore = installOfflineGuard();
+    try {
+      assert.throws(() => {
+        const request = httpRequest({ hostname: "localhost", port: 9 });
+        request.destroy();
+      }, /Phase15D offline guard: network access is disabled/);
+      assert.throws(() => {
+        const request = httpsRequest({ hostname: "localhost", port: 9 });
+        request.destroy();
+      }, /Phase15D offline guard: network access is disabled/);
+      assert.throws(() => dnsLookup("localhost", () => undefined), /Phase15D offline guard: network access is disabled/);
+      await assert.rejects(() => dnsPromisesLookup("localhost"), /Phase15D offline guard: network access is disabled/);
+    } finally {
+      restore();
+    }
+  `;
+  await childExecFile(process.execPath, ["--import", "tsx/esm", "--input-type=module", "--eval", program], { cwd: process.cwd() });
+});
+
+test("installOfflineGuard keeps the guard active until the final out-of-order restore", async () => {
+  const originals = {
+    fetch: globalThis.fetch,
+    httpRequest: http.request,
+    httpsRequest: https.request,
+    netConnect: net.connect,
+    netCreateConnection: net.createConnection,
+    tlsConnect: tls.connect,
+    dnsLookup: dns.lookup,
+    dnsPromisesLookup: dns.promises.lookup,
+  };
+  const firstRestore = installOfflineGuard();
+  const secondRestore = installOfflineGuard();
+  try {
+    firstRestore();
+    assert.throws(() => dns.lookup("localhost", () => undefined), /Phase15D offline guard: network access is disabled/);
+    firstRestore();
+  } finally {
+    secondRestore();
+  }
+  assert.equal(globalThis.fetch, originals.fetch);
+  assert.equal(http.request, originals.httpRequest);
+  assert.equal(https.request, originals.httpsRequest);
+  assert.equal(net.connect, originals.netConnect);
+  assert.equal(net.createConnection, originals.netCreateConnection);
+  assert.equal(tls.connect, originals.tlsConnect);
+  assert.equal(dns.lookup, originals.dnsLookup);
+  assert.equal(dns.promises.lookup, originals.dnsPromisesLookup);
 });
