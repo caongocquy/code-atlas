@@ -132,6 +132,9 @@ test("rejects snapshot identifiers with separators and roots outside the corpus 
 test("rejects a snapshot case whose language differs from its provenance", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15d-snapshot-language-"));
   try {
+    const snapshotRoot = path.join(root, "snapshots", "sample");
+    await mkdir(path.join(snapshotRoot, "src"), { recursive: true });
+    await writeFile(path.join(snapshotRoot, "src", "app.ts"), "export const value = 1;\n");
     const snapshotCase = {
       caseId: "snapshot-language-mismatch",
       kind: "snapshot",
@@ -160,12 +163,88 @@ test("rejects a snapshot case whose language differs from its provenance", async
   }
 });
 
+test("requires every snapshot case to materialize its root and declared regular files", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15d-snapshot-files-"));
+  try {
+    const snapshotCase = {
+      caseId: "snapshot-files",
+      kind: "snapshot",
+      language: "typescript",
+      workspaceRef: "snapshots/sample",
+      task: "Evaluate snapshot files",
+      anchors: [{ kind: "file", path: "src/app.ts" }],
+      changedPaths: [],
+      truth: { requiredSubjects: [{ kind: "file", path: "src/app.ts" }], supportingSubjects: [], forbiddenRequiredSubjects: [] },
+    };
+    const snapshot = {
+      snapshotId: "sample",
+      sourceRepository: "https://example.invalid/source",
+      sourceCommitSha: "0123456789abcdef0123456789abcdef01234567",
+      license: "MIT",
+      licenseNoticeRequired: false,
+      includedPaths: ["src/app.ts"],
+      language: "typescript",
+      inclusionReason: "Focused regression fixture",
+    };
+    const values = parsedInputs([...syntheticCases(), snapshotCase], [snapshot]);
+    const valuePaths = await paths(root);
+    assert.throws(() => validateCorpusIntegrity({ ...values, ...valuePaths }));
+
+    const snapshotRoot = path.join(root, "snapshots", "sample");
+    await mkdir(path.join(snapshotRoot, "src"), { recursive: true });
+    assert.throws(() => validateCorpusIntegrity({ ...values, ...valuePaths }));
+
+    await writeFile(path.join(snapshotRoot, "src", "app.ts"), "export const value = 1;\n");
+    assert.doesNotThrow(() => validateCorpusIntegrity({ ...values, ...valuePaths }));
+
+    const outside = path.join(root, "outside.ts");
+    await writeFile(outside, "export const outside = true;\n");
+    await symlink(outside, path.join(snapshotRoot, "src", "escaped.ts"));
+    const escaped = parsedInputs([...syntheticCases(), snapshotCase], [{ ...snapshot, includedPaths: ["src/escaped.ts"] }]);
+    assert.throws(() => validateCorpusIntegrity({ ...escaped, ...valuePaths }));
+  } finally {
+    await (await import("node:fs/promises")).rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects snapshot provenance that no snapshot case references", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15d-orphan-snapshot-"));
+  try {
+    const snapshot = {
+      snapshotId: "orphan",
+      sourceRepository: "https://example.invalid/source",
+      sourceCommitSha: "0123456789abcdef0123456789abcdef01234567",
+      license: "MIT",
+      licenseNoticeRequired: false,
+      includedPaths: ["src/app.ts"],
+      language: "typescript",
+      inclusionReason: "Focused regression fixture",
+    };
+    const values = parsedInputs(syntheticCases(), [snapshot]);
+    const valuePaths = await paths(root);
+    assert.throws(() => validateCorpusIntegrity({ ...values, ...valuePaths }));
+  } finally {
+    await (await import("node:fs/promises")).rm(root, { recursive: true, force: true });
+  }
+});
+
 test("requires applicable notices to be regular files inside the declared snapshot root", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15d-notice-"));
   try {
     const snapshotRoot = path.join(root, "snapshots", "sample");
-    await mkdir(snapshotRoot, { recursive: true });
+    await mkdir(path.join(snapshotRoot, "src"), { recursive: true });
     await writeFile(path.join(snapshotRoot, "LICENSE"), "notice\n");
+    await writeFile(path.join(snapshotRoot, "src", "app.ts"), "export const value = 1;\n");
+    const snapshotCase = {
+      caseId: "snapshot-license-notice",
+      kind: "snapshot",
+      language: "typescript",
+      workspaceRef: "snapshots/sample",
+      task: "Evaluate snapshot notice",
+      anchors: [{ kind: "file", path: "src/app.ts" }],
+      changedPaths: [],
+      truth: { requiredSubjects: [{ kind: "file", path: "src/app.ts" }], supportingSubjects: [], forbiddenRequiredSubjects: [] },
+    };
     const snapshot = {
       snapshotId: "sample",
       sourceRepository: "https://example.invalid/source",
@@ -177,35 +256,35 @@ test("requires applicable notices to be regular files inside the declared snapsh
       language: "typescript",
       inclusionReason: "Focused regression fixture",
     };
-    const values = parsedInputs(syntheticCases(), [snapshot]);
+    const values = parsedInputs([...syntheticCases(), snapshotCase], [snapshot]);
     validateCorpusIntegrity({ ...values, ...await paths(root) });
 
-    const missingNotice = parsedInputs(syntheticCases(), [{ ...snapshot, licenseNoticePath: "missing" }]);
+    const missingNotice = parsedInputs([...syntheticCases(), snapshotCase], [{ ...snapshot, licenseNoticePath: "missing" }]);
     const missingNoticePaths = await paths(root);
     assert.throws(() => validateCorpusIntegrity({ ...missingNotice, ...missingNoticePaths }));
 
-    const optionalValid = parsedInputs(syntheticCases(), [{ ...snapshot, licenseNoticeRequired: false }]);
+    const optionalValid = parsedInputs([...syntheticCases(), snapshotCase], [{ ...snapshot, licenseNoticeRequired: false }]);
     const optionalValidPaths = await paths(root);
     assert.doesNotThrow(() => validateCorpusIntegrity({ ...optionalValid, ...optionalValidPaths }));
 
-    const optionalMissing = parsedInputs(syntheticCases(), [{ ...snapshot, licenseNoticeRequired: false, licenseNoticePath: "missing" }]);
+    const optionalMissing = parsedInputs([...syntheticCases(), snapshotCase], [{ ...snapshot, licenseNoticeRequired: false, licenseNoticePath: "missing" }]);
     const optionalMissingPaths = await paths(root);
     assert.throws(() => validateCorpusIntegrity({ ...optionalMissing, ...optionalMissingPaths }));
 
-    assert.throws(() => parsedInputs(syntheticCases(), [{ ...snapshot, licenseNoticePath: "../LICENSE" }]));
+    assert.throws(() => parsedInputs([...syntheticCases(), snapshotCase], [{ ...snapshot, licenseNoticePath: "../LICENSE" }]));
 
     const outsideNotice = path.join(root, "outside-license");
     await writeFile(outsideNotice, "outside\n");
     await symlink(outsideNotice, path.join(snapshotRoot, "ESCAPED_LICENSE"));
-    const escapedSymlink = parsedInputs(syntheticCases(), [{ ...snapshot, licenseNoticePath: "ESCAPED_LICENSE" }]);
+    const escapedSymlink = parsedInputs([...syntheticCases(), snapshotCase], [{ ...snapshot, licenseNoticePath: "ESCAPED_LICENSE" }]);
     const escapedSymlinkPaths = await paths(root);
     assert.throws(() => validateCorpusIntegrity({ ...escapedSymlink, ...escapedSymlinkPaths }));
 
-    const optionalEscapedSymlink = parsedInputs(syntheticCases(), [{ ...snapshot, licenseNoticeRequired: false, licenseNoticePath: "ESCAPED_LICENSE" }]);
+    const optionalEscapedSymlink = parsedInputs([...syntheticCases(), snapshotCase], [{ ...snapshot, licenseNoticeRequired: false, licenseNoticePath: "ESCAPED_LICENSE" }]);
     const optionalEscapedSymlinkPaths = await paths(root);
     assert.throws(() => validateCorpusIntegrity({ ...optionalEscapedSymlink, ...optionalEscapedSymlinkPaths }));
 
-    const optionalNotice = parsedInputs(syntheticCases(), [{ ...snapshot, licenseNoticeRequired: false, licenseNoticePath: undefined }]);
+    const optionalNotice = parsedInputs([...syntheticCases(), snapshotCase], [{ ...snapshot, licenseNoticeRequired: false, licenseNoticePath: undefined }]);
     const optionalNoticePaths = await paths(root);
     assert.doesNotThrow(() => validateCorpusIntegrity({ ...optionalNotice, ...optionalNoticePaths }));
   } finally {

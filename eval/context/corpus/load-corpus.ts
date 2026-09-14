@@ -55,6 +55,35 @@ function snapshotRoot(manifestPath: string, snapshotId: string): { snapshotsRoot
   return { snapshotsRoot, root };
 }
 
+function validateSnapshotFiles(manifestPath: string, snapshot: CorpusManifest["snapshots"][number]): void {
+  const { snapshotsRoot, root } = snapshotRoot(manifestPath, snapshot.snapshotId);
+  let resolvedSnapshotsRoot: string;
+  let resolvedRoot: string;
+  try {
+    resolvedSnapshotsRoot = realpathSync(snapshotsRoot);
+    resolvedRoot = realpathSync(root);
+  } catch (error) {
+    throw new Error(`Corpus integrity failure: snapshot ${snapshot.snapshotId} root is missing`, { cause: error });
+  }
+  if (!isChildPath(resolvedSnapshotsRoot, resolvedRoot) || !statSync(resolvedRoot).isDirectory()) {
+    throw new Error(`Corpus integrity failure: snapshot ${snapshot.snapshotId} root is not a safe directory`);
+  }
+
+  for (const includedPath of snapshot.includedPaths) {
+    const file = path.resolve(root, includedPath);
+    if (!isChildPath(root, file)) throw new Error(`Corpus integrity failure: snapshot ${snapshot.snapshotId} included path escapes its snapshot root`);
+    let resolvedFile: string;
+    try {
+      resolvedFile = realpathSync(file);
+    } catch (error) {
+      throw new Error(`Corpus integrity failure: snapshot ${snapshot.snapshotId} included file is missing: ${includedPath}`, { cause: error });
+    }
+    if (!isChildPath(resolvedRoot, resolvedFile) || !statSync(resolvedFile).isFile()) {
+      throw new Error(`Corpus integrity failure: snapshot ${snapshot.snapshotId} included path is not a safe regular file: ${includedPath}`);
+    }
+  }
+}
+
 function validateLicenseNotice(manifestPath: string, snapshot: CorpusManifest["snapshots"][number]): void {
   const { snapshotsRoot, root } = snapshotRoot(manifestPath, snapshot.snapshotId);
   if (!snapshot.licenseNoticeRequired && !snapshot.licenseNoticePath) return;
@@ -115,6 +144,7 @@ export function validateCorpusIntegrity(input: {
   }
 
   const snapshots = new Map(manifest.snapshots.map((snapshot) => [snapshot.snapshotId, snapshot]));
+  const referencedSnapshotIds = new Set<string>();
   for (const value of manifest.cases.filter(({ kind }) => kind === "snapshot")) {
     const snapshotId = path.posix.basename(value.workspaceRef);
     const snapshot = snapshots.get(snapshotId);
@@ -122,7 +152,11 @@ export function validateCorpusIntegrity(input: {
       throw new Error(`Corpus integrity failure: snapshot case ${value.caseId} has no matching snapshot provenance`);
     }
     if (snapshot.language !== value.language) throw new Error(`Corpus integrity failure: snapshot case ${value.caseId} language does not match snapshot ${snapshotId}`);
+    validateSnapshotFiles(input.manifestPath, snapshot);
+    referencedSnapshotIds.add(snapshotId);
   }
+  const orphanSnapshots = [...snapshots.keys()].filter((snapshotId) => !referencedSnapshotIds.has(snapshotId));
+  if (orphanSnapshots.length > 0) throw new Error(`Corpus integrity failure: orphan snapshot provenance: ${orphanSnapshots.join(", ")}`);
   for (const snapshot of manifest.snapshots) validateLicenseNotice(input.manifestPath, snapshot);
 }
 
