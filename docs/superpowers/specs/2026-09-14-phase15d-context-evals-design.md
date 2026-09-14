@@ -186,25 +186,42 @@ offline contract, not an opportunity to fall back to a remote service.
 
 ## 8. Determinism and normalization
 
-Selected cases execute independently from clean state at least twice. The
-runner compares semantic normalized output. Host noise may be normalized,
-including temporary absolute workspace roots, ephemeral process IDs,
-host-specific temporary paths, and timestamps that are not semantic.
+All context-selection correctness cases execute at least twice, each time
+from an independent clean workspace. Lifecycle determinism scenarios repeat
+from equivalent clean state and equivalent persisted lifecycle state, including
+restart continuity where declared by the case. Timing and performance
+observations are excluded from semantic equality.
 
-Normalization must retain repository-relative paths, symbol identities,
-selected subjects and their ordering, reliability/completeness, required
-status, task identity semantics, and plan selection semantics. Semantic
-equality includes the normalized selected-subject sequence, plan identity and
-selection decisions, required/supporting/forbidden classification, uncertainty
-and completeness evidence, delivery mode and item ordering, reconstructed
-authoritative content, and declared lifecycle mode sequence. It excludes only
-the explicitly listed host noise.
+The runner compares semantic output. Host noise may be normalized, including
+temporary absolute workspace roots, ephemeral process IDs, host-specific
+temporary paths, and timestamps that are not semantic. The evaluator must not
+normalize or rewrite hashes, identities, or other semantic values to manufacture
+equality.
 
-Fresh determinism means that the same case in independent clean workspaces has
-the same semantic result. Lifecycle continuity determinism means that the same
-persisted lifecycle state after restart produces the same expected next
-behavior. A case seed may be reserved for future fixture generation, but v1
-introduces no unnecessary randomness.
+Semantic equality includes:
+
+- normalized selected-subject sequence;
+- ordering and ranking;
+- required/supporting/forbidden classification;
+- uncertainty and completeness evidence;
+- task identity semantics; and
+- delivery semantics, including delivery modes, item ordering, resend/reuse
+  decisions, and reconstructed authoritative content.
+
+Exact `planIdentity` equality is required only when all repository and
+workspace identity inputs participating in `planIdentity` are identical. When
+those identity inputs differ between otherwise equivalent fresh workspaces,
+determinism compares the semantic plan behavior above, not the identity hash.
+The identity difference remains observable in the result and is never hidden by
+rewriting it. Lifecycle comparison additionally includes the declared mode
+sequence and equivalent persisted-state behavior.
+
+Fresh determinism therefore means equivalent semantic plan behavior from
+independent clean workspaces, with exact plan identity only for identical plan
+identity inputs. Lifecycle continuity determinism means equivalent persisted
+lifecycle state after restart produces the same expected next behavior. A case
+seed may be reserved for future fixture generation, but v1 introduces no
+unnecessary randomness.
 
 ## 9. Correctness gates
 
@@ -265,7 +282,8 @@ Per-case catastrophic ceilings:
 
 - tokens: no more than 2× baseline;
 - bytes: no more than 2× baseline;
-- selected items: no more than baseline plus `max(3, 100%)`; and
+- selected items: no more than
+  `baselineSelectedItems + max(3, baselineSelectedItems)`; and
 - required targets: never absent from the selected set.
 
 These values change only through an explicit reviewed baseline or policy
@@ -299,6 +317,27 @@ The baseline and corpus must declare compatible versions. A missing baseline
 case, an orphan baseline case, duplicate case ID, duplicate baseline ID, or
 version mismatch fails evaluation with an actionable report. No missing case
 is silently treated as a new baseline, and no orphan is silently deleted.
+
+Version contracts are exact and explicit:
+
+- `reportSchemaVersion` is the machine-report schema, currently
+  `context-eval-report-v1`;
+- `corpusVersion` is the corpus manifest contract, currently
+  `context-eval-v1`;
+- `baselineVersion` identifies the reviewed baseline document, currently
+  `context-eval-baseline-v1`; and
+- `policyVersion` identifies the reviewed gate-policy contract, currently
+  `context-eval-policy-v1`.
+
+The runner accepts only the report schema it writes, requires the manifest's
+exact `corpusVersion`, requires the baseline's exact `corpusVersion` and
+`baselineVersion`, and requires the baseline's exact `policyVersion`. A
+corpus/baseline/policy version mismatch is an integrity failure; there is no
+implicit compatibility or “nearest version” behavior. The machine report
+records all four versions plus stable digests of the canonical baseline and
+policy bytes actually used, so a result identifies its exact comparison
+inputs. A schema-version change requires a new report schema contract rather
+than silently reinterpreting old fields.
 
 The normal evaluator (`npm run eval:context`) never writes the baseline.
 
@@ -349,8 +388,10 @@ observations, and failed cases with reasons.
 The machine report at the transient path `artifacts/context-eval-report.json`
 contains:
 
-- `schemaVersion`;
+- `reportSchemaVersion`;
 - `corpusVersion`;
+- `baselineVersion` and baseline digest;
+- `policyVersion` and policy digest;
 - per-case observed metrics;
 - aggregate metrics;
 - gate decisions; and
@@ -360,7 +401,60 @@ The report is an execution artifact, not the golden baseline. PASS and FAIL
 exit codes are deterministic. The report path is disposable and must not be
 committed as evaluation truth.
 
-## 15. Explicit exclusions
+## 15. CI / release integration
+
+The normal CI validation for a Phase15D-enabled release runs
+`npm run eval:context` from a clean checkout with network access disabled. CI
+retains the human and machine reports as build artifacts for review. A
+non-zero evaluator exit blocks the release gate; it does not publish, update a
+baseline, or modify corpus truth.
+
+Baseline updates are a separate reviewed developer workflow and are never
+performed implicitly by CI. The release workflow must use the committed
+corpus, baseline, and policy versions and report their recorded digests. This
+integration adds no public eval command beyond the explicitly internal
+`eval:context` script and adds no remote service dependency.
+
+## 16. Corpus integrity gates
+
+Corpus validation runs before case execution. It fails for at least:
+
+- invalid manifest or case schema;
+- duplicate case IDs;
+- missing required synthetic language/class coverage;
+- missing snapshot provenance;
+- missing required license metadata or applicable license notices;
+- missing baseline cases;
+- orphan baseline cases;
+- duplicate baseline IDs; and
+- incompatible corpus, baseline, or policy versions.
+
+Integrity validation also rejects malformed version or digest metadata and
+duplicate snapshot IDs. Integrity failures are reported as data/configuration
+failures and cannot be bypassed by a quality baseline update.
+
+## 17. Failure semantics
+
+The evaluator exits non-zero when any of these fail:
+
+- correctness;
+- determinism;
+- reconstruction;
+- authority or uncertainty preservation;
+- workspace/lifecycle isolation;
+- a per-case catastrophic quality regression;
+- an aggregate quality regression; or
+- corpus, baseline, or policy integrity.
+
+The evaluator exits zero only when corpus integrity passes, all correctness and
+determinism hard gates pass, reconstruction/authority/uncertainty/isolation
+gates pass, and both catastrophic and aggregate quality policies pass.
+Performance observations are non-blocking and therefore cannot independently
+change the exit code in v1. Every failure includes case or corpus identity,
+gate name, observed value, expected value or policy, and the relevant
+baseline/truth version so that failure classification is deterministic.
+
+## 18. Explicit exclusions
 
 Phase15D v1 excludes:
 
@@ -375,7 +469,7 @@ Phase15D v1 excludes:
 It also excludes Phase15E work, public API surfaces, LLM judging, network
 fetching, and changes to Phase15A/B/C storage or delivery semantics.
 
-## 16. Definition of done
+## 19. Definition of done
 
 Phase15D is complete only when:
 
