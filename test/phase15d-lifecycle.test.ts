@@ -91,3 +91,25 @@ test("lifecycle scorer rejects unstable identity and missing race evidence", () 
     "lifecycle.cas_loser_state",
   ]);
 });
+
+test("lifecycle scorer rejects corrupted reconstructed content", () => {
+  const observed = {
+    modes: ["full", "delta", "unchanged"], fullItems: 1, deltaItems: 1, unchangedItems: 1, rehydratedItems: 0,
+    requestedBytes: 3, returnedBytes: 3, savedBytes: 0, reuseRate: 0, bodyResendCount: 1,
+    sessionIds: ["session"], contextGenerations: ["generation"], crossWorkspaceRefused: true,
+    restartContinuity: true, casLoserWroteNoStrayState: true, reconstructedContents: { "file:source.ts": "corrupted" },
+  } as const;
+  const failures = scoreLifecycle(observed, lifecycleCase().lifecycle!);
+  assert.ok(failures.some((failure) => failure.gate === "lifecycle.reconstruction"));
+});
+
+test("lifecycle scorer rejects an inconsistent body resend count", () => {
+  const observed = {
+    modes: ["full", "unchanged"], fullItems: 1, deltaItems: 0, unchangedItems: 1, rehydratedItems: 0,
+    requestedBytes: 2, returnedBytes: 1, savedBytes: 1, reuseRate: 0.5, bodyResendCount: 0,
+    sessionIds: ["session"], contextGenerations: ["generation"], crossWorkspaceRefused: true,
+    restartContinuity: true, casLoserWroteNoStrayState: true, reconstructedContents: { "file:source.ts": "one\n" },
+  } as const;
+  const failures = scoreLifecycle(observed, { primitives: [{ kind: "start" }], expectedModes: ["full", "unchanged"] });
+  assert.ok(failures.some((failure) => failure.gate === "lifecycle.body_resend_count"));
+});

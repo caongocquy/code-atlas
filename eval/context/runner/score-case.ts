@@ -67,6 +67,28 @@ export function scoreLifecycle(value: LifecycleObserved, expected: LifecycleScen
   if (expected.primitives.some((primitive) => primitive.kind === "restart") && !value.restartContinuity) {
     failures.push(lifecycleFailure("lifecycle.restart_continuity", true, false, "Restart must preserve lifecycle session and generation continuity"));
   }
+  const expectedBodyResendCount = value.modes.filter((mode) => mode === "full" || mode === "rehydrate").length;
+  if (value.bodyResendCount !== expectedBodyResendCount) {
+    failures.push(lifecycleFailure("lifecycle.body_resend_count", expectedBodyResendCount, value.bodyResendCount, "Body resend count must equal full and rehydrate deliveries"));
+  }
+  if (value.modes.length > 0 && Object.keys(value.reconstructedContents).length === 0) {
+    failures.push(lifecycleFailure("lifecycle.reconstruction", true, false, "Lifecycle deliveries must produce reconstructed content"));
+  }
+  for (const [key, content] of Object.entries(value.reconstructedContents)) {
+    if ((!key.startsWith("file:") && !key.startsWith("symbol:")) || typeof content !== "string") {
+      failures.push(lifecycleFailure("lifecycle.reconstruction", true, false, "Reconstructed content must use canonical subject keys and string content"));
+    }
+  }
+  for (const primitive of expected.primitives) {
+    if (primitive.kind !== "mutate") continue;
+    for (const [relativePath, content] of Object.entries(primitive.files)) {
+      const key = `file:${relativePath}`;
+      const observed = value.reconstructedContents[key];
+      if (observed !== undefined && observed !== content) {
+        failures.push(lifecycleFailure("lifecycle.reconstruction", content, observed, `Reconstructed content is incorrect for ${relativePath}`));
+      }
+    }
+  }
   if (!value.casLoserWroteNoStrayState) {
     failures.push(lifecycleFailure("lifecycle.cas_loser_state", true, false, "A losing lifecycle CAS must publish no stray receipts or snapshots"));
   }
