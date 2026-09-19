@@ -72,6 +72,8 @@ test("resolves policy defaults, preserves baseline metrics as comparison data, a
   assert.equal(resolved.catastrophic.maxEstimatedTokens, 20);
   assert.equal(resolved.catastrophic.maxReturnedBytes, 60);
   assert.equal(resolved.catastrophic.maxSelectedItems, 16);
+  assert.equal(resolveQualityBudget(policy, { ...baseline, qualityOverrides: { catastrophic: { selectedItemsFormula: "baselineSelectedItems + max(3, baselineSelectedItems)" } } }).catastrophic.maxSelectedItems, 6);
+  assert.throws(() => resolveQualityBudget(policy, { ...baseline, qualityOverrides: { catastrophic: { selectedItemsFormula: "baselineSelectedItems + max(4, baselineSelectedItems)" as never } } }), /selectedItemsFormula/);
 });
 
 test("enforces exact catastrophic ceilings and rejects non-finite overrides", () => {
@@ -117,4 +119,18 @@ test("requires a baseline for every score and preserves correctness failures", (
   const result = aggregateScores([score("case-one", metrics(), [correctnessFailure])], new Map([[baseline.caseId, baseline]]), policy);
   assert.equal(result.aggregateQuality, false);
   assert.equal(result.failures.some(({ gate }) => gate === "correctness.required_hit_rate"), true);
+});
+
+test("owns catastrophic quality scoring in aggregateScores without duplicate failure identities", () => {
+  const duplicate = {
+    gate: "quality.catastrophic.selected_items",
+    scope: "case" as const,
+    caseId: "case-one",
+    expected: 6,
+    observed: 7,
+    message: "pre-scored catastrophic failure",
+  };
+  const result = aggregateScores([score("case-one", metrics({ selectedItems: 7 }), [duplicate])], new Map([[baseline.caseId, baseline]]), policy);
+  const matching = result.failures.filter((failure) => failure.gate === duplicate.gate && failure.caseId === duplicate.caseId);
+  assert.equal(matching.length, 1);
 });

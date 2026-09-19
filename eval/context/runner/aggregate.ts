@@ -1,5 +1,7 @@
 import type { AggregateScore, BaselineEntry, CaseScore, GateFailure, ObservedMetrics, QualityPolicy, ResolvedQualityBudget } from "../types.js";
 
+const selectedItemsFormula = "baselineSelectedItems + max(3, baselineSelectedItems)" as const;
+
 const qualityFailure = (caseId: string | undefined, gate: string, expected: number | boolean, observed: number | boolean, message: string, scope: "case" | "corpus" = "case"): GateFailure => ({
   gate,
   scope,
@@ -22,9 +24,15 @@ function mergeNumberFields<T extends Record<string, number>>(defaults: T, overri
   return result;
 }
 
+function validateSelectedItemsFormula(value: string, field: string): void {
+  if (value !== selectedItemsFormula) throw new Error(`Invalid quality override ${field}: expected ${selectedItemsFormula}`);
+}
+
 export function resolveQualityBudget(policy: QualityPolicy, entry: BaselineEntry): ResolvedQualityBudget {
   const aggregate = mergeNumberFields(policy.aggregate, entry.qualityOverrides?.aggregate, "aggregate");
   const catastrophicOverrides = entry.qualityOverrides?.catastrophic;
+  const resolvedSelectedItemsFormula = catastrophicOverrides?.selectedItemsFormula ?? policy.catastrophic.selectedItemsFormula;
+  validateSelectedItemsFormula(resolvedSelectedItemsFormula, "catastrophic.selectedItemsFormula");
   const catastrophic = mergeNumberFields({
     maxEstimatedTokensMultiplier: policy.catastrophic.maxEstimatedTokensMultiplier,
     maxReturnedBytesMultiplier: policy.catastrophic.maxReturnedBytesMultiplier,
@@ -107,7 +115,18 @@ function aggregateBaseline(scores: readonly CaseScore[], baselines: ReadonlyMap<
 export function aggregateScores(scores: readonly CaseScore[], baselines: ReadonlyMap<string, BaselineEntry>, policy: QualityPolicy): AggregateScore {
   const metrics = aggregateMetrics(scores);
   const baseline = aggregateBaseline(scores, baselines);
-  const failures: GateFailure[] = scores.flatMap((score) => [...score.failures, ...scoreQuality({ metrics: score.metrics, baseline: baselines.get(score.caseId)!, policy })]);
+  const failures: GateFailure[] = scores.flatMap((score) => score.failures.filter((failure) => !failure.gate.startsWith("quality.catastrophic.")));
+  for (const score of scores) {
+    const qualityFailures = scoreQuality({ metrics: score.metrics, baseline: baselines.get(score.caseId)!, policy });
+    const existing = new Set(failures.map((failure) => `${failure.scope}:${failure.caseId ?? ""}:${failure.gate}`));
+    for (const failure of qualityFailures) {
+      const identity = `${failure.scope}:${failure.caseId ?? ""}:${failure.gate}`;
+      if (!existing.has(identity)) {
+        failures.push(failure);
+        existing.add(identity);
+      }
+    }
+  }
   const budgets = baseline.entries.map((entry) => resolveQualityBudget(policy, entry));
   const allowedIncrease = (field: "selectedItems" | "estimatedTokens" | "returnedBytes", budgetField: "maxSelectedItemsIncreasePct" | "maxEstimatedTokensIncreasePct" | "maxReturnedBytesIncreasePct") => baseline.entries.reduce((total, entry, index) => total + entry[field] * (1 + budgets[index].aggregate[budgetField] / 100), 0);
   const increase = (observed: number, allowed: number, field: string) => {

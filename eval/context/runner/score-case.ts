@@ -1,9 +1,8 @@
 import { contentIdentity } from "../../../src/core/context/context-snapshot.js";
 import { canonicalContextSubjectKey } from "../../../src/core/context/task-context-normalizer.js";
-import { scoreQuality } from "./aggregate.js";
 import { compareSemanticObserved, normalizeObserved } from "./normalize-result.js";
 import type { ContextSubject } from "../../../src/core/context/context.types.js";
-import type { BaselineEntry, CaseScore, EvalCase, GateFailure, ObservedCase, ObservedMetrics, QualityPolicy } from "../types.js";
+import type { BaselineEntry, CaseScore, EvalCase, GateFailure, ObservedCase, ObservedMetrics } from "../types.js";
 
 function failure(caseId: string, gate: string, expected: string | number | boolean, observed: string | number | boolean, message: string): GateFailure {
   return { gate, scope: "case", caseId, expected, observed, message };
@@ -47,7 +46,7 @@ function scoreUncertainty(evalCase: EvalCase, observed: ObservedCase): GateFailu
   return failures;
 }
 
-export function scoreCase(input: { evalCase: EvalCase; first: ObservedCase; repeat: ObservedCase; baseline?: BaselineEntry; policy?: QualityPolicy }): CaseScore {
+export function scoreCase(input: { evalCase: EvalCase; first: ObservedCase; repeat: ObservedCase; baseline?: BaselineEntry }): CaseScore {
   const { evalCase, first, repeat } = input;
   const failures: GateFailure[] = [];
   const required = subjectKeys(evalCase.truth.requiredSubjects);
@@ -82,8 +81,6 @@ export function scoreCase(input: { evalCase: EvalCase; first: ObservedCase; repe
 
   failures.push(...scoreUncertainty(evalCase, first));
   failures.push(...scoreReconstruction(first));
-  if (input.baseline && input.policy) failures.push(...scoreQuality({ metrics, baseline: input.baseline, policy: input.policy }));
-
   const identityInputsEqual = first.repositoryIdentity === repeat.repositoryIdentity && first.workspaceIdentity === repeat.workspaceIdentity;
   failures.push(...compareSemanticObserved(normalizeObserved(first), normalizeObserved(repeat), identityInputsEqual).filter((item) => item.gate !== "determinism.lifecycle_modes"));
 
@@ -97,7 +94,7 @@ export function scoreCase(input: { evalCase: EvalCase; first: ObservedCase; repe
       reconstruction: !failures.some((item) => item.gate.startsWith("reconstruction.")),
       authorityUncertainty: !failures.some((item) => item.gate.startsWith("authority.") || item.gate.startsWith("uncertainty.")),
       isolation: "unknown",
-      catastrophicQuality: !failures.some((item) => item.gate.startsWith("quality.catastrophic.")),
+      catastrophicQuality: true,
     },
   };
 }
