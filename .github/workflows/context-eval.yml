@@ -44,12 +44,19 @@ jobs:
           set -euo pipefail
           pnpm run eval:context
 
-      - name: Verify evaluator did not stage baseline or policy changes
+      - name: Verify evaluator did not modify corpus truth
         shell: bash
         run: |
           set -euo pipefail
-          git diff --exit-code -- eval/context/baselines/context-eval-v1.json eval/context/baselines/context-eval-policy-v1.json
-          git diff --cached --exit-code -- eval/context/baselines/context-eval-v1.json eval/context/baselines/context-eval-policy-v1.json
+          protected_paths=(
+            eval/context/corpus/manifest.json
+            eval/context/corpus/synthetic
+            eval/context/corpus/snapshots
+            eval/context/baselines/context-eval-v1.json
+            eval/context/baselines/context-eval-policy-v1.json
+          )
+          git diff --exit-code -- "${protected_paths[@]}"
+          git diff --cached --exit-code -- "${protected_paths[@]}"
 
       - name: Upload evaluation report
         if: ${{ always() }}

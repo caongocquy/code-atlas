@@ -45,6 +45,24 @@ test("has an offline CI gate that preserves both baseline and policy data", asyn
   assert.doesNotMatch(workflow, /continue-on-error\s*:\s*true/);
 });
 
+test("protects every tracked corpus truth path in both worktree and staged diffs", async () => {
+  const workflow = await readFile(path.join(root, ".github/workflows/context-eval.yml"), "utf8");
+
+  for (const protectedPath of [
+    "eval/context/corpus/manifest.json",
+    "eval/context/corpus/synthetic",
+    "eval/context/corpus/snapshots",
+    "eval/context/baselines/context-eval-v1.json",
+    "eval/context/baselines/context-eval-policy-v1.json",
+  ]) {
+    assert.match(workflow, new RegExp(protectedPath));
+  }
+
+  assert.match(workflow, /protected_paths=\(/);
+  assert.match(workflow, /git diff --exit-code -- "\$\{protected_paths\[@\]\}"/);
+  assert.match(workflow, /git diff --cached --exit-code -- "\$\{protected_paths\[@\]\}"/);
+});
+
 test("propagates a failing evaluator process through a fail-fast CI-style shell step", async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "phase15d-ci-failure-"));
   const marker = path.join(tempRoot, "after-evaluator");
