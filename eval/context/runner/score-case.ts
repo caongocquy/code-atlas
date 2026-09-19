@@ -2,7 +2,7 @@ import { contentIdentity } from "../../../src/core/context/context-snapshot.js";
 import { canonicalContextSubjectKey } from "../../../src/core/context/task-context-normalizer.js";
 import { compareSemanticObserved, normalizeObserved } from "./normalize-result.js";
 import type { ContextSubject } from "../../../src/core/context/context.types.js";
-import type { BaselineEntry, CaseScore, EvalCase, GateFailure, ObservedCase, ObservedMetrics } from "../types.js";
+import type { BaselineEntry, CaseScore, EvalCase, GateFailure, LifecycleObserved, LifecycleScenario, ObservedCase, ObservedMetrics } from "../types.js";
 
 function failure(caseId: string, gate: string, expected: string | number | boolean, observed: string | number | boolean, message: string): GateFailure {
   return { gate, scope: "case", caseId, expected, observed, message };
@@ -42,6 +42,33 @@ function scoreUncertainty(evalCase: EvalCase, observed: ObservedCase): GateFailu
   }
   if ((evalCase.syntheticClass === "incomplete/ambiguity" || observed.reliability.mayBeIncomplete) && !observed.reliability.diagnostics.length) {
     failures.push(failure(observed.caseId, "uncertainty.diagnostics", true, false, "Incomplete reliability must retain diagnostics"));
+  }
+  return failures;
+}
+
+function lifecycleFailure(gate: string, expected: string | number | boolean, observed: string | number | boolean, message: string): GateFailure {
+  return { gate, scope: "case", expected, observed, message };
+}
+
+export function scoreLifecycle(value: LifecycleObserved, expected: LifecycleScenario): readonly GateFailure[] {
+  const failures: GateFailure[] = [];
+  if (JSON.stringify(value.modes) !== JSON.stringify(expected.expectedModes)) {
+    failures.push(lifecycleFailure("lifecycle.mode_sequence", expected.expectedModes.join(","), value.modes.join(","), "Lifecycle delivery modes must match the declared scenario"));
+  }
+  if (!value.sessionIds.length || new Set(value.sessionIds).size !== 1) {
+    failures.push(lifecycleFailure("lifecycle.session_stability", true, false, "Lifecycle refreshes must preserve one session identity"));
+  }
+  if (!value.contextGenerations.length || new Set(value.contextGenerations).size !== 1) {
+    failures.push(lifecycleFailure("lifecycle.generation_stability", true, false, "Lifecycle refreshes must preserve one context generation"));
+  }
+  if (!value.crossWorkspaceRefused) {
+    failures.push(lifecycleFailure("lifecycle.cross_workspace_refused", true, false, "A lifecycle handle must not resume from another workspace"));
+  }
+  if (expected.primitives.some((primitive) => primitive.kind === "restart") && !value.restartContinuity) {
+    failures.push(lifecycleFailure("lifecycle.restart_continuity", true, false, "Restart must preserve lifecycle session and generation continuity"));
+  }
+  if (!value.casLoserWroteNoStrayState) {
+    failures.push(lifecycleFailure("lifecycle.cas_loser_state", true, false, "A losing lifecycle CAS must publish no stray receipts or snapshots"));
   }
   return failures;
 }
