@@ -5,8 +5,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
+import Parser from "tree-sitter";
 
-import { LANGUAGE_CONFIGS } from "../src/core/graph/parsers/languages.js";
+import { getLanguageConfig, LANGUAGE_CONFIGS } from "../src/core/graph/parsers/languages.js";
 import { loadCorpus, validateCorpusWorkspaceRefs } from "../eval/context/corpus/load-corpus.js";
 import { parseCorpusManifest } from "../eval/context/schemas.js";
 import { importSnapshot } from "../eval/context/corpus/maintain-snapshots.js";
@@ -59,6 +60,27 @@ test("synthetic classes have distinct reviewed semantics for every production la
     assert.ok(relationship.truth.supportingSubjects.length > 0, `${language} relationship cases need supporting subjects`);
     assert.ok(incomplete.truth.forbiddenRequiredSubjects.length > 0, `${language} incomplete cases need explicit uncertainty truth`);
     assert.match(incomplete.task, /ambiguous|uncertain|incomplete/i);
+  }
+});
+
+test("all synthetic source files are marker-free and parse with their production grammar", async () => {
+  for (const evalCase of (await loadCorpus({
+    manifestPath: path.join(root, "corpus/manifest.json"),
+    baselinePath: path.join(root, "baselines/context-eval-v1.json"),
+    policyPath: path.join(root, "baselines/context-eval-policy-v1.json"),
+  })).manifest.cases.filter(({ kind }) => kind === "synthetic")) {
+    const fixtureRoot = path.join(root, "corpus", evalCase.workspaceRef);
+    const entries = await (await import("node:fs/promises")).readdir(fixtureRoot, { withFileTypes: true });
+    for (const entry of entries.filter((value) => value.isFile())) {
+      const filePath = path.join(fixtureRoot, entry.name);
+      const source = await readFile(filePath, "utf8");
+      assert.doesNotMatch(source, /^\+/m, evalCase.caseId + "/" + entry.name + " contains a patch marker");
+      const config = getLanguageConfig(filePath);
+      assert.ok(config, evalCase.caseId + "/" + entry.name + " must map to a production parser");
+      const parser = new Parser();
+      parser.setLanguage(config!.grammar);
+      assert.equal(parser.parse(source).rootNode.hasError, false, evalCase.caseId + "/" + entry.name + " must parse without syntax errors");
+    }
   }
 });
 
@@ -115,6 +137,8 @@ test("snapshot maintenance imports only declared local files after verifying the
       outputRoot,
     });
     assert.equal(provenance.sourceCommitSha, sha);
+    assert.match(provenance.sourceContentSha256["main.js"]!, /^[0-9a-f]{64}$/);
+    assert.equal(provenance.sourceContentSha256["main.js"], provenance.snapshotContentSha256["main.js"]);
     assert.equal(await readFile(path.join(outputRoot, "main.js"), "utf8"), "export const value = 1;\n");
     assert.equal(await readFile(path.join(outputRoot, "LICENSE"), "utf8"), "MIT notice\n");
     await assert.rejects(() => importSnapshot({

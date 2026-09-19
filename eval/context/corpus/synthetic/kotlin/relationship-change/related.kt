@@ -1,1 +1,3 @@
-+object Related { fun helper(value: Int): Int = value + 1 }
+object Related {
+    fun helper(value: Int): Int = value + 1
+}

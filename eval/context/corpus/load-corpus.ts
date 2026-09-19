@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { realpathSync, statSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { LANGUAGE_CONFIGS } from "../../../src/core/graph/parsers/languages.js";
@@ -80,6 +80,10 @@ function validateSnapshotFiles(manifestPath: string, snapshot: CorpusManifest["s
     }
     if (!isChildPath(resolvedRoot, resolvedFile) || !statSync(resolvedFile).isFile()) {
       throw new Error(`Corpus integrity failure: snapshot ${snapshot.snapshotId} included path is not a safe regular file: ${includedPath}`);
+    }
+    const actualDigest = createHash("sha256").update(readFileSync(resolvedFile)).digest("hex");
+    if (actualDigest !== snapshot.snapshotContentSha256[includedPath]) {
+      throw new Error("Corpus integrity failure: snapshot " + snapshot.snapshotId + " content digest mismatch for " + includedPath);
     }
   }
 }

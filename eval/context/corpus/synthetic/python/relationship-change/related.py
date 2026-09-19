@@ -1,2 +1,2 @@
-+def helper(value):
+def helper(value):
     return value + 1

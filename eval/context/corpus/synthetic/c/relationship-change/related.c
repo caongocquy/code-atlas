@@ -1,1 +1,1 @@
-+int related(int value) { return value + 1; }
+int related(int value) { return value + 1; }

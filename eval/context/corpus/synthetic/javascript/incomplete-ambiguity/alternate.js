@@ -1,1 +1,1 @@
-+export function target(value) { return value + 1; }
+export function target(value) { return value + 1; }

@@ -83,6 +83,8 @@ export type SnapshotProvenance = {
   license: string;
   licenseNoticeRequired: boolean;
   includedPaths: readonly string[];
+  sourceContentSha256: Readonly<Record<string, string>>;
+  snapshotContentSha256: Readonly<Record<string, string>>;
   language: SupportedLanguage;
   inclusionReason: string;
   licenseNoticePath?: string;

@@ -1161,6 +1161,12 @@
       "includedPaths": [
         "cli/src/cli/utils/format.js"
       ],
+      "sourceContentSha256": {
+        "cli/src/cli/utils/format.js": "b51326cb25264aa357ee6d19f357d5e405b3a64ce7c4d2f5ef8202eed363025f"
+      },
+      "snapshotContentSha256": {
+        "cli/src/cli/utils/format.js": "b51326cb25264aa357ee6d19f357d5e405b3a64ce7c4d2f5ef8202eed363025f"
+      },
       "language": "javascript",
       "inclusionReason": "Small JavaScript formatter used for cross-module context selection."
     },
@@ -1174,6 +1180,12 @@
       "includedPaths": [
         "basicsr/__init__.py"
       ],
+      "sourceContentSha256": {
+        "basicsr/__init__.py": "739ab81122358d967e8e7598f80ceecb7a5fdcd2757b32e2d128582357966f46"
+      },
+      "snapshotContentSha256": {
+        "basicsr/__init__.py": "739ab81122358d967e8e7598f80ceecb7a5fdcd2757b32e2d128582357966f46"
+      },
       "language": "python",
       "inclusionReason": "Small Python package entrypoint used for repository-relative file context."
     },
@@ -1187,6 +1199,12 @@
       "includedPaths": [
         "dashboard/internal/data/career.go"
       ],
+      "sourceContentSha256": {
+        "dashboard/internal/data/career.go": "6355c212d78084eccf2960718d03e8281f5b44f593197d3e6d803e115ce74eb4"
+      },
+      "snapshotContentSha256": {
+        "dashboard/internal/data/career.go": "6355c212d78084eccf2960718d03e8281f5b44f593197d3e6d803e115ce74eb4"
+      },
       "language": "go",
       "inclusionReason": "Small Go data model used for cross-module impact context."
     },
@@ -1200,6 +1218,12 @@
       "includedPaths": [
         "examples/deprecation-warning/deprecation-warning.cpp"
       ],
+      "sourceContentSha256": {
+        "examples/deprecation-warning/deprecation-warning.cpp": "397a70a6c05178f231283d0addb6541ed90d635be155828ad1b4e26bb88918df"
+      },
+      "snapshotContentSha256": {
+        "examples/deprecation-warning/deprecation-warning.cpp": "397a70a6c05178f231283d0addb6541ed90d635be155828ad1b4e26bb88918df"
+      },
       "language": "cpp",
       "inclusionReason": "Small C++ example used for source and test adjustment context."
     }

@@ -1,1 +1,1 @@
-+int target(int value) { return value + 1; }
+int target(int value) { return value + 1; }

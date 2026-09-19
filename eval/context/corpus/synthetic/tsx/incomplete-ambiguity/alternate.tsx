@@ -1,1 +1,1 @@
-+export function Target(): string { return "target"; }
+export function Target(): string { return "target"; }

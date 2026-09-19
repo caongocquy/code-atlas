@@ -1,2 +1,2 @@
-+def target(value):
+def target(value):
     return value + 1

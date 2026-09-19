@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { cp, mkdir, realpath, stat } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -44,6 +46,10 @@ async function regularSourceFile(sourceRoot: string, relativePath: string): Prom
   return resolved;
 }
 
+async function sha256File(filePath: string): Promise<string> {
+  return createHash("sha256").update(await readFile(filePath)).digest("hex");
+}
+
 export async function importSnapshot(input: ImportSnapshotInput): Promise<SnapshotProvenance> {
   if (!/^[0-9a-f]{40}$/i.test(input.sourceCommitSha)) throw new Error("Snapshot import requires a full source commit SHA");
   if (!input.sourceRepository.trim() || !input.license.trim()) throw new Error("Snapshot import requires repository and license metadata");
@@ -79,6 +85,8 @@ export async function importSnapshot(input: ImportSnapshotInput): Promise<Snapsh
     licenseNoticeRequired: input.licenseNoticeRequired,
     ...(noticePath ? { licenseNoticePath: noticePath } : {}),
     includedPaths,
+    sourceContentSha256: Object.fromEntries(await Promise.all(files.map(async ({ relativePath, source }) => [relativePath, await sha256File(source)]))),
+    snapshotContentSha256: Object.fromEntries(await Promise.all(files.map(async ({ relativePath }) => [relativePath, await sha256File(path.resolve(input.outputRoot, relativePath))]))),
     language: input.language,
     inclusionReason: "Reviewed local snapshot imported by the Phase15D maintenance workflow",
   };

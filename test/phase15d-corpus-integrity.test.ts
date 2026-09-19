@@ -40,8 +40,17 @@ function syntheticCases() {
   })));
 }
 
-function parsedInputs(cases = syntheticCases(), snapshots: unknown[] = []) {
-  const manifest = parseCorpusManifest({ corpusVersion: "context-eval-v1", cases, snapshots });
+function parsedInputs(cases: Array<{ caseId: string }> = syntheticCases(), snapshots: unknown[] = []) {
+  const normalizedSnapshots = snapshots.map((value) => {
+    const snapshot = value as { includedPaths: string[]; sourceContentSha256?: Record<string, string>; snapshotContentSha256?: Record<string, string> };
+    const fallback = Object.fromEntries(snapshot.includedPaths.map((includedPath) => [includedPath, "0".repeat(64)]));
+    return {
+      ...snapshot,
+      sourceContentSha256: snapshot.sourceContentSha256 ?? fallback,
+      snapshotContentSha256: snapshot.snapshotContentSha256 ?? fallback,
+    };
+  });
+  const manifest = parseCorpusManifest({ corpusVersion: "context-eval-v1", cases, snapshots: normalizedSnapshots });
   const baseline = parseGoldenBaseline({
     corpusVersion: "context-eval-v1",
     baselineVersion: "context-eval-baseline-v1",
@@ -71,6 +80,46 @@ test("hashes raw file bytes before parsing", async () => {
   }
 });
 
+test("rejects snapshot bytes that differ from recorded content digests", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15d-snapshot-digest-"));
+  try {
+    const snapshotRoot = path.join(root, "snapshots", "sample");
+    await mkdir(path.join(snapshotRoot, "src"), { recursive: true });
+    const sourcePath = path.join(snapshotRoot, "src", "app.ts");
+    await writeFile(sourcePath, "export const value = 1;\n");
+    const digest = await sha256File(sourcePath);
+    const snapshotCase = {
+      caseId: "snapshot-content-digest",
+      kind: "snapshot",
+      language: "typescript",
+      workspaceRef: "snapshots/sample",
+      task: "Evaluate snapshot content",
+      anchors: [{ kind: "file", path: "src/app.ts" }],
+      changedPaths: [],
+      truth: { requiredSubjects: [{ kind: "file", path: "src/app.ts" }], supportingSubjects: [], forbiddenRequiredSubjects: [] },
+    };
+    const snapshot = {
+      snapshotId: "sample",
+      sourceRepository: "https://example.invalid/source",
+      sourceCommitSha: "0123456789abcdef0123456789abcdef01234567",
+      license: "MIT",
+      licenseNoticeRequired: false,
+      includedPaths: ["src/app.ts"],
+      sourceContentSha256: { "src/app.ts": digest },
+      snapshotContentSha256: { "src/app.ts": digest },
+      language: "typescript",
+      inclusionReason: "Focused digest regression fixture",
+    };
+    const values = parsedInputs([...syntheticCases(), snapshotCase], [snapshot]);
+    const valuePaths = await paths(root);
+    assert.doesNotThrow(() => validateCorpusIntegrity({ ...values, ...valuePaths }));
+    await writeFile(sourcePath, "export const value = 2;\n");
+    assert.throws(() => validateCorpusIntegrity({ ...values, ...valuePaths }), /digest/i);
+  } finally {
+    await (await import("node:fs/promises")).rm(root, { recursive: true, force: true });
+  }
+});
+
 test("validates registry-derived synthetic coverage and exact corpus relationships", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15d-integrity-"));
   try {
@@ -91,7 +140,7 @@ test("validates registry-derived synthetic coverage and exact corpus relationshi
 
     const incompatible = parseGoldenBaseline({ corpusVersion: "context-eval-v1", baselineVersion: "context-eval-baseline-v1", policyVersion: "context-eval-policy-v1", entries: values.baseline.entries });
     const incompatiblePaths = await paths(root);
-    assert.throws(() => validateCorpusIntegrity({ manifest: values.manifest, baseline: { ...incompatible, corpusVersion: "other" } as typeof incompatible, policy: values.policy, ...incompatiblePaths }));
+    assert.throws(() => validateCorpusIntegrity({ manifest: values.manifest, baseline: { ...incompatible, corpusVersion: "other" } as unknown as typeof incompatible, policy: values.policy, ...incompatiblePaths }));
   } finally {
     await (await import("node:fs/promises")).rm(root, { recursive: true, force: true });
   }
@@ -152,6 +201,8 @@ test("rejects a snapshot case whose language differs from its provenance", async
       license: "MIT",
       licenseNoticeRequired: false,
       includedPaths: ["src/app.ts"],
+      sourceContentSha256: { "src/app.ts": "5d8f65d2774e206bc9f7a7a4ad39ca2dc563b5c31e46ab57ef4874961237ce29" },
+      snapshotContentSha256: { "src/app.ts": "5d8f65d2774e206bc9f7a7a4ad39ca2dc563b5c31e46ab57ef4874961237ce29" },
       language: "typescript",
       inclusionReason: "Focused regression fixture",
     };
@@ -183,6 +234,8 @@ test("requires every snapshot case to materialize its root and declared regular 
       license: "MIT",
       licenseNoticeRequired: false,
       includedPaths: ["src/app.ts"],
+      sourceContentSha256: { "src/app.ts": "5d8f65d2774e206bc9f7a7a4ad39ca2dc563b5c31e46ab57ef4874961237ce29" },
+      snapshotContentSha256: { "src/app.ts": "5d8f65d2774e206bc9f7a7a4ad39ca2dc563b5c31e46ab57ef4874961237ce29" },
       language: "typescript",
       inclusionReason: "Focused regression fixture",
     };
@@ -200,7 +253,7 @@ test("requires every snapshot case to materialize its root and declared regular 
     const outside = path.join(root, "outside.ts");
     await writeFile(outside, "export const outside = true;\n");
     await symlink(outside, path.join(snapshotRoot, "src", "escaped.ts"));
-    const escaped = parsedInputs([...syntheticCases(), snapshotCase], [{ ...snapshot, includedPaths: ["src/escaped.ts"] }]);
+    const escaped = parsedInputs([...syntheticCases(), snapshotCase], [{ ...snapshot, includedPaths: ["src/escaped.ts"], sourceContentSha256: { "src/escaped.ts": "0".repeat(64) }, snapshotContentSha256: { "src/escaped.ts": "0".repeat(64) } }]);
     assert.throws(() => validateCorpusIntegrity({ ...escaped, ...valuePaths }));
   } finally {
     await (await import("node:fs/promises")).rm(root, { recursive: true, force: true });
@@ -253,6 +306,8 @@ test("requires applicable notices to be regular files inside the declared snapsh
       licenseNoticeRequired: true,
       licenseNoticePath: "LICENSE",
       includedPaths: ["src/app.ts"],
+      sourceContentSha256: { "src/app.ts": "5d8f65d2774e206bc9f7a7a4ad39ca2dc563b5c31e46ab57ef4874961237ce29" },
+      snapshotContentSha256: { "src/app.ts": "5d8f65d2774e206bc9f7a7a4ad39ca2dc563b5c31e46ab57ef4874961237ce29" },
       language: "typescript",
       inclusionReason: "Focused regression fixture",
     };

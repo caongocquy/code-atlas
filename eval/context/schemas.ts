@@ -24,6 +24,7 @@ const snapshotIdentifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, "mus
 const canonicalPath = z.string().refine(isCanonicalRelativePath, "must be a canonical repository-relative path");
 const language = z.string().refine((value) => LANGUAGE_CONFIGS.map(({ language }) => language).includes(value as (typeof LANGUAGE_CONFIGS)[number]["language"]), "must be a production supported language");
 const nonNegative = z.number().finite().nonnegative();
+const sha256 = z.string().regex(/^[0-9a-f]{64}$/, "must be a lowercase SHA-256 digest");
 
 const contextSubject = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("file"), path: canonicalPath }).strict(),
@@ -76,11 +77,18 @@ const snapshotProvenance = z.object({
   license: z.string().trim().min(1),
   licenseNoticeRequired: z.boolean(),
   includedPaths: z.array(canonicalPath).min(1),
+  sourceContentSha256: z.record(canonicalPath, sha256),
+  snapshotContentSha256: z.record(canonicalPath, sha256),
   language,
   inclusionReason: z.string().trim().min(1),
   licenseNoticePath: canonicalPath.optional(),
 }).strict().superRefine((value, context) => {
   if (!unique(value.includedPaths.map((includedPath) => ({ includedPath })), "includedPath")) context.addIssue({ code: z.ZodIssueCode.custom, path: ["includedPaths"], message: "included paths must be unique" });
+  for (const field of ["sourceContentSha256", "snapshotContentSha256"] as const) {
+    const keys = Object.keys(value[field]).sort();
+    const included = [...value.includedPaths].sort();
+    if (JSON.stringify(keys) !== JSON.stringify(included)) context.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: field + " must contain exactly one digest for every included path" });
+  }
   if (value.licenseNoticeRequired && !value.licenseNoticePath) context.addIssue({ code: z.ZodIssueCode.custom, path: ["licenseNoticePath"], message: "a required license notice needs a path" });
 });
 
