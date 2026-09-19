@@ -1,0 +1,327 @@
+{
+  "corpusVersion": "context-eval-v1",
+  "baselineVersion": "context-eval-baseline-v1",
+  "policyVersion": "context-eval-policy-v1",
+  "entries": [
+    {
+      "caseId": "typescript-exact-target",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "typescript-relationship-change",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "typescript-incomplete-ambiguity",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "tsx-exact-target",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "tsx-relationship-change",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "tsx-incomplete-ambiguity",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "javascript-exact-target",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "javascript-relationship-change",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "javascript-incomplete-ambiguity",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "python-exact-target",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "python-relationship-change",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "python-incomplete-ambiguity",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "java-exact-target",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "java-relationship-change",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "java-incomplete-ambiguity",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "kotlin-exact-target",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "kotlin-relationship-change",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "kotlin-incomplete-ambiguity",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "go-exact-target",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "go-relationship-change",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "go-incomplete-ambiguity",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "rust-exact-target",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "rust-relationship-change",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "rust-incomplete-ambiguity",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "swift-exact-target",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "swift-relationship-change",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "swift-incomplete-ambiguity",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "dart-exact-target",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "dart-relationship-change",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "dart-incomplete-ambiguity",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "c-exact-target",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "c-relationship-change",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "c-incomplete-ambiguity",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "cpp-exact-target",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "cpp-relationship-change",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "cpp-incomplete-ambiguity",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "snapshot-showdar-router",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "snapshot-basicsr",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "snapshot-career-ops",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    },
+    {
+      "caseId": "snapshot-whisper-cpp",
+      "selectedItems": 1,
+      "estimatedTokens": 32,
+      "returnedBytes": 256,
+      "requiredHitRate": 1,
+      "supportingHitRate": 1
+    }
+  ]
+}
