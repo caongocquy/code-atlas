@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, rm, symlink } from "node:fs/promises";
 import { mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -24,7 +24,7 @@ function evalCase(caseId: string): EvalCase {
   };
 }
 
-function observed(caseId: string, estimatedTokens = 1): ObservedCase {
+function observed(caseId: string, estimatedTokens = 1, selectedItems = 0): ObservedCase {
   return {
     caseId,
     repositoryIdentity: "repo",
@@ -37,7 +37,7 @@ function observed(caseId: string, estimatedTokens = 1): ObservedCase {
     reconstructedContents: {},
     lifecycleModes: [],
     metrics: {
-      selectedItems: 0,
+      selectedItems,
       estimatedTokens,
       returnedBytes: 2,
       requiredHitRate: 1,
@@ -76,7 +76,9 @@ function corpus(cases: readonly EvalCase[], cwd: string): LoadedCorpus {
   const corpusRoot = path.join(cwd, "eval/context/corpus");
   const baselineRoot = path.join(cwd, "eval/context/baselines");
   mkdirSync(baselineRoot, { recursive: true });
-  for (const value of cases) mkdirSync(path.join(corpusRoot, value.workspaceRef), { recursive: true });
+  for (const value of cases) {
+    if (value.workspaceRef.startsWith("synthetic/") && !value.workspaceRef.includes("..")) mkdirSync(path.join(corpusRoot, value.workspaceRef), { recursive: true });
+  }
   return {
     manifestPath: path.join(corpusRoot, "manifest.json"),
     baselinePath: path.join(baselineRoot, "context-eval-v1.json"),
@@ -205,6 +207,97 @@ test("includes each determinism failure exactly once", async () => {
     });
     assert.equal(result.exitCode, 1);
     assert.equal(result.report.cases[0]?.failures.filter(({ gate }) => gate === "determinism.metrics").length, 1);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("runContextEval returns exitCode 1 for aggregate-quality failure", async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), "phase15d-runner-aggregate-quality-"));
+  try {
+    const value = evalCase("aggregate-quality");
+    const loaded = corpus([value], cwd);
+    loaded.baseline.entries[0]!.estimatedTokens = 1;
+    await writeFile(loaded.baselinePath, "baseline bytes\n");
+    await writeFile(loaded.policyPath, "policy bytes\n");
+    const result = await runContextEval({ cwd, reportPath: path.join(cwd, "artifacts/context-eval-report.json") }, {
+      loadCorpus: async () => loaded,
+      executeCase: async () => observed(value.caseId, 2),
+    });
+
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.report.gateDecisions.aggregateQuality, false);
+    assert.equal(result.report.failures.some(({ gate }) => gate === "quality.aggregate.estimated_tokens"), true);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("runContextEval returns exitCode 1 for catastrophic-quality failure", async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), "phase15d-runner-catastrophic-quality-"));
+  try {
+    const value = evalCase("catastrophic-quality");
+    const loaded = corpus([value], cwd);
+    loaded.baseline.entries[0]!.selectedItems = 1;
+    await writeFile(loaded.baselinePath, "baseline bytes\n");
+    await writeFile(loaded.policyPath, "policy bytes\n");
+    const result = await runContextEval({ cwd, reportPath: path.join(cwd, "artifacts/context-eval-report.json") }, {
+      loadCorpus: async () => loaded,
+      executeCase: async () => observed(value.caseId, 1, 5),
+    });
+
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.report.gateDecisions.catastrophicQuality, false);
+    assert.equal(result.report.failures.some(({ gate }) => gate === "quality.catastrophic.selected_items"), true);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("runContextEval rejects traversal and unsupported workspaceRefs before executeCase", async () => {
+  for (const workspaceRef of ["synthetic/../../outside", "remote/fixture"]) {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "phase15d-runner-preflight-"));
+    try {
+      const value = { ...evalCase(workspaceRef.replaceAll("/", "-")), workspaceRef } as EvalCase;
+      const loaded = corpus([value], cwd);
+      await writeFile(loaded.baselinePath, "baseline bytes\n");
+      await writeFile(loaded.policyPath, "policy bytes\n");
+      let executions = 0;
+      const result = await runContextEval({ cwd, reportPath: path.join(cwd, "artifacts/context-eval-report.json") }, {
+        loadCorpus: async () => loaded,
+        executeCase: async () => { executions += 1; return observed(value.caseId); },
+      });
+
+      assert.equal(result.exitCode, 1);
+      assert.equal(executions, 0);
+      assert.equal(result.report.failures.some(({ gate }) => gate === "integrity.load"), true);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  }
+});
+
+test("runContextEval rejects a symlink workspaceRef before executeCase", async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), "phase15d-runner-preflight-symlink-"));
+  try {
+    const value = evalCase("symlink");
+    const loaded = corpus([value], cwd);
+    const fixture = path.join(path.dirname(loaded.manifestPath), value.workspaceRef);
+    const outside = await mkdtemp(path.join(os.tmpdir(), "phase15d-runner-outside-"));
+    await rm(fixture, { recursive: true, force: true });
+    await symlink(outside, fixture);
+    await writeFile(loaded.baselinePath, "baseline bytes\n");
+    await writeFile(loaded.policyPath, "policy bytes\n");
+    let executions = 0;
+    const result = await runContextEval({ cwd, reportPath: path.join(cwd, "artifacts/context-eval-report.json") }, {
+      loadCorpus: async () => loaded,
+      executeCase: async () => { executions += 1; return observed(value.caseId); },
+    });
+
+    assert.equal(result.exitCode, 1);
+    assert.equal(executions, 0);
+    assert.equal(result.report.failures.some(({ gate }) => gate === "integrity.load"), true);
+    await rm(outside, { recursive: true, force: true });
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
