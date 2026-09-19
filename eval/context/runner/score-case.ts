@@ -2,7 +2,7 @@ import { contentIdentity } from "../../../src/core/context/context-snapshot.js";
 import { canonicalContextSubjectKey } from "../../../src/core/context/task-context-normalizer.js";
 import { compareSemanticObserved, normalizeObserved } from "./normalize-result.js";
 import type { ContextSubject } from "../../../src/core/context/context.types.js";
-import type { BaselineEntry, CaseScore, EvalCase, GateFailure, LifecycleObserved, LifecycleScenario, ObservedCase, ObservedMetrics } from "../types.js";
+import type { BaselineEntry, CaseScore, DeliveryMode, EvalCase, GateFailure, LifecycleObserved, LifecycleScenario, ObservedCase, ObservedMetrics } from "../types.js";
 
 function failure(caseId: string, gate: string, expected: string | number | boolean, observed: string | number | boolean, message: string): GateFailure {
   return { gate, scope: "case", caseId, expected, observed, message };
@@ -52,7 +52,25 @@ function lifecycleFailure(gate: string, expected: string | number | boolean, obs
 
 export function scoreLifecycle(value: LifecycleObserved, expected: LifecycleScenario): readonly GateFailure[] {
   const failures: GateFailure[] = [];
-  if (JSON.stringify(value.modes) !== JSON.stringify(expected.expectedModes)) {
+  const refreshPrimitives = expected.primitives.filter((primitive) => primitive.kind === "refresh");
+  const refreshSequences = refreshPrimitives.map((primitive) => primitive.expectedModeSequence);
+  if (refreshSequences.every((sequence) => sequence !== undefined)) {
+    const expectedModeCounts = new Map<DeliveryMode, number>();
+    const observedModeCounts = new Map<DeliveryMode, number>();
+    for (const mode of expected.expectedModes) expectedModeCounts.set(mode, (expectedModeCounts.get(mode) ?? 0) + 1);
+    for (const mode of value.modes) observedModeCounts.set(mode, (observedModeCounts.get(mode) ?? 0) + 1);
+    if (JSON.stringify([...expectedModeCounts.entries()].sort()) !== JSON.stringify([...observedModeCounts.entries()].sort())) {
+      failures.push(lifecycleFailure("lifecycle.mode_sequence", expected.expectedModes.join(","), value.modes.join(","), "Lifecycle delivery mode counts must match the declared scenario"));
+    }
+    let offset = expected.expectedModes.length - refreshSequences.reduce((total, sequence) => total + sequence!.length, 0);
+    for (const sequence of refreshSequences) {
+      const observed = value.modes.slice(offset, offset + sequence!.length);
+      if (JSON.stringify(observed) !== JSON.stringify(sequence)) {
+        failures.push(lifecycleFailure("lifecycle.mode_sequence.refresh", sequence.join(","), observed.join(","), "Each lifecycle refresh must match its declared delivery mode sequence"));
+      }
+      offset += sequence!.length;
+    }
+  } else if (JSON.stringify(value.modes) !== JSON.stringify(expected.expectedModes)) {
     failures.push(lifecycleFailure("lifecycle.mode_sequence", expected.expectedModes.join(","), value.modes.join(","), "Lifecycle delivery modes must match the declared scenario"));
   }
   if (!value.sessionIds.length || new Set(value.sessionIds).size !== 1) {
@@ -84,7 +102,9 @@ export function scoreLifecycle(value: LifecycleObserved, expected: LifecycleScen
     for (const [relativePath, content] of Object.entries(primitive.files)) {
       const key = `file:${relativePath}`;
       const observed = value.reconstructedContents[key];
-      if (observed !== undefined && observed !== content) {
+      if (observed === undefined) {
+        failures.push(lifecycleFailure("lifecycle.reconstruction", key, "absent", `Reconstructed content is missing for ${relativePath}`));
+      } else if (observed !== content) {
         failures.push(lifecycleFailure("lifecycle.reconstruction", content, observed, `Reconstructed content is incorrect for ${relativePath}`));
       }
     }

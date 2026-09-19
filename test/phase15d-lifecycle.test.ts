@@ -37,11 +37,11 @@ function lifecycleCase(): EvalCase {
     lifecycle: {
       primitives: [
         { kind: "start" },
-        { kind: "refresh", expectedModeSequence: ["full", "unchanged"] },
+        { kind: "refresh", expectedModeSequence: ["unchanged"] },
         { kind: "mutate", files: { "source.ts": "one\ntwo\n" } },
-        { kind: "refresh", expectedModeSequence: ["full", "unchanged", "delta"] },
+        { kind: "refresh", expectedModeSequence: ["delta"] },
         { kind: "restart" },
-        { kind: "refresh", expectedModeSequence: ["full", "unchanged", "delta", "unchanged"] },
+        { kind: "refresh", expectedModeSequence: ["unchanged"] },
       ],
       expectedModes: ["full", "unchanged", "delta", "unchanged"],
     },
@@ -103,6 +103,17 @@ test("lifecycle scorer rejects corrupted reconstructed content", () => {
   assert.ok(failures.some((failure) => failure.gate === "lifecycle.reconstruction"));
 });
 
+test("lifecycle scorer rejects an absent expected mutated reconstruction key", () => {
+  const observed = {
+    modes: ["full", "delta", "unchanged"], fullItems: 1, deltaItems: 1, unchangedItems: 1, rehydratedItems: 0,
+    requestedBytes: 3, returnedBytes: 3, savedBytes: 0, reuseRate: 0, bodyResendCount: 1,
+    sessionIds: ["session"], contextGenerations: ["generation"], crossWorkspaceRefused: true,
+    restartContinuity: true, casLoserWroteNoStrayState: true, reconstructedContents: { "file:other.ts": "one\ntwo\n" },
+  } as const;
+  const failures = scoreLifecycle(observed, lifecycleCase().lifecycle!);
+  assert.ok(failures.some((failure) => failure.gate === "lifecycle.reconstruction"));
+});
+
 test("lifecycle scorer rejects an inconsistent body resend count", () => {
   const observed = {
     modes: ["full", "unchanged"], fullItems: 1, deltaItems: 0, unchangedItems: 1, rehydratedItems: 0,
@@ -112,4 +123,15 @@ test("lifecycle scorer rejects an inconsistent body resend count", () => {
   } as const;
   const failures = scoreLifecycle(observed, { primitives: [{ kind: "start" }], expectedModes: ["full", "unchanged"] });
   assert.ok(failures.some((failure) => failure.gate === "lifecycle.body_resend_count"));
+});
+
+test("lifecycle scorer rejects wrong per-refresh order with the same aggregate mode set", () => {
+  const observed = {
+    modes: ["full", "delta", "unchanged", "unchanged"], fullItems: 1, deltaItems: 1, unchangedItems: 2, rehydratedItems: 0,
+    requestedBytes: 4, returnedBytes: 2, savedBytes: 2, reuseRate: 0.5, bodyResendCount: 1,
+    sessionIds: ["session"], contextGenerations: ["generation"], crossWorkspaceRefused: true,
+    restartContinuity: true, casLoserWroteNoStrayState: true, reconstructedContents: { "file:source.ts": "one\ntwo\n" },
+  } as const;
+  const failures = scoreLifecycle(observed, lifecycleCase().lifecycle!);
+  assert.ok(failures.some((failure) => failure.gate === "lifecycle.mode_sequence.refresh"));
 });

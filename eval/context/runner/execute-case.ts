@@ -101,9 +101,14 @@ export async function executeLifecycleScenario(input: { evalCase: EvalCase; root
         restarted = true;
         continue;
       }
+      if (primitive.kind !== "refresh") throw new TypeError(`Unsupported lifecycle primitive: ${primitive.kind}`);
+      const refreshStart = modes.length;
       const refreshed = await lifecycleWorkspace(input.root, deps, store, started.lifecycle.taskContextId);
       refreshAfterRestart ||= restarted;
       appendLifecycleResult({ result: refreshed, modes, sessionIds, contextGenerations, reconstructedContents, metrics: totals });
+      if (primitive.expectedModeSequence && JSON.stringify(modes.slice(refreshStart)) !== JSON.stringify(primitive.expectedModeSequence)) {
+        throw new Error(`Lifecycle refresh mode sequence mismatch: expected ${primitive.expectedModeSequence.join(",")}, observed ${modes.slice(refreshStart).join(",")}`);
+      }
       started = refreshed;
     }
     if (!started) throw new TypeError("Lifecycle scenario did not start");
