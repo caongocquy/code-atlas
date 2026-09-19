@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -39,8 +40,12 @@ function observed(value: EvalCase, selected = false): ObservedCase {
 }
 
 function corpus(cases: readonly EvalCase[], cwd: string): LoadedCorpus {
+  const corpusRoot = path.join(cwd, "eval/context/corpus");
+  const baselineRoot = path.join(cwd, "eval/context/baselines");
+  mkdirSync(baselineRoot, { recursive: true });
+  for (const value of cases) mkdirSync(path.join(corpusRoot, value.workspaceRef), { recursive: true });
   return {
-    manifestPath: path.join(cwd, "manifest.json"), baselinePath: path.join(cwd, "baseline.json"), policyPath: path.join(cwd, "policy.json"),
+    manifestPath: path.join(corpusRoot, "manifest.json"), baselinePath: path.join(baselineRoot, "context-eval-v1.json"), policyPath: path.join(baselineRoot, "context-eval-policy-v1.json"),
     manifest: { corpusVersion: "context-eval-v1", cases, snapshots: [] },
     baseline: { corpusVersion: "context-eval-v1", baselineVersion: "context-eval-baseline-v1", policyVersion: "context-eval-policy-v1", entries: cases.map(({ caseId }) => ({ caseId, selectedItems: 1, estimatedTokens: 4, returnedBytes: 8, requiredHitRate: 1, supportingHitRate: 1, qualityOverrides: { aggregate: { maxSelectedItemsIncreasePct: 42 } } })) },
     policy: { policyVersion: "context-eval-policy-v1", aggregate: { maxEstimatedTokensIncreasePct: 10, maxReturnedBytesIncreasePct: 10, maxSelectedItemsIncreasePct: 10, maxRequiredHitRateDecreasePp: 0, maxSupportingHitRateDecreasePp: 5 }, catastrophic: { maxEstimatedTokensMultiplier: 2, maxReturnedBytesMultiplier: 2, selectedItemsFormula: "baselineSelectedItems + max(3, baselineSelectedItems)", requiredTargetsMayDisappear: false } },

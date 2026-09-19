@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 
 import { installOfflineGuard } from "../offline-guard.js";
-import { loadCorpus, type LoadedCorpus } from "../corpus/load-corpus.js";
+import { loadCorpus, validateCorpusWorkspaceRefs, type LoadedCorpus } from "../corpus/load-corpus.js";
 import { evaluateLoadedCorpus, evaluatorPaths, type EvalRunnerDeps } from "../run.js";
 import { resolveQualityBudget } from "./aggregate.js";
 import type { BaselineEntry, GoldenBaseline, GateFailure } from "../types.js";
@@ -55,6 +56,7 @@ export async function updateBaselineFromCorpus(args: { cwd: string; write: boole
   try {
     const paths = evaluatorPaths(args.cwd);
     const corpus = await (deps.loadCorpus ?? loadCorpus)(paths);
+    validateCorpusWorkspaceRefs({ manifest: corpus.manifest, corpusRoot: path.dirname(corpus.manifestPath) });
     const oldBytes = await readFile(corpus.baselinePath);
     const result = await evaluateLoadedCorpus(corpus, args.cwd, deps);
     const failures = [...result.scores.flatMap(({ failures }) => failures), ...result.aggregate.failures];

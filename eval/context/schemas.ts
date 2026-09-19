@@ -15,7 +15,7 @@ function isCanonicalRelativePath(value: string): boolean {
   return parts.every((part) => part.length > 0 && part !== "." && part !== "..") && path.posix.normalize(value) === value;
 }
 
-function unique(values: readonly { [key: string]: string }[], key: string): boolean {
+function unique<T>(values: readonly T[], key: keyof T): boolean {
   return new Set(values.map((value) => value[key])).size === values.length;
 }
 

@@ -111,6 +111,33 @@ function validateLicenseNotice(manifestPath: string, snapshot: CorpusManifest["s
   if (!details.isFile()) throw new Error(`Corpus integrity failure: snapshot ${snapshot.snapshotId} license notice is not a regular file`);
 }
 
+export function validateCorpusWorkspaceRefs(input: { manifest: CorpusManifest; corpusRoot: string }): void {
+  let resolvedCorpusRoot: string;
+  try {
+    resolvedCorpusRoot = realpathSync(path.resolve(input.corpusRoot));
+  } catch (error) {
+    throw new Error(`Corpus integrity failure: corpus root is missing: ${input.corpusRoot}`, { cause: error });
+  }
+
+  for (const evalCase of input.manifest.cases) {
+    const supported = evalCase.workspaceRef.startsWith("synthetic/") || evalCase.workspaceRef.startsWith("snapshots/");
+    if (!supported) throw new Error(`Corpus integrity failure: unsupported workspaceRef for ${evalCase.caseId}: ${evalCase.workspaceRef}`);
+    const fixture = path.resolve(resolvedCorpusRoot, evalCase.workspaceRef);
+    if (!isChildPath(resolvedCorpusRoot, fixture)) {
+      throw new Error(`Corpus integrity failure: workspaceRef escapes corpus root for ${evalCase.caseId}: ${evalCase.workspaceRef}`);
+    }
+    let resolvedFixture: string;
+    try {
+      resolvedFixture = realpathSync(fixture);
+    } catch (error) {
+      throw new Error(`Corpus integrity failure: workspaceRef fixture is missing for ${evalCase.caseId}: ${evalCase.workspaceRef}`, { cause: error });
+    }
+    if (!isChildPath(resolvedCorpusRoot, resolvedFixture) || !statSync(resolvedFixture).isDirectory()) {
+      throw new Error(`Corpus integrity failure: workspaceRef fixture is not a safe directory for ${evalCase.caseId}: ${evalCase.workspaceRef}`);
+    }
+  }
+}
+
 export function validateCorpusIntegrity(input: {
   manifest: CorpusManifest;
   baseline: GoldenBaseline;

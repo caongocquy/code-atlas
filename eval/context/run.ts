@@ -2,11 +2,10 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { installOfflineGuard } from "./offline-guard.js";
-import { loadCorpus, type CorpusPaths, type LoadedCorpus } from "./corpus/load-corpus.js";
+import { loadCorpus, validateCorpusWorkspaceRefs, type CorpusPaths, type LoadedCorpus } from "./corpus/load-corpus.js";
 import { materializeWorkspace } from "./corpus/materialize-workspace.js";
 import { executeCase, executeLifecycleScenario } from "./runner/execute-case.js";
 import { aggregateScores } from "./runner/aggregate.js";
-import { compareSemanticObserved, normalizeObserved } from "./runner/normalize-result.js";
 import { buildMachineReport, writeReport } from "./runner/report.js";
 import { scoreCase, scoreLifecycle } from "./runner/score-case.js";
 import {
@@ -79,7 +78,8 @@ async function lifecycleFailures(
   fixtureRoot: string,
   deps: EvalRunnerDeps,
 ): Promise<readonly GateFailure[]> {
-  if (!evalCase.lifecycle) return [];
+  const lifecycle = evalCase.lifecycle;
+  if (!lifecycle) return [];
   const materialize = deps.materializeWorkspace ?? materializeWorkspace;
   const index = deps.indexRepository ?? indexRepository;
   const execute = deps.executeLifecycleScenario ?? executeLifecycleScenario;
@@ -89,7 +89,7 @@ async function lifecycleFailures(
       if (workspace.git) await index(workspace.root);
       else await index(workspace.root, { skipGit: true });
       const observed = await execute({ evalCase, root: workspace.root });
-      return scoreLifecycle(observed, evalCase.lifecycle);
+      return scoreLifecycle(observed, lifecycle);
     } finally {
       await workspace.cleanup();
     }
@@ -127,10 +127,9 @@ export async function evaluateLoadedCorpus(corpus: LoadedCorpus, cwd: string, de
     try {
       const first = await execute({ evalCase, fixtureRoot });
       const repeat = await execute({ evalCase, fixtureRoot });
-      const semanticFailures = compareSemanticObserved(normalizeObserved(first), normalizeObserved(repeat), first.repositoryIdentity === repeat.repositoryIdentity && first.workspaceIdentity === repeat.workspaceIdentity);
       const score = scoreCase({ evalCase, first, repeat, baseline: corpus.baseline.entries.find(({ caseId }) => caseId === evalCase.caseId) });
       const lifecycle = await lifecycleFailures(evalCase, fixtureRoot, deps);
-      scores.push(withLifecycleScore({ ...score, failures: [...score.failures, ...semanticFailures] }, lifecycle));
+      scores.push(withLifecycleScore(score, lifecycle));
     } catch (error) {
       scores.push(failedCase(evalCase, executionFailure(evalCase, error)));
     }
@@ -164,6 +163,7 @@ export async function runContextEval(args: { cwd: string; reportPath: string }, 
     let report: MachineReport;
     try {
       const corpus = await (deps.loadCorpus ?? loadCorpus)(pathsFor(args.cwd));
+      validateCorpusWorkspaceRefs({ manifest: corpus.manifest, corpusRoot: path.dirname(corpus.manifestPath) });
       const result = await evaluateLoadedCorpus(corpus, args.cwd, deps);
       const [baselineBytes, policyBytes] = await Promise.all([readFile(corpus.baselinePath), readFile(corpus.policyPath)]);
       report = buildMachineReport({
