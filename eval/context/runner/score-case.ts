@@ -12,6 +12,15 @@ function subjectKeys(subjects: readonly ContextSubject[]): Set<string> {
   return new Set(subjects.map(canonicalContextSubjectKey));
 }
 
+function observedSubjectKeys(subject: ContextSubject): readonly string[] {
+  return [
+    canonicalContextSubjectKey(subject),
+    subject.kind === "file"
+      ? `file:${subject.path}`
+      : `symbol:${subject.path}:${subject.symbolId}:${subject.selectorVersion}`,
+  ];
+}
+
 function scoreReconstruction(observed: ObservedCase): GateFailure[] {
   const failures: GateFailure[] = [];
   for (const delivery of observed.deliveries) {
@@ -20,7 +29,9 @@ function scoreReconstruction(observed: ObservedCase): GateFailure[] {
       continue;
     }
     const subjectKey = canonicalContextSubjectKey(delivery.subject);
-    const reconstructed = observed.reconstructedContents[subjectKey];
+    const reconstructed = observedSubjectKeys(delivery.subject)
+      .map((key) => observed.reconstructedContents[key])
+      .find((value) => value !== undefined);
     if (reconstructed === undefined) {
       failures.push(failure(observed.caseId, "reconstruction.subject_key", subjectKey, "absent", "Reconstructed content must be stored under the exact delivered subject key"));
       continue;
