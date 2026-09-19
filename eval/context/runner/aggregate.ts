@@ -85,7 +85,9 @@ function aggregateMetrics(scores: readonly CaseScore[]): ObservedMetrics {
   };
 }
 
-function aggregateBaseline(scores: readonly CaseScore[], baselines: ReadonlyMap<string, BaselineEntry>): BaselineEntry {
+type AggregatedBaseline = BaselineEntry & { entries: readonly BaselineEntry[] };
+
+function aggregateBaseline(scores: readonly CaseScore[], baselines: ReadonlyMap<string, BaselineEntry>): AggregatedBaseline {
   const entries = scores.map((score) => {
     const baseline = baselines.get(score.caseId);
     if (!baseline) throw new Error(`Missing baseline for case ${score.caseId}`);
@@ -98,6 +100,7 @@ function aggregateBaseline(scores: readonly CaseScore[], baselines: ReadonlyMap<
     returnedBytes: entries.reduce((total, entry) => total + entry.returnedBytes, 0),
     requiredHitRate: entries.reduce((total, entry) => total + entry.requiredHitRate, 0) / entries.length,
     supportingHitRate: entries.reduce((total, entry) => total + entry.supportingHitRate, 0) / entries.length,
+    entries,
   };
 }
 
@@ -105,14 +108,17 @@ export function aggregateScores(scores: readonly CaseScore[], baselines: Readonl
   const metrics = aggregateMetrics(scores);
   const baseline = aggregateBaseline(scores, baselines);
   const failures: GateFailure[] = scores.flatMap((score) => [...score.failures, ...scoreQuality({ metrics: score.metrics, baseline: baselines.get(score.caseId)!, policy })]);
-  const budget = resolveQualityBudget(policy, baseline);
-  const increase = (observed: number, expected: number, field: string, percent: number) => {
-    if (observed > expected * (1 + percent / 100)) failures.push(qualityFailure(undefined, `quality.aggregate.${field}`, expected * (1 + percent / 100), observed, `Aggregate ${field} exceeds the reviewed quality budget`, "corpus"));
+  const budgets = baseline.entries.map((entry) => resolveQualityBudget(policy, entry));
+  const allowedIncrease = (field: "selectedItems" | "estimatedTokens" | "returnedBytes", budgetField: "maxSelectedItemsIncreasePct" | "maxEstimatedTokensIncreasePct" | "maxReturnedBytesIncreasePct") => baseline.entries.reduce((total, entry, index) => total + entry[field] * (1 + budgets[index].aggregate[budgetField] / 100), 0);
+  const increase = (observed: number, allowed: number, field: string) => {
+    if (observed > allowed) failures.push(qualityFailure(undefined, `quality.aggregate.${field}`, allowed, observed, `Aggregate ${field} exceeds the reviewed quality budget`, "corpus"));
   };
-  increase(metrics.estimatedTokens, baseline.estimatedTokens, "estimated_tokens", budget.aggregate.maxEstimatedTokensIncreasePct);
-  increase(metrics.returnedBytes, baseline.returnedBytes, "returned_bytes", budget.aggregate.maxReturnedBytesIncreasePct);
-  increase(metrics.selectedItems, baseline.selectedItems, "selected_items", budget.aggregate.maxSelectedItemsIncreasePct);
-  if (metrics.requiredHitRate < baseline.requiredHitRate - budget.aggregate.maxRequiredHitRateDecreasePp / 100) failures.push(qualityFailure(undefined, "quality.aggregate.required_hit_rate", baseline.requiredHitRate - budget.aggregate.maxRequiredHitRateDecreasePp / 100, metrics.requiredHitRate, "Aggregate required hit rate is below the reviewed quality budget", "corpus"));
-  if (metrics.supportingHitRate < baseline.supportingHitRate - budget.aggregate.maxSupportingHitRateDecreasePp / 100) failures.push(qualityFailure(undefined, "quality.aggregate.supporting_hit_rate", baseline.supportingHitRate - budget.aggregate.maxSupportingHitRateDecreasePp / 100, metrics.supportingHitRate, "Aggregate supporting hit rate is below the reviewed quality budget", "corpus"));
+  increase(metrics.estimatedTokens, allowedIncrease("estimatedTokens", "maxEstimatedTokensIncreasePct"), "estimated_tokens");
+  increase(metrics.returnedBytes, allowedIncrease("returnedBytes", "maxReturnedBytesIncreasePct"), "returned_bytes");
+  increase(metrics.selectedItems, allowedIncrease("selectedItems", "maxSelectedItemsIncreasePct"), "selected_items");
+  const requiredFloor = budgets.reduce((total, budget, index) => total + baseline.entries[index].requiredHitRate - budget.aggregate.maxRequiredHitRateDecreasePp / 100, 0) / budgets.length;
+  const supportingFloor = budgets.reduce((total, budget, index) => total + baseline.entries[index].supportingHitRate - budget.aggregate.maxSupportingHitRateDecreasePp / 100, 0) / budgets.length;
+  if (metrics.requiredHitRate < requiredFloor) failures.push(qualityFailure(undefined, "quality.aggregate.required_hit_rate", requiredFloor, metrics.requiredHitRate, "Aggregate required hit rate is below the reviewed quality budget", "corpus"));
+  if (metrics.supportingHitRate < supportingFloor) failures.push(qualityFailure(undefined, "quality.aggregate.supporting_hit_rate", supportingFloor, metrics.supportingHitRate, "Aggregate supporting hit rate is below the reviewed quality budget", "corpus"));
   return { metrics, failures, aggregateQuality: failures.length === 0 };
 }

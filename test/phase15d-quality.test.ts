@@ -98,6 +98,19 @@ test("applies aggregate percentage and hit-rate budgets at their boundaries", ()
   ]);
 });
 
+test("changes the aggregate outcome only when the baseline entry override is honored", () => {
+  const observed = score("case-one", metrics({ estimatedTokens: 15 }));
+  const withoutOverride = aggregateScores([observed], new Map([[baseline.caseId, baseline]]), policy);
+  const withOverride = aggregateScores([observed], new Map([[baseline.caseId, {
+    ...baseline,
+    qualityOverrides: { aggregate: { maxEstimatedTokensIncreasePct: 100 } },
+  }]]), policy);
+
+  assert.deepEqual(withoutOverride.failures.map(({ gate }) => gate), ["quality.aggregate.estimated_tokens"]);
+  assert.deepEqual(withOverride.failures, []);
+  assert.equal(withOverride.aggregateQuality, true);
+});
+
 test("requires a baseline for every score and preserves correctness failures", () => {
   assert.throws(() => aggregateScores([score("missing", metrics())], new Map(), policy), /Missing baseline/);
   const correctnessFailure = { gate: "correctness.required_hit_rate", scope: "case" as const, caseId: "case-one", observed: 0, expected: 1, message: "required subject missing" };
