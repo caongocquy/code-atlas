@@ -11,6 +11,7 @@ import { compileTaskContextForRepository } from "../../../src/core/context/task-
 import type { TaskContextItem, TaskContextPlanDetail } from "../../../src/core/context/task-context.types.js";
 import { indexRepository } from "../../../src/core/indexing/index-pipeline.service.js";
 import { ContextStore } from "../../../src/storage/context/context.store.js";
+import { canonicalContextSubjectKey } from "../../../src/core/context/task-context-normalizer.js";
 import type { DeliveryMode } from "../types.js";
 import { materializeWorkspace } from "../corpus/materialize-workspace.js";
 import type { EvalCase, EvalExecutionDeps, EvalLifecycleDeps, LifecycleObserved, ObservedCase, ObservedMetrics, ScenarioPrimitive } from "../types.js";
@@ -152,9 +153,7 @@ export async function executeLifecycleScenario(input: { evalCase: EvalCase; root
 }
 
 function subjectKey(subject: TaskContextItem["subject"]): string {
-  return subject.kind === "file"
-    ? `file:${subject.path}`
-    : `symbol:${subject.path}:${subject.symbolId}:${subject.selectorVersion}`;
+  return canonicalContextSubjectKey(subject);
 }
 
 function mapPrepared(item: TaskContextItem, prepared: PreparedContextAwareRead): TaskContextDelivery {
