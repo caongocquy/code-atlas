@@ -14,17 +14,21 @@ function subjectKeys(subjects: readonly ContextSubject[]): Set<string> {
 
 function scoreReconstruction(observed: ObservedCase): GateFailure[] {
   const failures: GateFailure[] = [];
-  const contents = Object.values(observed.reconstructedContents);
   for (const delivery of observed.deliveries) {
     if (delivery.mode === "error") {
       failures.push(failure(observed.caseId, "reconstruction.delivery_error", true, false, `Delivery failed: ${delivery.error.code}`));
       continue;
     }
-    const reconstructed = contents.filter((content) => contentIdentity(content) === delivery.current.contentIdentity);
-    if (!reconstructed.length) {
-      failures.push(failure(observed.caseId, "reconstruction.content_identity", delivery.current.contentIdentity, false, "No reconstructed authoritative content has the delivery content identity"));
+    const subjectKey = canonicalContextSubjectKey(delivery.subject);
+    const reconstructed = observed.reconstructedContents[subjectKey];
+    if (reconstructed === undefined) {
+      failures.push(failure(observed.caseId, "reconstruction.subject_key", subjectKey, "absent", "Reconstructed content must be stored under the exact delivered subject key"));
+      continue;
     }
-    if ((delivery.mode === "full" || delivery.mode === "rehydrate") && !reconstructed.includes(delivery.content)) {
+    if (contentIdentity(reconstructed) !== delivery.current.contentIdentity) {
+      failures.push(failure(observed.caseId, "reconstruction.content_identity", delivery.current.contentIdentity, contentIdentity(reconstructed), "Reconstructed content does not have the delivered content identity"));
+    }
+    if ((delivery.mode === "full" || delivery.mode === "rehydrate") && reconstructed !== delivery.content) {
       failures.push(failure(observed.caseId, "reconstruction.authoritative_text", delivery.content, false, "Delivered authoritative text is not reconstructed exactly"));
     }
   }
@@ -90,7 +94,7 @@ export function scoreCase(input: { evalCase: EvalCase; first: ObservedCase; repe
       determinism: !failures.some((item) => item.gate.startsWith("determinism.")),
       reconstruction: !failures.some((item) => item.gate.startsWith("reconstruction.")),
       authorityUncertainty: !failures.some((item) => item.gate.startsWith("authority.") || item.gate.startsWith("uncertainty.")),
-      isolation: true,
+      isolation: "unknown",
       catastrophicQuality: true,
     },
   };

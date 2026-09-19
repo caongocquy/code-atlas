@@ -161,7 +161,7 @@ export type CaseScore = {
   caseId: string;
   metrics: ObservedMetrics;
   failures: readonly GateFailure[];
-  gates: { correctness: boolean; determinism: boolean; reconstruction: boolean; authorityUncertainty: boolean; isolation: boolean; catastrophicQuality: boolean };
+  gates: { correctness: boolean; determinism: boolean; reconstruction: boolean; authorityUncertainty: boolean; isolation: boolean | "unknown"; catastrophicQuality: boolean };
 };
 
 export type AggregateScore = {

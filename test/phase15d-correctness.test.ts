@@ -4,6 +4,7 @@ import test from "node:test";
 import { scoreCase } from "../eval/context/runner/score-case.js";
 import type { EvalCase, ObservedCase } from "../eval/context/types.js";
 import { contentIdentity } from "../src/core/context/context-snapshot.js";
+import { canonicalContextSubjectKey } from "../src/core/context/task-context-normalizer.js";
 
 const main = { kind: "symbol" as const, path: "src/main.ts", symbolId: "symbol:main", selectorVersion: "1" };
 const helper = { kind: "file" as const, path: "src/helper.ts" };
@@ -52,7 +53,7 @@ function observed(overrides: Partial<ObservedCase> = {}): ObservedCase {
       { subject: helper, receiptId: "helper", reliability: { mayBeIncomplete: true }, mode: "delta", current: { contentIdentity: contentIdentity(contents.helper), reliability: { mayBeIncomplete: true } }, delta: { kind: "replace", content: contents.helper, contentIdentity: contentIdentity(contents.helper) } },
       { subject: fallback, receiptId: "fallback", reliability: { mayBeIncomplete: true }, mode: "rehydrate", current: { contentIdentity: contentIdentity(contents.fallback), reliability: { mayBeIncomplete: true } }, content: contents.fallback, reason: "missing_receipt" },
     ],
-    reconstructedContents: { arbitraryMainKey: contents.main, arbitraryHelperKey: contents.helper, arbitraryFallbackKey: contents.fallback },
+    reconstructedContents: { [canonicalContextSubjectKey(main)]: contents.main, [canonicalContextSubjectKey(helper)]: contents.helper, [canonicalContextSubjectKey(fallback)]: contents.fallback },
     lifecycleModes: ["full", "delta", "rehydrate"],
     metrics: {
       selectedItems: 3,
@@ -86,7 +87,7 @@ test("scores canonical truth, full/delta/rehydrate reconstruction, and preserved
     determinism: true,
     reconstruction: true,
     authorityUncertainty: true,
-    isolation: true,
+    isolation: "unknown",
     catastrophicQuality: true,
   });
 });
@@ -120,8 +121,7 @@ test("reports each available subject, authority, uncertainty, reconstruction, an
     "authority.forbidden_required",
     "uncertainty.incomplete_preserved",
     "uncertainty.diagnostics",
-    "reconstruction.content_identity",
-    "reconstruction.authoritative_text",
+    "reconstruction.subject_key",
     "determinism.task_identity",
     "determinism.plan_identity",
     "determinism.selected_items",
@@ -134,7 +134,7 @@ test("reports each available subject, authority, uncertainty, reconstruction, an
   assert.equal(score.gates.determinism, false);
   assert.equal(score.gates.reconstruction, false);
   assert.equal(score.gates.authorityUncertainty, false);
-  assert.equal(score.gates.isolation, true);
+  assert.equal(score.gates.isolation, "unknown");
   assert.equal(score.gates.catastrophicQuality, true);
 });
 
@@ -161,4 +161,29 @@ test("fails reconstruction when a selected delivery returns an error", () => {
 
   assert.deepEqual(score.failures.map((failure) => failure.gate), ["reconstruction.delivery_error"]);
   assert.equal(score.gates.reconstruction, false);
+});
+
+test("rejects content reconstructed under the wrong subject key", () => {
+  const first = observed({
+    reconstructedContents: { [canonicalContextSubjectKey(helper)]: observed().reconstructedContents[canonicalContextSubjectKey(main)] },
+  });
+  const score = scoreCase({ evalCase: evalCase(), first, repeat: first });
+
+  assert.deepEqual(score.failures.map((failure) => failure.gate), [
+    "reconstruction.subject_key",
+    "reconstruction.content_identity",
+    "reconstruction.subject_key",
+  ]);
+});
+
+test("reports a missing reconstructed subject instead of matching another subject by hash", () => {
+  const first = observed({
+    reconstructedContents: { [canonicalContextSubjectKey(helper)]: observed().reconstructedContents[canonicalContextSubjectKey(helper)] },
+  });
+  const score = scoreCase({ evalCase: evalCase(), first, repeat: first });
+
+  assert.deepEqual(score.failures.map((failure) => failure.gate), [
+    "reconstruction.subject_key",
+    "reconstruction.subject_key",
+  ]);
 });
