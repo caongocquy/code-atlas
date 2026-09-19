@@ -1,1 +1,3 @@
-fn target(value: i32) -> i32 { value + 1 }
+mod related;
+
+fn target(value: i32) -> i32 { related::helper(value) }

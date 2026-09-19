@@ -1,1 +1,1 @@
-export function Target(): JSX.Element { return <div>target</div>; }
+export function Target(): string { return "target"; }

@@ -1,1 +1,1 @@
-class Target { int target(int value) { return value + 1; } }
+class Target { int target(int value) { return Related.helper(value); } }

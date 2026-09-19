@@ -27,12 +27,12 @@
       }
     },
     {
-      "caseId": "typescript-relationship-change",
+    "caseId": "typescript-relationship-change",
       "kind": "synthetic",
       "language": "typescript",
       "syntheticClass": "relationship/change",
       "workspaceRef": "synthetic/typescript/relationship-change",
-      "task": "Trace the related change in the typescript fixture.",
+    "task": "Trace the caller and supporting relationship change in the typescript fixture.",
       "anchors": [
         {
           "kind": "file",
@@ -49,17 +49,22 @@
             "path": "main.ts"
           }
         ],
-        "supportingSubjects": [],
+      "supportingSubjects": [
+        {
+          "kind": "file",
+          "path": "related.ts"
+        }
+      ],
         "forbiddenRequiredSubjects": []
       }
     },
     {
-      "caseId": "typescript-incomplete-ambiguity",
+    "caseId": "typescript-incomplete-ambiguity",
       "kind": "synthetic",
       "language": "typescript",
       "syntheticClass": "incomplete/ambiguity",
       "workspaceRef": "synthetic/typescript/incomplete-ambiguity",
-      "task": "Preserve uncertainty for the incomplete typescript fixture.",
+    "task": "Preserve uncertainty for the ambiguous and incomplete typescript fixture.",
       "anchors": [
         {
           "kind": "file",
@@ -75,7 +80,12 @@
           }
         ],
         "supportingSubjects": [],
-        "forbiddenRequiredSubjects": []
+      "forbiddenRequiredSubjects": [
+        {
+          "kind": "file",
+          "path": "alternate.ts"
+        }
+      ]
       }
     },
     {
@@ -104,12 +114,12 @@
       }
     },
     {
-      "caseId": "tsx-relationship-change",
+    "caseId": "tsx-relationship-change",
       "kind": "synthetic",
       "language": "tsx",
       "syntheticClass": "relationship/change",
       "workspaceRef": "synthetic/tsx/relationship-change",
-      "task": "Trace the related change in the tsx fixture.",
+    "task": "Trace the caller and supporting relationship change in the tsx fixture.",
       "anchors": [
         {
           "kind": "file",
@@ -126,17 +136,22 @@
             "path": "main.tsx"
           }
         ],
-        "supportingSubjects": [],
+      "supportingSubjects": [
+        {
+          "kind": "file",
+          "path": "related.tsx"
+        }
+      ],
         "forbiddenRequiredSubjects": []
       }
     },
     {
-      "caseId": "tsx-incomplete-ambiguity",
+    "caseId": "tsx-incomplete-ambiguity",
       "kind": "synthetic",
       "language": "tsx",
       "syntheticClass": "incomplete/ambiguity",
       "workspaceRef": "synthetic/tsx/incomplete-ambiguity",
-      "task": "Preserve uncertainty for the incomplete tsx fixture.",
+    "task": "Preserve uncertainty for the ambiguous and incomplete tsx fixture.",
       "anchors": [
         {
           "kind": "file",
@@ -152,7 +167,12 @@
           }
         ],
         "supportingSubjects": [],
-        "forbiddenRequiredSubjects": []
+      "forbiddenRequiredSubjects": [
+        {
+          "kind": "file",
+          "path": "alternate.tsx"
+        }
+      ]
       }
     },
     {
@@ -181,12 +201,12 @@
       }
     },
     {
-      "caseId": "javascript-relationship-change",
+    "caseId": "javascript-relationship-change",
       "kind": "synthetic",
       "language": "javascript",
       "syntheticClass": "relationship/change",
       "workspaceRef": "synthetic/javascript/relationship-change",
-      "task": "Trace the related change in the javascript fixture.",
+    "task": "Trace the caller and supporting relationship change in the javascript fixture.",
       "anchors": [
         {
           "kind": "file",
@@ -203,17 +223,22 @@
             "path": "main.js"
           }
         ],
-        "supportingSubjects": [],
+      "supportingSubjects": [
+        {
+          "kind": "file",
+          "path": "related.js"
+        }
+      ],
         "forbiddenRequiredSubjects": []
       }
     },
     {
-      "caseId": "javascript-incomplete-ambiguity",
+    "caseId": "javascript-incomplete-ambiguity",
       "kind": "synthetic",
       "language": "javascript",
       "syntheticClass": "incomplete/ambiguity",
       "workspaceRef": "synthetic/javascript/incomplete-ambiguity",
-      "task": "Preserve uncertainty for the incomplete javascript fixture.",
+    "task": "Preserve uncertainty for the ambiguous and incomplete javascript fixture.",
       "anchors": [
         {
           "kind": "file",
@@ -229,7 +254,12 @@
           }
         ],
         "supportingSubjects": [],
-        "forbiddenRequiredSubjects": []
+      "forbiddenRequiredSubjects": [
+        {
+          "kind": "file",
+          "path": "alternate.js"
+        }
+      ]
       }
     },
     {
@@ -258,12 +288,12 @@
       }
     },
     {
-      "caseId": "python-relationship-change",
+    "caseId": "python-relationship-change",
       "kind": "synthetic",
       "language": "python",
       "syntheticClass": "relationship/change",
       "workspaceRef": "synthetic/python/relationship-change",
-      "task": "Trace the related change in the python fixture.",
+    "task": "Trace the caller and supporting relationship change in the python fixture.",
       "anchors": [
         {
           "kind": "file",
@@ -280,17 +310,22 @@
             "path": "main.py"
           }
         ],
-        "supportingSubjects": [],
+      "supportingSubjects": [
+        {
+          "kind": "file",
+          "path": "related.py"
+        }
+      ],
         "forbiddenRequiredSubjects": []
       }
     },
     {
-      "caseId": "python-incomplete-ambiguity",
+    "caseId": "python-incomplete-ambiguity",
       "kind": "synthetic",
       "language": "python",
       "syntheticClass": "incomplete/ambiguity",
       "workspaceRef": "synthetic/python/incomplete-ambiguity",
-      "task": "Preserve uncertainty for the incomplete python fixture.",
+    "task": "Preserve uncertainty for the ambiguous and incomplete python fixture.",
       "anchors": [
         {
           "kind": "file",
@@ -306,7 +341,12 @@
           }
         ],
         "supportingSubjects": [],
-        "forbiddenRequiredSubjects": []
+      "forbiddenRequiredSubjects": [
+        {
+          "kind": "file",
+          "path": "alternate.py"
+        }
+      ]
       }
     },
     {
@@ -335,12 +375,12 @@
       }
     },
     {
-      "caseId": "java-relationship-change",
+    "caseId": "java-relationship-change",
       "kind": "synthetic",
       "language": "java",
       "syntheticClass": "relationship/change",
       "workspaceRef": "synthetic/java/relationship-change",
-      "task": "Trace the related change in the java fixture.",
+    "task": "Trace the caller and supporting relationship change in the java fixture.",
       "anchors": [
         {
           "kind": "file",
@@ -357,17 +397,22 @@
             "path": "main.java"
           }
         ],
-        "supportingSubjects": [],
+      "supportingSubjects": [
+        {
+          "kind": "file",
+          "path": "related.java"
+        }
+      ],
         "forbiddenRequiredSubjects": []
       }
     },
     {
-      "caseId": "java-incomplete-ambiguity",
+    "caseId": "java-incomplete-ambiguity",
       "kind": "synthetic",
       "language": "java",
       "syntheticClass": "incomplete/ambiguity",
       "workspaceRef": "synthetic/java/incomplete-ambiguity",
-      "task": "Preserve uncertainty for the incomplete java fixture.",
+    "task": "Preserve uncertainty for the ambiguous and incomplete java fixture.",
       "anchors": [
         {
           "kind": "file",
@@ -383,7 +428,12 @@
           }
         ],
         "supportingSubjects": [],
-        "forbiddenRequiredSubjects": []
+      "forbiddenRequiredSubjects": [
+        {
+          "kind": "file",
+          "path": "alternate.java"
+        }
+      ]
       }
     },
     {
@@ -412,12 +462,12 @@
       }
     },
     {
-      "caseId": "kotlin-relationship-change",
+    "caseId": "kotlin-relationship-change",
       "kind": "synthetic",
       "language": "kotlin",
       "syntheticClass": "relationship/change",
       "workspaceRef": "synthetic/kotlin/relationship-change",
-      "task": "Trace the related change in the kotlin fixture.",
+    "task": "Trace the caller and supporting relationship change in the kotlin fixture.",
       "anchors": [
         {
           "kind": "file",
@@ -434,17 +484,22 @@
             "path": "main.kt"
           }
         ],
-        "supportingSubjects": [],
+      "supportingSubjects": [
+        {
+          "kind": "file",
+          "path": "related.kt"
+        }
+      ],
         "forbiddenRequiredSubjects": []
       }
     },
     {
-      "caseId": "kotlin-incomplete-ambiguity",
+    "caseId": "kotlin-incomplete-ambiguity",
       "kind": "synthetic",
       "language": "kotlin",
       "syntheticClass": "incomplete/ambiguity",
       "workspaceRef": "synthetic/kotlin/incomplete-ambiguity",
-      "task": "Preserve uncertainty for the incomplete kotlin fixture.",
+    "task": "Preserve uncertainty for the ambiguous and incomplete kotlin fixture.",
       "anchors": [
         {
           "kind": "file",
@@ -460,7 +515,12 @@
           }
         ],
         "supportingSubjects": [],
-        "forbiddenRequiredSubjects": []
+      "forbiddenRequiredSubjects": [
+        {
+          "kind": "file",
+          "path": "alternate.kt"
+        }
+      ]
       }
     },
     {
@@ -489,12 +549,12 @@
       }
     },
     {
-      "caseId": "go-relationship-change",
+    "caseId": "go-relationship-change",
       "kind": "synthetic",
       "language": "go",
       "syntheticClass": "relationship/change",
       "workspaceRef": "synthetic/go/relationship-change",
-      "task": "Trace the related change in the go fixture.",
+    "task": "Trace the caller and supporting relationship change in the go fixture.",
       "anchors": [
         {
           "kind": "file",
@@ -511,17 +571,22 @@
             "path": "main.go"
           }
         ],
-        "supportingSubjects": [],
+      "supportingSubjects": [
+        {
+          "kind": "file",
+          "path": "related.go"
+        }
+      ],
         "forbiddenRequiredSubjects": []
       }
     },
     {
-      "caseId": "go-incomplete-ambiguity",
+    "caseId": "go-incomplete-ambiguity",
       "kind": "synthetic",
       "language": "go",
       "syntheticClass": "incomplete/ambiguity",
       "workspaceRef": "synthetic/go/incomplete-ambiguity",
-      "task": "Preserve uncertainty for the incomplete go fixture.",
+    "task": "Preserve uncertainty for the ambiguous and incomplete go fixture.",
       "anchors": [
         {
           "kind": "file",
@@ -537,7 +602,12 @@
           }
         ],
         "supportingSubjects": [],
-        "forbiddenRequiredSubjects": []
+      "forbiddenRequiredSubjects": [
+        {
+          "kind": "file",
+          "path": "alternate.go"
+        }
+      ]
       }
     },
     {
@@ -566,12 +636,12 @@
       }
     },
     {
-      "caseId": "rust-relationship-change",
+    "caseId": "rust-relationship-change",
       "kind": "synthetic",
       "language": "rust",
       "syntheticClass": "relationship/change",
       "workspaceRef": "synthetic/rust/relationship-change",
-      "task": "Trace the related change in the rust fixture.",
+    "task": "Trace the caller and supporting relationship change in the rust fixture.",
       "anchors": [
         {
           "kind": "file",
@@ -588,17 +658,22 @@
             "path": "main.rs"
           }
         ],
-        "supportingSubjects": [],
+      "supportingSubjects": [
+        {
+          "kind": "file",
+          "path": "related.rs"
+        }
+      ],
         "forbiddenRequiredSubjects": []
       }
     },
     {
-      "caseId": "rust-incomplete-ambiguity",
+    "caseId": "rust-incomplete-ambiguity",
       "kind": "synthetic",
       "language": "rust",
       "syntheticClass": "incomplete/ambiguity",
       "workspaceRef": "synthetic/rust/incomplete-ambiguity",
-      "task": "Preserve uncertainty for the incomplete rust fixture.",
+    "task": "Preserve uncertainty for the ambiguous and incomplete rust fixture.",
       "anchors": [
         {
           "kind": "file",
@@ -614,7 +689,12 @@
           }
         ],
         "supportingSubjects": [],
-        "forbiddenRequiredSubjects": []
+      "forbiddenRequiredSubjects": [
+        {
+          "kind": "file",
+          "path": "alternate.rs"
+        }
+      ]
       }
     },
     {
@@ -643,12 +723,12 @@
       }
     },
     {
-      "caseId": "swift-relationship-change",
+    "caseId": "swift-relationship-change",
       "kind": "synthetic",
       "language": "swift",
       "syntheticClass": "relationship/change",
       "workspaceRef": "synthetic/swift/relationship-change",
-      "task": "Trace the related change in the swift fixture.",
+    "task": "Trace the caller and supporting relationship change in the swift fixture.",
       "anchors": [
         {
           "kind": "file",
@@ -665,17 +745,22 @@
             "path": "main.swift"
           }
         ],
-        "supportingSubjects": [],
+      "supportingSubjects": [
+        {
+          "kind": "file",
+          "path": "related.swift"
+        }
+      ],
         "forbiddenRequiredSubjects": []
       }
     },
     {
-      "caseId": "swift-incomplete-ambiguity",
+    "caseId": "swift-incomplete-ambiguity",
       "kind": "synthetic",
       "language": "swift",
       "syntheticClass": "incomplete/ambiguity",
       "workspaceRef": "synthetic/swift/incomplete-ambiguity",
-      "task": "Preserve uncertainty for the incomplete swift fixture.",
+    "task": "Preserve uncertainty for the ambiguous and incomplete swift fixture.",
       "anchors": [
         {
           "kind": "file",
@@ -691,7 +776,12 @@
           }
         ],
         "supportingSubjects": [],
-        "forbiddenRequiredSubjects": []
+      "forbiddenRequiredSubjects": [
+        {
+          "kind": "file",
+          "path": "alternate.swift"
+        }
+      ]
       }
     },
     {
@@ -720,12 +810,12 @@
       }
     },
     {
-      "caseId": "dart-relationship-change",
+    "caseId": "dart-relationship-change",
       "kind": "synthetic",
       "language": "dart",
       "syntheticClass": "relationship/change",
       "workspaceRef": "synthetic/dart/relationship-change",
-      "task": "Trace the related change in the dart fixture.",
+    "task": "Trace the caller and supporting relationship change in the dart fixture.",
       "anchors": [
         {
           "kind": "file",
@@ -742,17 +832,22 @@
             "path": "main.dart"
           }
         ],
-        "supportingSubjects": [],
+      "supportingSubjects": [
+        {
+          "kind": "file",
+          "path": "related.dart"
+        }
+      ],
         "forbiddenRequiredSubjects": []
       }
     },
     {
-      "caseId": "dart-incomplete-ambiguity",
+    "caseId": "dart-incomplete-ambiguity",
       "kind": "synthetic",
       "language": "dart",
       "syntheticClass": "incomplete/ambiguity",
       "workspaceRef": "synthetic/dart/incomplete-ambiguity",
-      "task": "Preserve uncertainty for the incomplete dart fixture.",
+    "task": "Preserve uncertainty for the ambiguous and incomplete dart fixture.",
       "anchors": [
         {
           "kind": "file",
@@ -768,7 +863,12 @@
           }
         ],
         "supportingSubjects": [],
-        "forbiddenRequiredSubjects": []
+      "forbiddenRequiredSubjects": [
+        {
+          "kind": "file",
+          "path": "alternate.dart"
+        }
+      ]
       }
     },
     {
@@ -797,12 +897,12 @@
       }
     },
     {
-      "caseId": "c-relationship-change",
+    "caseId": "c-relationship-change",
       "kind": "synthetic",
       "language": "c",
       "syntheticClass": "relationship/change",
       "workspaceRef": "synthetic/c/relationship-change",
-      "task": "Trace the related change in the c fixture.",
+    "task": "Trace the caller and supporting relationship change in the c fixture.",
       "anchors": [
         {
           "kind": "file",
@@ -819,17 +919,22 @@
             "path": "main.c"
           }
         ],
-        "supportingSubjects": [],
+      "supportingSubjects": [
+        {
+          "kind": "file",
+          "path": "related.c"
+        }
+      ],
         "forbiddenRequiredSubjects": []
       }
     },
     {
-      "caseId": "c-incomplete-ambiguity",
+    "caseId": "c-incomplete-ambiguity",
       "kind": "synthetic",
       "language": "c",
       "syntheticClass": "incomplete/ambiguity",
       "workspaceRef": "synthetic/c/incomplete-ambiguity",
-      "task": "Preserve uncertainty for the incomplete c fixture.",
+    "task": "Preserve uncertainty for the ambiguous and incomplete c fixture.",
       "anchors": [
         {
           "kind": "file",
@@ -845,7 +950,12 @@
           }
         ],
         "supportingSubjects": [],
-        "forbiddenRequiredSubjects": []
+      "forbiddenRequiredSubjects": [
+        {
+          "kind": "file",
+          "path": "alternate.c"
+        }
+      ]
       }
     },
     {
@@ -874,12 +984,12 @@
       }
     },
     {
-      "caseId": "cpp-relationship-change",
+    "caseId": "cpp-relationship-change",
       "kind": "synthetic",
       "language": "cpp",
       "syntheticClass": "relationship/change",
       "workspaceRef": "synthetic/cpp/relationship-change",
-      "task": "Trace the related change in the cpp fixture.",
+    "task": "Trace the caller and supporting relationship change in the cpp fixture.",
       "anchors": [
         {
           "kind": "file",
@@ -896,17 +1006,22 @@
             "path": "main.cpp"
           }
         ],
-        "supportingSubjects": [],
+      "supportingSubjects": [
+        {
+          "kind": "file",
+          "path": "related.cpp"
+        }
+      ],
         "forbiddenRequiredSubjects": []
       }
     },
     {
-      "caseId": "cpp-incomplete-ambiguity",
+    "caseId": "cpp-incomplete-ambiguity",
       "kind": "synthetic",
       "language": "cpp",
       "syntheticClass": "incomplete/ambiguity",
       "workspaceRef": "synthetic/cpp/incomplete-ambiguity",
-      "task": "Preserve uncertainty for the incomplete cpp fixture.",
+    "task": "Preserve uncertainty for the ambiguous and incomplete cpp fixture.",
       "anchors": [
         {
           "kind": "file",
@@ -922,7 +1037,12 @@
           }
         ],
         "supportingSubjects": [],
-        "forbiddenRequiredSubjects": []
+      "forbiddenRequiredSubjects": [
+        {
+          "kind": "file",
+          "path": "alternate.cpp"
+        }
+      ]
       }
     },
     {

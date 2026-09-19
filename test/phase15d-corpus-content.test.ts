@@ -25,6 +25,7 @@ test("committed Phase15D corpus has one reviewed synthetic case per language and
   const expected = LANGUAGE_CONFIGS.flatMap(({ language }) =>
     ["exact-target", "relationship/change", "incomplete/ambiguity"].map((syntheticClass) => `${language}:${syntheticClass}`),
   );
+  assert.equal(new Set(LANGUAGE_CONFIGS.map(({ language }) => language)).size, LANGUAGE_CONFIGS.length, "production language registry must contain unique language IDs");
   const actual = corpus.manifest.cases.filter(({ kind }) => kind === "synthetic").map(({ language, syntheticClass }) => `${language}:${syntheticClass}`);
   assert.deepEqual(actual.sort(), expected.sort());
   assert.equal(new Set(corpus.manifest.cases.map(({ caseId }) => caseId)).size, corpus.manifest.cases.length);
@@ -34,6 +35,31 @@ test("committed Phase15D corpus has one reviewed synthetic case per language and
     assert.ok(evalCase.task.trim(), `${evalCase.caseId} needs a reviewed task`);
   }
   validateCorpusWorkspaceRefs({ manifest: corpus.manifest, corpusRoot: path.join(root, "corpus") });
+});
+
+test("synthetic classes have distinct reviewed semantics for every production language", async () => {
+  const corpus = await loadCorpus({
+    manifestPath: path.join(root, "corpus/manifest.json"),
+    baselinePath: path.join(root, "baselines/context-eval-v1.json"),
+    policyPath: path.join(root, "baselines/context-eval-policy-v1.json"),
+  });
+  const byLanguage = new Map<string, Array<(typeof corpus.manifest.cases)[number]>>();
+  for (const evalCase of corpus.manifest.cases.filter(({ kind }) => kind === "synthetic")) {
+    const cases = byLanguage.get(evalCase.language) ?? [];
+    cases.push(evalCase);
+    byLanguage.set(evalCase.language, cases);
+  }
+  for (const language of new Set(LANGUAGE_CONFIGS.map(({ language }) => language))) {
+    const cases = new Map(byLanguage.get(language)!.map((evalCase) => [evalCase.syntheticClass, evalCase]));
+    const exact = cases.get("exact-target")!;
+    const relationship = cases.get("relationship/change")!;
+    const incomplete = cases.get("incomplete/ambiguity")!;
+    assert.notDeepEqual(exact.truth, relationship.truth, `${language} exact and relationship truth must differ`);
+    assert.notDeepEqual(relationship.truth, incomplete.truth, `${language} relationship and incomplete truth must differ`);
+    assert.ok(relationship.truth.supportingSubjects.length > 0, `${language} relationship cases need supporting subjects`);
+    assert.ok(incomplete.truth.forbiddenRequiredSubjects.length > 0, `${language} incomplete cases need explicit uncertainty truth`);
+    assert.match(incomplete.task, /ambiguous|uncertain|incomplete/i);
+  }
 });
 
 test("committed snapshots carry reviewable provenance, bounded files, and required notices", async () => {

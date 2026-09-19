@@ -1,1 +1,2 @@
-export function Target(): JSX.Element { return <div>target</div>; }
+import { related } from "./related";
+export function Target(): string { return related(); }

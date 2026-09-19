@@ -1,1 +1,2 @@
-export function target(value: number): number { return value + 1; }
+import { helper } from "./related";
+export function target(value: number): number { return helper(value); }

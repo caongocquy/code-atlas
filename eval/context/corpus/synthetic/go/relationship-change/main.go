@@ -1,3 +1,3 @@
 package fixture
 
-func Target(value int) int { return value + 1 }
+func Target(value int) int { return Helper(value) }

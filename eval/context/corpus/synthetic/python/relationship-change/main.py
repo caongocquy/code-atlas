@@ -1,2 +1,4 @@
+from related import helper
+
 def target(value):
-    return value + 1
+    return helper(value)

@@ -1,1 +1,1 @@
-func target(_ value: Int) -> Int { value + 1 }
+func target(_ value: Int) -> Int { related(value) }

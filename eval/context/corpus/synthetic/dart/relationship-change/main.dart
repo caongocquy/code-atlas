@@ -1,1 +1,2 @@
-int target(int value) => value + 1;
+import "related.dart";
+int target(int value) => helper(value);
