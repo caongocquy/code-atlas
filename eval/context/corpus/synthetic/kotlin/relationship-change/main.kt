@@ -1,3 +1,6 @@
+package fixture
+import fixture.Related.helper
+
 class Target {
-    fun target(value: Int): Int = Related.helper(value)
+    fun target(value: Int): Int = helper(value)
 }

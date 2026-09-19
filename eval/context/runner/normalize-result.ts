@@ -1,8 +1,11 @@
 import type { TaskContextDelivery } from "../../../src/core/context/task-context-lifecycle.types.js";
 import type { TaskContextItem } from "../../../src/core/context/task-context.types.js";
+import type { ContextSubject } from "../../../src/core/context/context.types.js";
 import type { GateFailure, NormalizedObserved, ObservedCase } from "../types.js";
 
 const temporaryWorkspaceRoot = /(?:\/[^/]+)*\/code-atlas-context-eval-[^/]+/g;
+type NonErrorDelivery = Exclude<TaskContextDelivery, { mode: "error" }>;
+type SymbolDelivery = NonErrorDelivery & { subject: Extract<ContextSubject, { kind: "symbol" }> };
 
 function normalizeTemporaryPath(value: string): string {
   return value.replace(temporaryWorkspaceRoot, "<workspace>");
@@ -21,20 +24,41 @@ function stable(value: unknown): string {
   return JSON.stringify(value) ?? "null";
 }
 
-function selected(items: readonly TaskContextItem[]) {
-  return items.map(({ subject, priority, rank }) => ({ subject, priority, rank }));
+function semanticSubject(subject: TaskContextItem["subject"], observed: NormalizedObserved, identityInputsEqual: boolean): unknown {
+  if (subject.kind === "file" || identityInputsEqual) return subject;
+  const deliveryValue = observed.deliveries.find((item): item is SymbolDelivery => item.mode !== "error" && item.subject.kind === "symbol" && item.subject.symbolId === subject.symbolId);
+  return {
+    kind: "symbol",
+    path: subject.path,
+    selectorVersion: subject.selectorVersion,
+    contentIdentity: deliveryValue?.current.contentIdentity,
+  };
 }
 
-function delivery(value: TaskContextDelivery) {
-  if (value.mode === "error") return { subject: value.subject, mode: value.mode, error: value.error };
+function selected(items: readonly TaskContextItem[], observed: NormalizedObserved, identityInputsEqual: boolean) {
+  return items.map(({ subject, priority, rank }) => ({ subject: semanticSubject(subject, observed, identityInputsEqual), priority, rank }));
+}
+
+function delivery(value: TaskContextDelivery, observed: NormalizedObserved, identityInputsEqual: boolean) {
+  if (value.mode === "error") return { subject: semanticSubject(value.subject, observed, identityInputsEqual), mode: value.mode, error: value.error };
   return {
-    subject: value.subject,
+    subject: semanticSubject(value.subject, observed, identityInputsEqual),
     mode: value.mode,
     reliability: value.reliability,
     current: value.current,
     ...(value.mode === "full" || value.mode === "rehydrate" ? { content: value.content, ...(value.reason ? { reason: value.reason } : {}) } : {}),
     ...(value.mode === "delta" ? { delta: value.delta } : {}),
   };
+}
+
+function reconstructed(value: NormalizedObserved, identityInputsEqual: boolean): unknown {
+  if (identityInputsEqual) return value.reconstructedContents;
+  const symbolDeliveries = value.deliveries.filter((item): item is SymbolDelivery => item.mode !== "error" && item.subject.kind === "symbol");
+  const symbolKeys = new Set(symbolDeliveries.map(({ subject }) => `symbol:${subject.path}:${subject.symbolId}:${subject.selectorVersion}`));
+  const files = Object.entries(value.reconstructedContents).filter(([key]) => !symbolKeys.has(key));
+  const symbols = symbolDeliveries
+    .map(({ subject }) => ({ subject: semanticSubject(subject, value, identityInputsEqual), content: value.reconstructedContents[`symbol:${subject.path}:${subject.symbolId}:${subject.selectorVersion}`] }));
+  return { files, symbols };
 }
 
 function failure(caseId: string, gate: string, expected: unknown, observed: unknown): GateFailure {
@@ -59,10 +83,10 @@ export function compareSemanticObserved(left: NormalizedObserved, right: Normali
   compare("determinism.case_id", left.caseId, right.caseId);
   compare("determinism.task_identity", left.taskIdentity, right.taskIdentity);
   if (identityInputsEqual) compare("determinism.plan_identity", left.planIdentity, right.planIdentity);
-  compare("determinism.selected_items", selected(left.selectedItems), selected(right.selectedItems));
+  compare("determinism.selected_items", selected(left.selectedItems, left, identityInputsEqual), selected(right.selectedItems, right, identityInputsEqual));
   compare("determinism.reliability", left.reliability, right.reliability);
-  compare("determinism.deliveries", left.deliveries.map(delivery), right.deliveries.map(delivery));
-  compare("determinism.reconstructed_contents", left.reconstructedContents, right.reconstructedContents);
+  compare("determinism.deliveries", left.deliveries.map((item) => delivery(item, left, identityInputsEqual)), right.deliveries.map((item) => delivery(item, right, identityInputsEqual)));
+  compare("determinism.reconstructed_contents", reconstructed(left, identityInputsEqual), reconstructed(right, identityInputsEqual));
   compare("determinism.lifecycle_modes", left.lifecycleModes, right.lifecycleModes);
   compare("determinism.metrics", left.metrics, right.metrics);
   return failures;

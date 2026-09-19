@@ -68,6 +68,7 @@ function mergeTwo(left: TaskContextCandidate, right: TaskContextCandidate): Task
   return {
     ...left,
     subject: left.subject ?? right.subject,
+    semanticKey: left.semanticKey ?? right.semanticKey,
     query: left.query ?? right.query,
     priorityHint: left.priorityHint ?? right.priorityHint,
     evidence,
@@ -108,6 +109,10 @@ function subjectForNode(node: GraphNode): ContextSubject {
   return { kind: "symbol", path: node.file, symbolId: node.id, selectorVersion: CONTEXT_SUBJECT_SELECTOR_VERSION };
 }
 
+function semanticKeyForNode(node: GraphNode): string {
+  return JSON.stringify([node.file, node.type, node.qualifiedName ?? node.name, node.startLine ?? null, node.endLine ?? null]);
+}
+
 export async function collectTaskContextCandidates(
   normalized: NormalizedTaskContextInput,
   deps: TaskContextCollectionDeps,
@@ -131,7 +136,7 @@ export async function collectTaskContextCandidates(
     const anchorResolution = resolveGraphEntity(graph, anchor.path ? `${anchor.path}:${anchor.name}` : anchor.name);
     if (anchorResolution.status === "resolved" && anchorResolution.entity && anchorResolution.candidates.length === 1 && isAuthoritativeTaskResolution(anchor.path ? `${anchor.path}:${anchor.name}` : anchor.name, anchorResolution)) {
       const subject = subjectForNode(anchorResolution.entity);
-      candidates.push({ subject, evidence: [{ kind: "explicit_anchor", anchor }], sourceRanks: { explicit_anchor: 1 }, exact: true });
+      candidates.push({ subject, semanticKey: semanticKeyForNode(anchorResolution.entity), evidence: [{ kind: "explicit_anchor", anchor }], sourceRanks: { explicit_anchor: 1 }, exact: true });
     } else diagnostics.push(`symbol anchor is unresolved or ambiguous: ${anchor.name}`);
   }
   for (const changedPath of normalized.changedPaths) {
@@ -143,7 +148,7 @@ export async function collectTaskContextCandidates(
   const resolution = resolveGraphEntity(graph, normalized.task);
   if (resolution.status === "resolved" && isAuthoritativeTaskResolution(normalized.task, resolution)) {
     const subject = subjectForNode(resolution.entity);
-    candidates.push({ subject, query: normalized.task, evidence: [{ kind: "task_exact_resolution", query: normalized.task, resolution: subject.kind }], sourceRanks: { task_exact_resolution: 1 }, exact: true });
+    candidates.push({ subject, semanticKey: semanticKeyForNode(resolution.entity), query: normalized.task, evidence: [{ kind: "task_exact_resolution", query: normalized.task, resolution: subject.kind }], sourceRanks: { task_exact_resolution: 1 }, exact: true });
   }
   if (resolution.status === "resolved") diagnostics.push(`task target was not exact: ${normalized.task}`);
   let mayBeIncomplete = false;
@@ -155,7 +160,7 @@ export async function collectTaskContextCandidates(
         results.forEach((result, index) => {
           const node = result.symbolName ? graph.nodes.filter((candidate) => candidate.file === result.file && candidate.name === result.symbolName) : [];
           const subject = node.length === 1 ? subjectForNode(node[0]!) : { kind: "file" as const, path: result.file };
-          candidates.push({ subject, evidence: [{ kind: "lexical", rank: index + 1, query }], sourceRanks: { lexical: index + 1 }, exact: true });
+          candidates.push({ subject, ...(node.length === 1 ? { semanticKey: semanticKeyForNode(node[0]!) } : {}), evidence: [{ kind: "lexical", rank: index + 1, query }], sourceRanks: { lexical: index + 1 }, exact: true });
         });
       }
     } catch (error) { mayBeIncomplete = true; diagnostics.push(`lexical retrieval failed: ${error instanceof Error ? error.message : String(error)}`); }
@@ -183,7 +188,16 @@ export function enrichTaskContextGraph(candidates: readonly TaskContextCandidate
   const nodes = new Map(graph.nodes.map((node) => [node.id, node]));
   const additions: TaskContextCandidate[] = [];
   for (const candidate of candidates) {
-    if (!candidate.subject || !candidate.exact || candidate.subject.kind !== "symbol") continue;
+    if (!candidate.subject || !candidate.exact) continue;
+    if (candidate.subject.kind === "file") {
+      const fileNode = graph.nodes.find((node) => node.type === "file" && node.file === candidate.subject!.path);
+      if (!fileNode) continue;
+      for (const edge of graph.edges.filter((item) => item.from === fileNode.id && item.type === "imports")) {
+        const related = nodes.get(edge.to);
+        if (related?.type === "file") additions.push({ subject: { kind: "file", path: related.file }, evidence: [{ kind: "graph", relation: "imports", from: candidate.subject.path, depth: 1 }], sourceRanks: { graph: 1 }, exact: true });
+      }
+      continue;
+    }
     const seedId = candidate.subject.symbolId;
     const related = graph.edges
       .filter((edge) => edge.from === seedId || edge.to === seedId)
@@ -193,7 +207,7 @@ export function enrichTaskContextGraph(candidates: readonly TaskContextCandidate
       .slice(0, 5);
     related.forEach((node, index) => {
       const subject = subjectForNode(node);
-      additions.push({ subject, evidence: [{ kind: "graph", relation: "direct", from: seedId, depth: 1 }], sourceRanks: { graph: index + 1 }, exact: true });
+      additions.push({ subject, semanticKey: semanticKeyForNode(node), evidence: [{ kind: "graph", relation: "direct", from: seedId, depth: 1 }], sourceRanks: { graph: index + 1 }, exact: true });
     });
   }
   return mergeTaskContextCandidates([...candidates, ...additions]);
@@ -232,11 +246,11 @@ export async function enrichTaskContextCandidates(
   if (deps.inspectChange) {
     try {
       const change = await deps.inspectChange(deps.repositoryPath, { mode: "working", maxDepth: 1 });
-      mayBeIncomplete ||= Boolean(change.mayBeIncomplete);
+      if (change.mayBeIncomplete) { mayBeIncomplete = true; diagnostics.push("change enrichment is incomplete"); }
       for (const symbol of [...(change.changedSymbols ?? []), ...(change.affectedSymbols ?? [])].slice(0, 10)) {
         const node = graph.nodes.find((candidate) => candidate.id === symbol.symbolId);
         if (!node || !isRelevantNode(node, paths)) continue;
-        additions.push({ subject: subjectForNode(node), evidence: [{ kind: "change", relation: symbol.relation ?? symbol.changeKind ?? "changed", path: node.file }], sourceRanks: { change: 1 }, exact: true });
+        additions.push({ subject: subjectForNode(node), semanticKey: semanticKeyForNode(node), evidence: [{ kind: "change", relation: symbol.relation ?? symbol.changeKind ?? "changed", path: node.file }], sourceRanks: { change: 1 }, exact: true });
       }
     } catch (error) { mayBeIncomplete = true; diagnostics.push(`change enrichment failed: ${error instanceof Error ? error.message : String(error)}`); }
   }
@@ -244,10 +258,10 @@ export async function enrichTaskContextCandidates(
     try {
       for (const seed of seeds.slice(0, 10)) {
         const impact = await deps.analyzeImpact(graph, nodeQuery(seed), { maxDepth: 1, maxResults: 10 });
-        mayBeIncomplete ||= Boolean(impact.mayBeIncomplete);
+        if (impact.mayBeIncomplete) { mayBeIncomplete = true; diagnostics.push("impact enrichment is incomplete"); }
         for (const item of [...(impact.directImpact ?? []), ...(impact.transitiveImpact ?? [])].slice(0, 10)) {
           if (!item.entity) continue;
-          additions.push({ subject: subjectForNode(item.entity), evidence: [{ kind: "impact", relation: item.reason ?? item.relation ?? "impact", depth: Math.min(1, item.depth ?? 1) as 1 }], sourceRanks: { impact: item.depth ?? 1 }, exact: true });
+          additions.push({ subject: subjectForNode(item.entity), semanticKey: semanticKeyForNode(item.entity), evidence: [{ kind: "impact", relation: item.reason ?? item.relation ?? "impact", depth: Math.min(1, item.depth ?? 1) as 1 }], sourceRanks: { impact: item.depth ?? 1 }, exact: true });
         }
       }
     } catch (error) { mayBeIncomplete = true; diagnostics.push(`impact enrichment failed: ${error instanceof Error ? error.message : String(error)}`); }
@@ -255,7 +269,7 @@ export async function enrichTaskContextCandidates(
   if (deps.affectedTests) {
     try {
       const tests = await deps.affectedTests(deps.repositoryPath, { maxTests: 10, maxDepth: 1 });
-      mayBeIncomplete ||= Boolean(tests.mayBeIncomplete);
+      if (tests.mayBeIncomplete) { mayBeIncomplete = true; diagnostics.push("affected-test enrichment is incomplete"); }
       const relevantIds = new Set(seeds.map((seed) => seed.id));
       for (const seed of seeds) {
         for (const edge of graph.edges) if (edge.from === seed.id || edge.to === seed.id) relevantIds.add(edge.from === seed.id ? edge.to : edge.from);

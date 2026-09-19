@@ -1,3 +1,4 @@
-mod related;
+pub mod related;
+use crate::related::helper;
 
-fn target(value: i32) -> i32 { related::helper(value) }
+fn target(value: i32) -> i32 { helper(value) }

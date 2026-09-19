@@ -22,7 +22,13 @@ test("defines internal evaluator scripts without replacing existing package scri
   assert.equal(typeof scripts["eval:context:update-baseline"], "string");
   assert.match(scripts["eval:context"], /runContextEval/);
   assert.match(scripts["eval:context:update-baseline"], /updateContextBaseline/);
+  assert.match(scripts["eval:context:update-baseline"], /-e .* --/);
   assert.equal(scripts.test, "node --import tsx/esm --test test/*.test.ts");
+});
+
+test("keeps immutable snapshot sources outside the application lint boundary", async () => {
+  const eslintConfig = await readFile(path.join(root, "eslint.config.js"), "utf8");
+  assert.match(eslintConfig, /eval\/context\/corpus\/snapshots\/\*\*/);
 });
 
 test("ignores only transient Phase15D evaluation artifacts", async () => {

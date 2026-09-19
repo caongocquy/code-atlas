@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { compareSemanticObserved, normalizeObserved } from "../eval/context/runner/normalize-result.js";
+import { rankTaskContextCandidates } from "../src/core/context/task-context-ranker.js";
+import type { TaskContextCandidate } from "../src/core/context/task-context.types.js";
 import type { ObservedCase } from "../eval/context/types.js";
 
 function observed(overrides: Partial<ObservedCase> = {}): ObservedCase {
@@ -81,4 +83,42 @@ test("semantic comparison requires identical plan identities only for identical 
     "determinism.lifecycle_modes",
     "determinism.metrics",
   ]);
+});
+
+test("semantic comparison ignores repository-bound symbol ids but preserves symbol ordering", () => {
+  const symbol = (symbolId: string, contentIdentity: string, rank: number) => ({
+    subject: { kind: "symbol" as const, path: "src/target.ts", symbolId, selectorVersion: "1" },
+    priority: "supporting" as const,
+    rank,
+    reasons: ["change"],
+    estimatedTokens: 12,
+    contentIdentity,
+  });
+  const first = observed({
+    selectedItems: [symbol("repo-a-symbol", "content-a", 1)],
+    deliveries: [{ subject: symbol("repo-a-symbol", "content-a", 1).subject, receiptId: "receipt-a", reliability: { mayBeIncomplete: false }, mode: "full", current: { contentIdentity: "content-a", reliability: { mayBeIncomplete: false } }, content: "same\n" }],
+  });
+  const second = observed({
+    repositoryIdentity: "path-v1:repository-b",
+    workspaceIdentity: "filesystem-v1:/private/tmp/code-atlas-context-eval-second",
+    selectedItems: [symbol("repo-b-symbol", "content-a", 1)],
+    deliveries: [{ subject: symbol("repo-b-symbol", "content-a", 1).subject, receiptId: "receipt-b", reliability: { mayBeIncomplete: false }, mode: "full", current: { contentIdentity: "content-a", reliability: { mayBeIncomplete: false } }, content: "same\n" }],
+  });
+  assert.deepEqual(compareSemanticObserved(normalizeObserved(first), normalizeObserved(second), false), []);
+  const reordered = { ...second, selectedItems: [symbol("repo-b-symbol", "content-b", 2)] };
+  assert.deepEqual(compareSemanticObserved(normalizeObserved(first), normalizeObserved(reordered), false).map(({ gate }) => gate), ["determinism.selected_items"]);
+});
+
+test("ranking uses stable code identity as the symbol tie-break", () => {
+  const make = (symbolId: string, semanticKey: string): TaskContextCandidate & { semanticKey: string } => ({
+    subject: { kind: "symbol", path: "src/target.ts", symbolId, selectorVersion: "1" },
+    evidence: [{ kind: "change", relation: "changed", path: "src/target.ts" }],
+    sourceRanks: { change: 1 },
+    exact: true,
+    semanticKey,
+  });
+  const first = rankTaskContextCandidates([make("repo-a-z", "src/target.ts\0function\0alpha"), make("repo-a-a", "src/target.ts\0function\0beta")]);
+  const second = rankTaskContextCandidates([make("repo-b-z", "src/target.ts\0function\0alpha"), make("repo-b-a", "src/target.ts\0function\0beta")]);
+  assert.deepEqual(first.map(({ subject }) => subject.kind === "symbol" ? subject.symbolId : "file"), ["repo-a-z", "repo-a-a"]);
+  assert.deepEqual(second.map(({ subject }) => subject.kind === "symbol" ? subject.symbolId : "file"), ["repo-b-z", "repo-b-a"]);
 });
