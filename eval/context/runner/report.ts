@@ -12,14 +12,19 @@ type ReportInputWithBytes = Omit<ReportInput, "baselineSha256" | "policySha256">
   policyBytes?: ReportBytes;
 };
 
+function compareCodeUnits(left: string, right: string): number {
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
+}
+
 function digest(value: ReportBytes): string {
   return createHash("sha256").update(typeof value === "string" ? Buffer.from(value, "utf8") : value).digest("hex");
 }
 
-function stableValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stableValue);
+function stableValue<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(stableValue) as T;
   if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, stableValue(item)]));
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([left], [right]) => compareCodeUnits(left, right)).map(([key, item]) => [key, stableValue(item)])) as T;
   }
   return value;
 }
@@ -29,11 +34,11 @@ function failureKey(value: GateFailure): string {
 }
 
 function sortFailures(values: readonly GateFailure[]): readonly GateFailure[] {
-  return [...values].sort((left, right) => failureKey(left).localeCompare(failureKey(right))).map((value) => stableValue(value) as GateFailure);
+  return [...values].sort((left, right) => compareCodeUnits(failureKey(left), failureKey(right))).map(stableValue);
 }
 
 function sortCases(values: readonly CaseScore[]): readonly CaseScore[] {
-  return [...values].sort((left, right) => left.caseId.localeCompare(right.caseId));
+  return [...values].sort((left, right) => compareCodeUnits(left.caseId, right.caseId));
 }
 
 function hasFailure(failures: readonly GateFailure[], prefixes: readonly string[]): boolean {
@@ -56,7 +61,7 @@ function reportGateDecisions(cases: readonly CaseScore[], aggregate: AggregateSc
 }
 
 function validDigest(value: string | undefined): boolean {
-  return value === undefined || /^[0-9a-f]{64}$/i.test(value);
+  return value !== undefined && /^[0-9a-f]{64}$/.test(value) && !/^([0-9a-f])\1{63}$/.test(value);
 }
 
 export function buildMachineReport(input: ReportInputWithBytes): MachineReport {
@@ -64,7 +69,7 @@ export function buildMachineReport(input: ReportInputWithBytes): MachineReport {
     caseId,
     metrics: stableValue(metrics),
     failures: sortFailures(failures),
-  })) as MachineReport["cases"];
+  }));
   const aggregateFailures = sortFailures(input.aggregate.failures);
   const integrityFailures: GateFailure[] = [];
   if (input.corpusVersion !== CORPUS_VERSION) integrityFailures.push({ gate: "integrity.corpus_version", scope: "integrity", observed: input.corpusVersion, expected: CORPUS_VERSION, message: "Report input uses an unsupported corpus version" });
@@ -73,8 +78,8 @@ export function buildMachineReport(input: ReportInputWithBytes): MachineReport {
 
   const baselineSha256 = input.baselineBytes === undefined ? input.baselineSha256 ?? "" : digest(input.baselineBytes);
   const policySha256 = input.policyBytes === undefined ? input.policySha256 ?? "" : digest(input.policyBytes);
-  if (!validDigest(baselineSha256)) integrityFailures.push({ gate: "integrity.baseline_digest", scope: "integrity", observed: baselineSha256, expected: "64 hexadecimal SHA-256 characters", message: "Baseline identity must be a SHA-256 digest" });
-  if (!validDigest(policySha256)) integrityFailures.push({ gate: "integrity.policy_digest", scope: "integrity", observed: policySha256, expected: "64 hexadecimal SHA-256 characters", message: "Policy identity must be a SHA-256 digest" });
+  if (!validDigest(baselineSha256)) integrityFailures.push({ gate: "integrity.baseline_digest", scope: "integrity", observed: baselineSha256, expected: "a non-degenerate lowercase SHA-256 digest", message: "Baseline identity must be a non-degenerate lowercase SHA-256 digest" });
+  if (!validDigest(policySha256)) integrityFailures.push({ gate: "integrity.policy_digest", scope: "integrity", observed: policySha256, expected: "a non-degenerate lowercase SHA-256 digest", message: "Policy identity must be a non-degenerate lowercase SHA-256 digest" });
   const failures = [...aggregateFailures, ...integrityFailures];
   const integrity = integrityFailures.length === 0 && !hasFailure([...input.cases.flatMap(({ failures }) => failures), ...aggregateFailures], ["corpus", "integrity"]);
 
@@ -89,13 +94,12 @@ export function buildMachineReport(input: ReportInputWithBytes): MachineReport {
     aggregate: stableValue(input.aggregate.metrics),
     failures: sortFailures(failures),
     gateDecisions: reportGateDecisions(input.cases, { ...input.aggregate, failures }, integrity),
-  }) as MachineReport;
+  });
 }
 
 export function renderHumanReport(report: MachineReport): string {
   const decisions = Object.entries(report.gateDecisions).map(([gate, passed]) => `${gate}: ${passed ? "PASS" : "FAIL"}`);
-  const reportFailures = (report as MachineReport & { failures?: readonly GateFailure[] }).failures ?? [];
-  const failures = [...report.cases.flatMap(({ failures }) => failures), ...reportFailures];
+  const failures = [...report.cases.flatMap(({ failures }) => failures), ...report.failures];
   const lines = [
     `Phase15D context evaluation: ${Object.values(report.gateDecisions).every(Boolean) ? "PASS" : "FAIL"}`,
     `Corpus: ${report.corpusVersion} | cases: ${report.cases.length}`,
@@ -104,6 +108,7 @@ export function renderHumanReport(report: MachineReport): string {
     "Gate decisions:",
     ...decisions.map((value) => `  ${value}`),
     `Quality: selected=${report.aggregate.selectedItems}, tokens=${report.aggregate.estimatedTokens}, bytes=${report.aggregate.returnedBytes}`,
+    `Lifecycle: full=${report.aggregate.fullItems}, delta=${report.aggregate.deltaItems}, unchanged=${report.aggregate.unchangedItems}, rehydrated=${report.aggregate.rehydratedItems}, reuse=${report.aggregate.reuseRate}, resend=${report.aggregate.bodyResendCount}`,
     `Performance observations (non-blocking): ${JSON.stringify(report.aggregate.timingsMs)}`,
   ];
   if (failures.length > 0) {

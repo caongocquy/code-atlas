@@ -8,6 +8,8 @@ import test from "node:test";
 import { buildMachineReport, renderHumanReport, writeReport } from "../eval/context/runner/report.js";
 import type { AggregateScore, CaseScore, ObservedMetrics, ReportInput } from "../eval/context/types.js";
 
+type TestReportInput = ReportInput & { baselineBytes?: Uint8Array; policyBytes?: Uint8Array };
+
 const baselineBytes = Buffer.from('{"caseId":"stable","selectedItems":1}\n', "utf8");
 const policyBytes = Buffer.from('{"policyVersion":"context-eval-policy-v1"}\n', "utf8");
 
@@ -32,7 +34,7 @@ function metrics(overrides: Partial<ObservedMetrics> = {}): ObservedMetrics {
   };
 }
 
-function input(overrides: Partial<ReportInput> = {}): ReportInput {
+function input(overrides: Partial<TestReportInput> = {}): TestReportInput {
   const caseOne: CaseScore = {
     caseId: "case-one",
     metrics: metrics(),
@@ -58,7 +60,7 @@ function input(overrides: Partial<ReportInput> = {}): ReportInput {
     baselineBytes,
     policyBytes,
     ...overrides,
-  } as ReportInput;
+  };
 }
 
 test("builds a byte-stable report with exact versions, raw-byte digests, and stable ordering", () => {
@@ -84,6 +86,25 @@ test("retains timing observations without making semantic gate decisions fail", 
   assert.deepEqual(timed.gateDecisions, differentTiming.gateDecisions);
   assert.deepEqual(timed.cases[0]?.metrics.timingsMs, metrics().timingsMs);
   assert.deepEqual(differentTiming.aggregate.timingsMs, { indexLoad: 999, compile: 998, lifecycleStart: 997, refresh: 996 });
+});
+
+test("rejects caller-supplied placeholder digests when raw identity bytes are absent", () => {
+  for (const placeholder of ["0".repeat(64), "f".repeat(64)]) {
+    const report = buildMachineReport(input({ baselineBytes: undefined, policyBytes: undefined, baselineSha256: placeholder, policySha256: placeholder }));
+    assert.equal(report.gateDecisions.corpusIntegrity, false);
+    assert.equal(report.failures.some(({ gate }) => gate === "integrity.baseline_digest"), true);
+    assert.equal(report.failures.some(({ gate }) => gate === "integrity.policy_digest"), true);
+  }
+});
+
+test("uses fixed code-unit ordering for case keys and failure details", () => {
+  const first = input().cases[0]!;
+  const second = { ...first, caseId: "\uFFFD" };
+  const third = { ...first, caseId: "\uE000", failures: [{ gate: "z", scope: "case" as const, caseId: "\uE000", observed: true, expected: false, message: "z" }, { gate: "a", scope: "case" as const, caseId: "\uE000", observed: true, expected: false, message: "a" }] };
+  const report = buildMachineReport(input({ cases: [second, third, first] }));
+
+  assert.deepEqual(report.cases.map(({ caseId }) => caseId), ["case-one", "\uE000", "\uFFFD"]);
+  assert.deepEqual(report.cases[1]?.failures.map(({ gate }) => gate), ["a", "z"]);
 });
 
 test("maps every hard failure family to a non-passing gate decision", () => {
@@ -121,6 +142,13 @@ test("maps every hard failure family to a non-passing gate decision", () => {
   assert.match(renderHumanReport(report), /FAIL/);
   assert.match(renderHumanReport(report), /corpus\.version/);
   assert.match(renderHumanReport(report), /case-one/);
+});
+
+test("renders lifecycle delivery and reuse metrics in the human report", () => {
+  const report = buildMachineReport(input({ aggregate: { ...input().aggregate, metrics: metrics({ fullItems: 2, deltaItems: 3, unchangedItems: 4, rehydratedItems: 5, reuseRate: 0.75, bodyResendCount: 6 }) } }));
+  const human = renderHumanReport(report);
+
+  assert.match(human, /Lifecycle: full=2, delta=3, unchanged=4, rehydrated=5, reuse=0\.75, resend=6/);
 });
 
 test("writes only the transient machine-report artifact", async () => {

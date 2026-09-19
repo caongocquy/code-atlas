@@ -208,6 +208,7 @@ export type MachineReport = {
   policySha256: string;
   cases: readonly { caseId: string; metrics: ObservedMetrics; failures: readonly GateFailure[] }[];
   aggregate: ObservedMetrics;
+  failures: readonly GateFailure[];
   gateDecisions: { correctness: boolean; determinism: boolean; reconstruction: boolean; authorityUncertainty: boolean; isolation: boolean; catastrophicQuality: boolean; aggregateQuality: boolean; corpusIntegrity: boolean };
 };
 
