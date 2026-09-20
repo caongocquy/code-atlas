@@ -1,6 +1,7 @@
 # Phase15E-B — CLI Self-Upgrade
 
-**Status:** Design specification  
+**Status:** Design specification
+
 **Scope:** Explicit `code-atlas upgrade` and `code-atlas upgrade --check`
 
 ## Purpose and behavior

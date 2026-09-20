@@ -1,6 +1,7 @@
 # Phase15E-A — MCP Agent Integration Hardening
 
-**Status:** Design specification  
+**Status:** Design specification
+
 **Scope:** Current MCP tool metadata, input guidance, and protocol contract verification
 
 ## Purpose
