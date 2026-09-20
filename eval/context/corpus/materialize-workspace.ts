@@ -35,14 +35,14 @@ function requiresGit(value: EvalCase): boolean {
   return value.kind === "snapshot";
 }
 
-export async function materializeWorkspace(input: {
-  case: EvalCase;
-  fixtureRoot: string;
-}): Promise<{ root: string; cleanup: () => Promise<void>; git: boolean }> {
+export async function materializeWorkspace(
+  input: { case: EvalCase; fixtureRoot: string },
+  createTempRoot: typeof mkdtemp = mkdtemp,
+): Promise<{ root: string; cleanup: () => Promise<void>; git: boolean }> {
   const fixture = await lstat(input.fixtureRoot);
   if (!fixture.isDirectory()) throw new Error(`Phase15D fixture root must be a directory: ${input.fixtureRoot}`);
 
-  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-context-eval-"));
+  const root = await createTempRoot(path.join(tmpdir(), "code-atlas-context-eval-"));
   let cleaned = false;
   const cleanup = async (): Promise<void> => {
     if (cleaned) return;

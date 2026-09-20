@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
-import { access, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { access, lstat, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -90,12 +90,18 @@ test("materializeWorkspace initializes snapshots as locally identified Git repos
 
 test("materializeWorkspace removes its generated root when fixture copying fails", async () => {
   const fixtureRoot = await mkdtemp(path.join(tmpdir(), "code-atlas-phase15d-invalid-fixture-"));
-  const before = new Set((await readdir(tmpdir())).filter((entry) => entry.startsWith("code-atlas-context-eval-")));
+  let generatedRoot: string | undefined;
   try {
     await symlink(path.join(fixtureRoot, "missing.ts"), path.join(fixtureRoot, "linked.ts"));
-    await assert.rejects(() => materializeWorkspace({ case: evalCase(), fixtureRoot }), /unsupported entry/i);
-    const after = (await readdir(tmpdir())).filter((entry) => entry.startsWith("code-atlas-context-eval-") && !before.has(entry));
-    assert.deepEqual(after, []);
+    await assert.rejects(
+      () => materializeWorkspace({ case: evalCase(), fixtureRoot }, async (prefix) => {
+        generatedRoot = await mkdtemp(prefix);
+        return generatedRoot;
+      }),
+      /unsupported entry/i,
+    );
+    assert.ok(generatedRoot, "workspace allocation must be observable to verify its ownership cleanup");
+    await assert.rejects(lstat(generatedRoot), { code: "ENOENT" });
   } finally {
     await rm(fixtureRoot, { recursive: true, force: true });
   }
