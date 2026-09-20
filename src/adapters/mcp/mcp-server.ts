@@ -63,17 +63,69 @@ const DEFAULT_LIMIT = 20;
 const DEFAULT_DETAIL_LIMIT = 20;
 const packageJson = createRequire(import.meta.url)("../../../package.json") as { version: string };
 
-const repoInput = z.string().min(1).optional();
+const repoInput = z.string().min(1).describe("Local repository path; defaults to the server working directory.").optional();
 const limitInput = z.number().int().min(1).max(MAX_LIMIT).optional();
 const queryInput = z.string().min(1);
 const commonInput = {
   repoPath: repoInput,
   limit: limitInput,
-  detail: z.enum(["compact", "full"]).optional().default("compact"),
+  detail: z.enum(["compact", "full"]).describe("compact returns bounded output; full returns all available details.").optional().default("compact"),
 };
 
 type JsonObject = Record<string, unknown>;
 export type McpDetail = "compact" | "full";
+
+type McpToolAnnotations = {
+  readOnlyHint: boolean;
+  destructiveHint: boolean;
+  idempotentHint: boolean;
+  openWorldHint: boolean;
+};
+
+const readOnlyAnnotations: McpToolAnnotations = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+};
+
+const localWriteAnnotations: McpToolAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: false,
+};
+
+const toolAnnotations: Record<string, McpToolAnnotations> = {
+  repository_status: localWriteAnnotations,
+  search_code: localWriteAnnotations,
+  get_symbol: readOnlyAnnotations,
+  context_read: localWriteAnnotations,
+  compile_task_context: localWriteAnnotations,
+  start_task_context: localWriteAnnotations,
+  refresh_task_context: localWriteAnnotations,
+  close_task_context: { ...localWriteAnnotations, idempotentHint: true },
+  find_callers: readOnlyAnnotations,
+  find_callees: readOnlyAnnotations,
+  find_imports: readOnlyAnnotations,
+  find_imported_by: readOnlyAnnotations,
+  impact: readOnlyAnnotations,
+  inspect_change: readOnlyAnnotations,
+  affected_tests: readOnlyAnnotations,
+  explain_incomplete: readOnlyAnnotations,
+  graph_delta: readOnlyAnnotations,
+  architecture_drift: readOnlyAnnotations,
+  change_gate: readOnlyAnnotations,
+  trace: readOnlyAnnotations,
+  inspect_retrieval: localWriteAnnotations,
+  list_communities: readOnlyAnnotations,
+  get_community: readOnlyAnnotations,
+  important_symbols: readOnlyAnnotations,
+  architectural_bridges: readOnlyAnnotations,
+  find_cycles: readOnlyAnnotations,
+  index_repository: localWriteAnnotations,
+  sync_repository: localWriteAnnotations,
+};
 
 class McpToolError extends Error {
   constructor(
@@ -120,7 +172,7 @@ function registerJsonTool(
   schema: z.ZodType,
   handler: (args: JsonObject) => Promise<unknown>,
 ): void {
-  server.registerTool(name, { description, inputSchema: schema }, async (args) => {
+  server.registerTool(name, { description, inputSchema: schema, annotations: toolAnnotations[name] }, async (args) => {
     try {
       return jsonResult(await handler(args as JsonObject));
     } catch (error) {
@@ -456,10 +508,10 @@ export function createMcpServer(): McpServer {
     version: packageJson.version,
   });
 
-  registerJsonTool(server, "repository_status", "Return repository identity and capability status.", z.object({
+  registerJsonTool(server, "repository_status", "Check repository index and capability readiness when availability or freshness is unknown.", z.object({
     repoPath: repoInput,
-    detail: z.enum(["compact", "full"]).optional().default("compact"),
-    includeOptionalCapabilities: z.boolean().optional().default(false),
+    detail: z.enum(["compact", "full"]).describe("compact returns bounded output; full returns all available details.").optional().default("compact"),
+    includeOptionalCapabilities: z.boolean().describe("Initialize only currently configured local optional capabilities before reporting status.").optional().default(false),
   }).strict(), async (args) => {
     const repoPath = resolveRepo(args.repoPath as string | undefined);
     const providers = await optionalProviders(repoPath, args.includeOptionalCapabilities === true);
@@ -475,10 +527,10 @@ export function createMcpServer(): McpServer {
     }
   });
 
-  registerJsonTool(server, "search_code", "Search indexed code using lexical FTS5 or optional semantic fusion.", z.object({
+  registerJsonTool(server, "search_code", "Find matching code in the indexed repository; use get_symbol when the symbol is already known.", z.object({
     ...commonInput,
     query: queryInput,
-    mode: z.enum(["lexical", "hybrid"]).optional().default("lexical"),
+    mode: z.enum(["lexical", "hybrid"]).describe("lexical uses FTS5; hybrid combines lexical and locally configured semantic retrieval.").optional().default("lexical"),
     filePrefix: z.string().min(1).optional(),
   }).strict(), async (args) => {
     const repoPath = resolveRepo(args.repoPath as string | undefined);
@@ -521,7 +573,7 @@ export function createMcpServer(): McpServer {
     }
   });
 
-  registerJsonTool(server, "get_symbol", "Resolve a symbol or file in the indexed graph.", z.object({
+  registerJsonTool(server, "get_symbol", "Retrieve one known symbol or file from the indexed graph.", z.object({
     ...commonInput,
     query: queryInput,
   }).strict(), async (args) => withGraph(resolveRepo(args.repoPath as string | undefined), async (context) => {
@@ -537,11 +589,11 @@ export function createMcpServer(): McpServer {
     };
   }));
 
-  registerJsonTool(server, "context_read", "Opt-in context-aware read for one repository-relative file.", z.object({
+  registerJsonTool(server, "context_read", "Safely read and deliver a selected file or range while recording the context delivery.", z.object({
     repoPath: repoInput,
     file: z.string().min(1),
-    sessionId: z.string().min(1),
-    contextGeneration: z.string().min(1),
+    sessionId: z.string().min(1).describe("Lifecycle session identifier for the exact context state."),
+    contextGeneration: z.string().min(1).describe("Published context generation to read from the lifecycle state."),
   }).strict(), async (args) => readContextAware(resolveRepo(args.repoPath as string | undefined), {
     sessionId: args.sessionId as string,
     contextGeneration: args.contextGeneration as string,
@@ -549,14 +601,14 @@ export function createMcpServer(): McpServer {
     projection: CONTEXT_AWARE_SOURCE_PROJECTION,
   }));
 
-  registerJsonTool(server, "compile_task_context", "Compile bounded, evidence-backed Phase15A context subjects for a task.", z.object({
+  registerJsonTool(server, "compile_task_context", "Assemble bounded evidence for a task; use context_read to deliver a selected file or range.", z.object({
     task: z.string().min(1),
     repoPath: repoInput,
     anchors: z.array(z.union([
       z.object({ kind: z.literal("file"), path: z.string().min(1) }).strict(),
       z.object({ kind: z.literal("symbol"), path: z.string().min(1).optional(), name: z.string().min(1) }).strict(),
-    ])).optional(),
-    changedPaths: z.array(z.string().min(1)).optional(),
+    ])).describe("Known file or symbol anchors that seed task evidence.").optional(),
+    changedPaths: z.array(z.string().min(1)).describe("Known changed paths to include as task evidence.").optional(),
     budget: z.object({ maxItems: z.number().int().positive().optional(), maxEstimatedTokens: z.number().int().positive().optional() }).strict().optional(),
     detail: z.enum(["compact", "full"]).optional(),
   }).strict(), async (args) => {
@@ -591,8 +643,8 @@ export function createMcpServer(): McpServer {
     try { return await startTaskContext({ task: args.task as string, anchors: args.anchors as never, budget: args.budget as never, ttlSeconds: args.ttlSeconds as number | undefined, detail: args.detail as "compact" | "full" | undefined }, { repositoryPath: resolveRepo(args.repoPath as string | undefined) }); }
     catch (error) { if (error instanceof TaskContextLifecycleDomainError && error.operationError.code === "compiler_validation_failed" && error.operationError.message === "Repository graph is not indexed.") throw new McpToolError("index_required", error.operationError.message, { repositoryPath: resolveRepo(args.repoPath as string | undefined), next: "Call index_repository or sync_repository first." }); throw error; }
   });
-  registerJsonTool(server, "refresh_task_context", "Refresh a durable task context lifecycle.", z.object({ repoPath: repoInput, taskContextId: z.string().min(1), budget: z.object({ maxItems: z.number().int().positive().optional(), maxEstimatedTokens: z.number().int().positive().optional() }).strict().optional(), detail: z.enum(["compact", "full"]).optional() }).strict(), async (args) => refreshTaskContext({ taskContextId: args.taskContextId as string, budget: args.budget as never, detail: args.detail as "compact" | "full" | undefined }, { repositoryPath: resolveRepo(args.repoPath as string | undefined) }));
-  registerJsonTool(server, "close_task_context", "Close a durable task context lifecycle.", z.object({ repoPath: repoInput, taskContextId: z.string().min(1) }).strict(), async (args) => closeTaskContext({ taskContextId: args.taskContextId as string }, { repositoryPath: resolveRepo(args.repoPath as string | undefined) }));
+  registerJsonTool(server, "refresh_task_context", "Refresh a known task context lifecycle and publish a new generation.", z.object({ repoPath: repoInput, taskContextId: z.string().min(1).describe("Task context lifecycle identifier to refresh."), budget: z.object({ maxItems: z.number().int().positive().optional(), maxEstimatedTokens: z.number().int().positive().optional() }).strict().optional(), detail: z.enum(["compact", "full"]).optional() }).strict(), async (args) => refreshTaskContext({ taskContextId: args.taskContextId as string, budget: args.budget as never, detail: args.detail as "compact" | "full" | undefined }, { repositoryPath: resolveRepo(args.repoPath as string | undefined) }));
+  registerJsonTool(server, "close_task_context", "Close a known task context lifecycle; repeated close requests have no further effect.", z.object({ repoPath: repoInput, taskContextId: z.string().min(1).describe("Task context lifecycle identifier to close.") }).strict(), async (args) => closeTaskContext({ taskContextId: args.taskContextId as string }, { repositoryPath: resolveRepo(args.repoPath as string | undefined) }));
 
   const relationTools = [
     ["find_callers", findCallers, "Find callers of a resolved symbol."],
@@ -628,11 +680,11 @@ export function createMcpServer(): McpServer {
 
   const changeSourceShape = {
     repoPath: repoInput,
-    detail: z.enum(["compact", "full"]).optional().default("compact"),
-    mode: z.enum(["working", "staged", "commit", "range"]).optional().default("working"),
-    commit: z.string().min(1).optional(),
-    base: z.string().min(1).optional(),
-    head: z.string().min(1).optional(),
+    detail: z.enum(["compact", "full"]).describe("compact returns bounded output; full returns all available details.").optional().default("compact"),
+    mode: z.enum(["working", "staged", "commit", "range"]).describe("working and staged inspect local snapshots; commit requires commit; range requires base and head.").optional().default("working"),
+    commit: z.string().min(1).describe("Commit revision required when mode is commit.").optional(),
+    base: z.string().min(1).describe("Base revision required when mode is range.").optional(),
+    head: z.string().min(1).describe("Head revision required when mode is range.").optional(),
   };
   function validateChangeSource(value: { mode?: string; commit?: string; base?: string; head?: string }, context: { addIssue(issue: { code: "custom"; path: string[]; message: string }): void }): void {
     const mode = value.mode ?? "working";
@@ -768,13 +820,13 @@ export function createMcpServer(): McpServer {
     ...(context.framework?.reliability ? { reliability: context.framework.reliability } : {}),
   })));
 
-  registerJsonTool(server, "inspect_retrieval", "Inspect lexical, optional semantic, rerank, graph, and context stages.", z.object({
+  registerJsonTool(server, "inspect_retrieval", "Diagnose retrieval stages and ranking; use search_code for default matching-code retrieval.", z.object({
     ...commonInput,
     query: queryInput,
-    includeSemantic: z.boolean().optional().default(false),
-    includeReranker: z.boolean().optional().default(false),
-    graphEnabled: z.boolean().optional(),
-    tokenBudget: z.number().int().min(100).max(20_000).optional(),
+    includeSemantic: z.boolean().describe("Include semantic retrieval only when locally configured; no remote model is provided by default.").optional().default(false),
+    includeReranker: z.boolean().describe("Include reranking only when locally configured; no remote provider is provided by default.").optional().default(false),
+    graphEnabled: z.boolean().describe("Enable or disable graph expansion during retrieval inspection.").optional(),
+    tokenBudget: z.number().int().min(100).max(20_000).describe("Cap the estimated context tokens returned by inspection.").optional(),
   }).strict(), async (args) => {
     const repoPath = resolveRepo(args.repoPath as string | undefined);
     const providers = await optionalProviders(repoPath, args.includeSemantic === true || args.includeReranker === true);
@@ -851,10 +903,10 @@ export function createMcpServer(): McpServer {
   })));
 
   for (const [name, operation] of [["index_repository", indexRepository], ["sync_repository", syncRepository]] as const) {
-    registerJsonTool(server, name, `Run the shared ${name === "index_repository" ? "full index" : "incremental sync"} pipeline.`, z.object({
+    registerJsonTool(server, name, `${name === "index_repository" ? "Build" : "Synchronize"} the local generated index state; this does not modify source files or Git data.`, z.object({
       repoPath: repoInput,
-      skipGit: z.boolean().optional().default(false),
-      includeSemantic: z.boolean().optional().default(false),
+      skipGit: z.boolean().describe("Skip read-only Git candidate discovery during indexing.").optional().default(false),
+      includeSemantic: z.boolean().describe("Include semantic indexing only with locally configured providers.").optional().default(false),
     }).strict(), async (args) => {
       const repoPath = resolveRepo(args.repoPath as string | undefined);
       return withWriteLock(repoPath, async () => {
