@@ -12,6 +12,10 @@ const require = createRequire(import.meta.url);
 const root = path.resolve(".");
 const cliPath = path.join(root, "src", "cli.ts");
 const tsxLoader = require.resolve("tsx/esm");
+const [nodeMajor, nodeMinor] = process.versions.node.split(".").map(Number);
+const inspectorSkipReason = nodeMajor > 22 || (nodeMajor === 22 && nodeMinor >= 19)
+  ? false
+  : `MCP Inspector 2.7.0 requires Node >=22.19.0; dev-only verification skipped on Node ${process.versions.node}.`;
 
 const expectedTools = [
   "repository_status", "search_code", "get_symbol", "context_read", "compile_task_context",
@@ -86,7 +90,7 @@ function jsonOutput(result: ReturnType<typeof runInspector>): Record<string, unk
   return JSON.parse(result.stdout) as Record<string, unknown>;
 }
 
-test("MCP Inspector v2 verifies the actual stdio server contract", async () => {
+test("MCP Inspector v2 verifies the actual stdio server contract", { skip: inspectorSkipReason }, async () => {
   const repoPath = await mkdtemp(path.join(tmpdir(), "code-atlas-mcp-inspector-"));
   try {
     const homePath = path.join(repoPath, ".inspector-home");
