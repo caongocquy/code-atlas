@@ -78,8 +78,11 @@ test("MCP tools/list distinguishes adjacent tools and guides material inputs", a
 
     assert.match(description("search_code"), /matching code/i);
     assert.match(description("get_symbol"), /known symbol/i);
-    assert.match(description("context_read"), /selected file or range/i);
+    assert.match(description("context_read"), /selected file/i);
+    assert.doesNotMatch(description("context_read"), /range/i);
     assert.match(description("compile_task_context"), /bounded.*task evidence/i);
+    assert.match(description("compile_task_context"), /selected file/i);
+    assert.doesNotMatch(description("compile_task_context"), /range/i);
     assert.match(description("inspect_retrieval"), /diagnos/i);
     assert.match(description("index_repository"), /local generated index state/i);
     assert.match(description("sync_repository"), /local generated index state/i);

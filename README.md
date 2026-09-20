@@ -283,7 +283,7 @@ start the persisted stdio launcher.
 MCP `tools/list` publishes a description and input schema for each tool. The
 descriptions guide tool choice: use `search_code` for matching-code lookup,
 `get_symbol` when the symbol is known, `compile_task_context` to assemble bounded
-task evidence, and `context_read` to deliver a selected file or range. Schemas
+task evidence, and `context_read` to deliver a selected file. Schemas
 include field guidance and constraints. Each tool also publishes the standard
 `readOnlyHint`, `destructiveHint`, `idempotentHint`, and `openWorldHint`
 annotations. These are hints for MCP clients, not access controls. Current tool

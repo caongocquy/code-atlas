@@ -589,7 +589,7 @@ export function createMcpServer(): McpServer {
     };
   }));
 
-  registerJsonTool(server, "context_read", "Safely read and deliver a selected file or range while recording the context delivery.", z.object({
+  registerJsonTool(server, "context_read", "Safely read and deliver a selected file while recording the context delivery.", z.object({
     repoPath: repoInput,
     file: z.string().min(1),
     sessionId: z.string().min(1).describe("Lifecycle session identifier for the exact context state."),
@@ -601,7 +601,7 @@ export function createMcpServer(): McpServer {
     projection: CONTEXT_AWARE_SOURCE_PROJECTION,
   }));
 
-  registerJsonTool(server, "compile_task_context", "Assemble bounded task evidence; use search_code for matching-code lookup and context_read to deliver a selected file or range.", z.object({
+  registerJsonTool(server, "compile_task_context", "Assemble bounded task evidence; use search_code for matching-code lookup and context_read to deliver a selected file.", z.object({
     task: z.string().min(1),
     repoPath: repoInput,
     anchors: z.array(z.union([
