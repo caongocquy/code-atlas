@@ -98,6 +98,9 @@ The same capability is available through the MCP `compile_task_context` tool.
 The durable lifecycle is available through the CLI commands
 `context-start`, `context-refresh`, and `context-close`, and through the MCP
 tools `start_task_context`, `refresh_task_context`, and `close_task_context`.
+Each lifecycle is isolated by repository and workspace identity. Use
+`--ttl <seconds>` on `context-start` to set expiry; stale concurrent refreshes
+are rejected.
 The compiled plan returns file/symbol references and evidence metadata, not
 source bodies; `context_read` remains the explicit delivery step.
 
@@ -266,6 +269,7 @@ start the persisted stdio launcher.
 | Refresh changes | `sync_repository` | After source changes |
 | Search code | `search_code` | Find relevant files, symbols, or text |
 | Inspect a symbol | `get_symbol` | Read a symbol and its source context |
+| Task context | `context_read`, `compile_task_context`, `start_task_context`, `refresh_task_context`, `close_task_context` | Compile bounded evidence, deliver a selected file, and manage its lifecycle |
 | Find callers | `find_callers` | Assess who depends on a symbol |
 | Find callees | `find_callees` | Follow what a symbol invokes |
 | Find imports | `find_imports` | Inspect module dependencies |
@@ -418,6 +422,7 @@ Run `code-atlas --help` for the live command surface.
 | Change Gate | `gate` |
 | Integrations | `connect`, `disconnect`, `integrations`, `integration ...` |
 | Hooks | `hook install`, `hook uninstall`, `hook status` |
+| Task context | `context-compile`, `context-start`, `context-refresh`, `context-close` |
 | Runtime | `mcp`, `serve` |
 | Updates | `upgrade` |
 
@@ -433,11 +438,11 @@ successful `code-atlas upgrade --json` runs return the same fields.
 Automatic updates are supported only for an unambiguous global npm or pnpm
 installation on POSIX. CodeAtlas installs the exact registry version and runs the
 installed CLI to verify it. Local, linked, Homebrew, wrapper-based, or ambiguous
-installations fail closed without an automatic install. On Windows, both
-automatic updates and registry checks fail closed without invoking package
-manager shims; `upgrade --check` directs contributors to run
-`npm view @showdar2112/code-atlas@latest version` manually. On POSIX, check-only
-mode can use the npm registry when the active installation source is unsupported.
+installations fail closed without an automatic install; POSIX check-only mode can
+still check the npm registry. On Windows, both automatic updates and registry
+checks fail closed without invoking package manager shims; `upgrade --check`
+directs contributors to run `npm view @showdar2112/code-atlas@latest version`
+manually.
 
 Common workflows:
 
