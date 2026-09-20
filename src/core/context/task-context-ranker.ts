@@ -29,6 +29,7 @@ function reason(item: TaskContextEvidence): string {
 export function rankTaskContextCandidates(candidates: readonly TaskContextCandidate[]): TaskContextFullItem[] {
   const ranked = candidates.filter((candidate): candidate is TaskContextCandidate & { subject: NonNullable<TaskContextCandidate["subject"]> } => candidate.subject !== undefined).map((candidate) => ({
     subject: candidate.subject,
+    ...(candidate.semanticKey ? { semanticKey: candidate.semanticKey } : {}),
     priority: priority(candidate),
     rank: 0,
     reasons: [...new Set(candidate.evidence.map(reason))].sort(),
@@ -39,6 +40,6 @@ export function rankTaskContextCandidates(candidates: readonly TaskContextCandid
     exact: candidate.exact,
   }));
   const tiers: Record<TaskContextPriority, number> = { required: 0, supporting: 1, optional: 2 };
-  ranked.sort((a, b) => tiers[a.priority] - tiers[b.priority] || b.scoreSignal - a.scoreSignal || Number(b.exact) - Number(a.exact) || b.evidence.length - a.evidence.length || canonicalContextSubjectKey(a.subject).localeCompare(canonicalContextSubjectKey(b.subject)));
+  ranked.sort((a, b) => tiers[a.priority] - tiers[b.priority] || b.scoreSignal - a.scoreSignal || Number(b.exact) - Number(a.exact) || b.evidence.length - a.evidence.length || (a.semanticKey ?? canonicalContextSubjectKey(a.subject)).localeCompare(b.semanticKey ?? canonicalContextSubjectKey(b.subject)));
   return ranked.map(({ exact: _exact, ...item }, index) => ({ ...item, rank: index + 1 }));
 }

@@ -1,0 +1,67 @@
+name: Phase15D context evaluation
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  context-eval:
+    name: Offline context release gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install locked pnpm toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --global pnpm@11.22.0
+          node --version
+          pnpm --version
+
+      - name: Install repository dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run offline context release gate
+        env:
+          CODE_ATLAS_EVAL_OFFLINE: "1"
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm run eval:context
+
+      - name: Verify evaluator did not modify corpus truth
+        shell: bash
+        run: |
+          set -euo pipefail
+          protected_paths=(
+            eval/context/corpus/manifest.json
+            eval/context/corpus/synthetic
+            eval/context/corpus/snapshots
+            eval/context/baselines/context-eval-v1.json
+            eval/context/baselines/context-eval-policy-v1.json
+          )
+          git diff --exit-code -- "${protected_paths[@]}"
+          git diff --cached --exit-code -- "${protected_paths[@]}"
+
+      - name: Upload evaluation report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase15d-context-eval-report
+          path: artifacts/context-eval-report.json
+          if-no-files-found: error

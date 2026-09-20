@@ -36,6 +36,7 @@ export type TaskContextEvidence =
 
 export type TaskContextCandidate = {
   subject?: ContextSubject;
+  semanticKey?: string;
   query?: string;
   priorityHint?: TaskContextPriority;
   evidence: TaskContextEvidence[];
@@ -46,6 +47,7 @@ export type TaskContextCandidate = {
 
 export type TaskContextFullItem = {
   subject: ContextSubject;
+  semanticKey?: string;
   priority: TaskContextPriority;
   rank: number;
   reasons: string[];
