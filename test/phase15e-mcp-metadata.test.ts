@@ -83,6 +83,18 @@ test("MCP tools/list distinguishes adjacent tools and guides material inputs", a
     assert.match(description("inspect_retrieval"), /diagnos/i);
     assert.match(description("index_repository"), /local generated index state/i);
     assert.match(description("sync_repository"), /local generated index state/i);
+    assert.match(description("find_callers"), /call.*into/i);
+    assert.match(description("find_callees"), /called.*from/i);
+    assert.match(description("find_imports"), /imports.*from/i);
+    assert.match(description("find_imported_by"), /imports.*target/i);
+    assert.match(description("impact"), /structural blast radius.*single relation/i);
+    assert.match(description("start_task_context"), /initial evidence/i);
+    assert.match(description("trace"), /path between two known/i);
+    assert.match(description("list_communities"), /discover/i);
+    assert.match(description("get_community"), /expand/i);
+    assert.match(description("important_symbols"), /rank/i);
+    assert.match(description("architectural_bridges"), /between graph communities/i);
+    assert.match(description("find_cycles"), /report.*cycles/i);
 
     assert.match(property("search_code", "repoPath")?.description ?? "", /local repository/i);
     assert.match(property("search_code", "mode")?.description ?? "", /lexical.*hybrid/i);
@@ -91,6 +103,14 @@ test("MCP tools/list distinguishes adjacent tools and guides material inputs", a
     assert.match(property("inspect_change", "commit")?.description ?? "", /commit/i);
     assert.match(property("inspect_change", "base")?.description ?? "", /range/i);
     assert.match(property("index_repository", "skipGit")?.description ?? "", /Git candidate discovery/i);
+    assert.match(property("compile_task_context", "detail")?.description ?? "", /compact.*full/i);
+    assert.match(property("start_task_context", "detail")?.description ?? "", /compact.*full/i);
+    assert.match(property("start_task_context", "anchors")?.description ?? "", /seed/i);
+    assert.match(property("refresh_task_context", "detail")?.description ?? "", /compact.*full/i);
+    assert.match(property("impact", "maxDepth")?.description ?? "", /bound/i);
+    assert.match(property("inspect_change", "maxDepth")?.description ?? "", /bound/i);
+    assert.match(property("explain_incomplete", "maxDepth")?.description ?? "", /bound/i);
+    assert.match(property("trace", "maxDepth")?.description ?? "", /bound/i);
   } finally {
     await client.close();
     await server.close();

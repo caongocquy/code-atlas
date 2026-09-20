@@ -610,7 +610,7 @@ export function createMcpServer(): McpServer {
     ])).describe("Known file or symbol anchors that seed task evidence.").optional(),
     changedPaths: z.array(z.string().min(1)).describe("Known changed paths to include as task evidence.").optional(),
     budget: z.object({ maxItems: z.number().int().positive().optional(), maxEstimatedTokens: z.number().int().positive().optional() }).strict().optional(),
-    detail: z.enum(["compact", "full"]).optional(),
+    detail: z.enum(["compact", "full"]).describe("compact returns bounded output; full returns all available details.").optional(),
   }).strict(), async (args) => {
     const repoPath = resolveRepo(args.repoPath as string | undefined);
     try {
@@ -632,25 +632,25 @@ export function createMcpServer(): McpServer {
     z.object({ kind: z.literal("file"), path: z.string().min(1) }).strict(),
     z.object({ kind: z.literal("symbol"), path: z.string().min(1).optional(), name: z.string().min(1) }).strict(),
   ]);
-  registerJsonTool(server, "start_task_context", "Start a durable task context lifecycle.", z.object({
+  registerJsonTool(server, "start_task_context", "Create a durable task context lifecycle and publish initial evidence for a task.", z.object({
     repoPath: repoInput,
     task: z.string().min(1),
-    anchors: z.array(lifecycleAnchor).optional(),
+    anchors: z.array(lifecycleAnchor).describe("Known file or symbol anchors that seed the lifecycle evidence.").optional(),
     budget: z.object({ maxItems: z.number().int().positive().optional(), maxEstimatedTokens: z.number().int().positive().optional() }).strict().optional(),
     ttlSeconds: z.number().int().positive().optional(),
-    detail: z.enum(["compact", "full"]).optional(),
+    detail: z.enum(["compact", "full"]).describe("compact returns bounded output; full returns all available details.").optional(),
   }).strict(), async (args) => {
     try { return await startTaskContext({ task: args.task as string, anchors: args.anchors as never, budget: args.budget as never, ttlSeconds: args.ttlSeconds as number | undefined, detail: args.detail as "compact" | "full" | undefined }, { repositoryPath: resolveRepo(args.repoPath as string | undefined) }); }
     catch (error) { if (error instanceof TaskContextLifecycleDomainError && error.operationError.code === "compiler_validation_failed" && error.operationError.message === "Repository graph is not indexed.") throw new McpToolError("index_required", error.operationError.message, { repositoryPath: resolveRepo(args.repoPath as string | undefined), next: "Call index_repository or sync_repository first." }); throw error; }
   });
-  registerJsonTool(server, "refresh_task_context", "Refresh a known task context lifecycle and publish a new generation.", z.object({ repoPath: repoInput, taskContextId: z.string().min(1).describe("Task context lifecycle identifier to refresh."), budget: z.object({ maxItems: z.number().int().positive().optional(), maxEstimatedTokens: z.number().int().positive().optional() }).strict().optional(), detail: z.enum(["compact", "full"]).optional() }).strict(), async (args) => refreshTaskContext({ taskContextId: args.taskContextId as string, budget: args.budget as never, detail: args.detail as "compact" | "full" | undefined }, { repositoryPath: resolveRepo(args.repoPath as string | undefined) }));
+  registerJsonTool(server, "refresh_task_context", "Refresh a known task context lifecycle and publish a new generation.", z.object({ repoPath: repoInput, taskContextId: z.string().min(1).describe("Task context lifecycle identifier to refresh."), budget: z.object({ maxItems: z.number().int().positive().optional(), maxEstimatedTokens: z.number().int().positive().optional() }).strict().optional(), detail: z.enum(["compact", "full"]).describe("compact returns bounded output; full returns all available details.").optional() }).strict(), async (args) => refreshTaskContext({ taskContextId: args.taskContextId as string, budget: args.budget as never, detail: args.detail as "compact" | "full" | undefined }, { repositoryPath: resolveRepo(args.repoPath as string | undefined) }));
   registerJsonTool(server, "close_task_context", "Close a known task context lifecycle; repeated close requests have no further effect.", z.object({ repoPath: repoInput, taskContextId: z.string().min(1).describe("Task context lifecycle identifier to close.") }).strict(), async (args) => closeTaskContext({ taskContextId: args.taskContextId as string }, { repositoryPath: resolveRepo(args.repoPath as string | undefined) }));
 
   const relationTools = [
-    ["find_callers", findCallers, "Find callers of a resolved symbol."],
-    ["find_callees", findCallees, "Find callees of a resolved symbol."],
-    ["find_imports", findImports, "Find files imported by a symbol or file."],
-    ["find_imported_by", findImportedBy, "Find files that import a symbol or file."],
+    ["find_callers", findCallers, "Find symbols that call into a known target; use impact for the wider structural blast radius."],
+    ["find_callees", findCallees, "Find symbols called from a known source; use impact for the wider structural blast radius."],
+    ["find_imports", findImports, "Find files a target imports from; use find_imported_by for the reverse import direction."],
+    ["find_imported_by", findImportedBy, "Find files whose imports reference the target; use find_imports for the reverse direction."],
   ] as const;
   for (const [name, relation, description] of relationTools) {
     registerJsonTool(server, name, description, z.object({
@@ -664,10 +664,10 @@ export function createMcpServer(): McpServer {
     }));
   }
 
-  registerJsonTool(server, "impact", "Analyze the bounded callers, importers, and inheritance blast radius.", z.object({
+  registerJsonTool(server, "impact", "Analyze a structural blast radius across callers, importers, and inheritance; use a find_* tool for one single relation.", z.object({
     ...commonInput,
     query: queryInput,
-    maxDepth: z.number().int().min(0).max(10).optional(),
+    maxDepth: z.number().int().min(0).max(10).describe("Bound structural traversal depth for the blast-radius analysis.").optional(),
   }).strict(), async (args) => withGraph(resolveRepo(args.repoPath as string | undefined), async (context) => ({
     ...analyzeImpact(context.graph, args.query as string, {
       maxDepth: args.maxDepth as number | undefined,
@@ -696,7 +696,7 @@ export function createMcpServer(): McpServer {
   }
   const inspectChangeSchema = z.object({
     ...changeSourceShape,
-    maxDepth: z.number().int().min(0).max(10).optional(),
+    maxDepth: z.number().int().min(0).max(10).describe("Bound structural traversal depth while mapping changed-symbol impact.").optional(),
   }).strict().superRefine(validateChangeSource);
   registerJsonTool(server, "inspect_change", "Inspect Git changes and map changed symbols to their structural blast radius.", inspectChangeSchema, async (args) => {
     const detail = args.detail as McpDetail | undefined;
@@ -732,7 +732,7 @@ export function createMcpServer(): McpServer {
     commit: z.string().min(1).optional(),
     base: z.string().min(1).optional(),
     head: z.string().min(1).optional(),
-    maxDepth: z.number().int().min(0).max(10).optional(),
+    maxDepth: z.number().int().min(0).max(10).describe("Bound change or test traversal when the selected scope uses a change source.").optional(),
   }).strict().superRefine((value, context) => {
     const mode = value.mode ?? "working";
     const has = (name: "commit" | "base" | "head") => value[name] !== undefined;
@@ -804,11 +804,11 @@ export function createMcpServer(): McpServer {
     return projectMcpResponse(result as unknown as JsonObject, args.detail as McpDetail | undefined);
   });
 
-  registerJsonTool(server, "trace", "Return a bounded, directed or explanatory graph path.", z.object({
+  registerJsonTool(server, "trace", "Follow a graph path between two known endpoints; use impact to inspect a broader blast radius.", z.object({
     ...commonInput,
     from: queryInput,
     to: queryInput,
-    maxDepth: z.number().int().min(0).max(32).optional(),
+    maxDepth: z.number().int().min(0).max(32).describe("Bound graph path traversal depth.").optional(),
     mode: z.enum(["directed", "explanatory"]).optional(),
   }).strict(), async (args) => withGraph(resolveRepo(args.repoPath as string | undefined), async (context) => ({
     ...traceGraph(context.graph, args.from as string, args.to as string, {
@@ -848,7 +848,7 @@ export function createMcpServer(): McpServer {
     }
   });
 
-  registerJsonTool(server, "list_communities", "List deterministic graph communities and coupling metadata.", z.object({
+  registerJsonTool(server, "list_communities", "Discover graph communities and coupling metadata; use get_community to expand one known community.", z.object({
     ...commonInput,
   }).strict(), async (args) => withGraph(resolveRepo(args.repoPath as string | undefined), async (context) => {
     const result = detectCommunities(context.graph, {
@@ -868,7 +868,7 @@ export function createMcpServer(): McpServer {
     };
   }));
 
-  registerJsonTool(server, "get_community", "Return one graph community by stable identifier.", z.object({
+  registerJsonTool(server, "get_community", "Expand one known graph community by stable identifier; use list_communities to discover identifiers.", z.object({
     repoPath: repoInput,
     id: queryInput,
   }).strict(), async (args) => withGraph(resolveRepo(args.repoPath as string | undefined), async (context) => {
@@ -878,14 +878,14 @@ export function createMcpServer(): McpServer {
     return { community, mayBeIncomplete: result.mayBeIncomplete };
   }));
 
-  registerJsonTool(server, "important_symbols", "Rank structurally important symbols with noise suppression signals.", z.object({
+  registerJsonTool(server, "important_symbols", "Rank structurally important symbols; use get_symbol to retrieve one known symbol.", z.object({
     ...commonInput,
   }).strict(), async (args) => withGraph(resolveRepo(args.repoPath as string | undefined), async (context) => calculateImportance(context.graph, {
     limit: (args.limit as number | undefined) ?? DEFAULT_LIMIT,
     coverage: { mayBeIncomplete: context.mayBeIncomplete },
   })));
 
-  registerJsonTool(server, "architectural_bridges", "Find sparse cross-community architectural bridges.", z.object({
+  registerJsonTool(server, "architectural_bridges", "Find sparse links between graph communities; use list_communities to discover the groups.", z.object({
     ...commonInput,
   }).strict(), async (args) => withGraph(resolveRepo(args.repoPath as string | undefined), async (context) => {
     const communities = detectCommunities(context.graph, { maxResults: MAX_COMMUNITIES, includeSingletons: true, coverage: { mayBeIncomplete: context.mayBeIncomplete } });
@@ -895,7 +895,7 @@ export function createMcpServer(): McpServer {
     });
   }));
 
-  registerJsonTool(server, "find_cycles", "Find bounded structural call, import, and inheritance cycles.", z.object({
+  registerJsonTool(server, "find_cycles", "Report bounded structural call, import, and inheritance cycles.", z.object({
     ...commonInput,
   }).strict(), async (args) => withGraph(resolveRepo(args.repoPath as string | undefined), async (context) => detectStructuralCycles(context.graph, {
     maxResults: (args.limit as number | undefined) ?? DEFAULT_LIMIT,
