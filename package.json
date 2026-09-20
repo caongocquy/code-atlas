@@ -16,6 +16,7 @@
     "ui:build": "vite build --config web/vite.config.ts",
     "ui:typecheck": "tsc -p web/tsconfig.json --noEmit",
     "test": "node --import tsx/esm --test test/*.test.ts",
+    "test:mcp:inspector": "node --import tsx/esm --test test/phase15e-mcp-inspector.test.ts",
     "eval:context": "node --import tsx/esm --input-type=module -e \"import { runContextEval } from './eval/context/run.ts'; const result = await runContextEval({ cwd: process.cwd(), reportPath: 'artifacts/context-eval-report.json' }); process.exit(result.exitCode);\"",
     "eval:context:update-baseline": "node --import tsx/esm --input-type=module -e \"import { updateContextBaseline } from './eval/context/update-baseline.ts'; const result = await updateContextBaseline({ cwd: process.cwd(), write: process.argv.includes('--write') }); process.stdout.write(result.diff);\" --"
   },
@@ -81,6 +82,7 @@
     "@babel/plugin-syntax-jsx": "^8.0.1",
     "@babel/plugin-syntax-typescript": "^8.0.3",
     "@eslint/js": "^10.0.1",
+    "@modelcontextprotocol/inspector": "2.7.0",
     "@types/node": "^26.4.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",

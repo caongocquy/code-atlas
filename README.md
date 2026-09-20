@@ -280,6 +280,15 @@ start the persisted stdio launcher.
 | Trace a path | `trace` | Follow a bounded relationship path |
 | Inspect retrieval | `inspect_retrieval` | Understand search and context stages |
 
+MCP `tools/list` publishes a description and input schema for each tool. The
+descriptions guide tool choice: use `search_code` for matching-code lookup,
+`get_symbol` when the symbol is known, `compile_task_context` to assemble bounded
+task evidence, and `context_read` to deliver a selected file. Schemas
+include field guidance and constraints. Each tool also publishes the standard
+`readOnlyHint`, `destructiveHint`, `idempotentHint`, and `openWorldHint`
+annotations. These are hints for MCP clients, not access controls. Current tool
+handlers work with local repositories and state and make no network calls.
+
 ## Trustworthy evidence
 
 Graph readiness is not the same as graph completeness.
@@ -410,6 +419,25 @@ Run `code-atlas --help` for the live command surface.
 | Integrations | `connect`, `disconnect`, `integrations`, `integration ...` |
 | Hooks | `hook install`, `hook uninstall`, `hook status` |
 | Runtime | `mcp`, `serve` |
+| Updates | `upgrade` |
+
+## CLI self-upgrade
+
+Updates are opt-in. Ordinary commands do not check the registry.
+`code-atlas upgrade --check` performs a read-only version check; add `--json` for
+stable fields: `currentVersion`, `latestVersion`, `updateAvailable`, `manager`,
+`upgraded`, and `verifiedVersion`. `manager` is `null` when no unique supported
+global install is found. `code-atlas upgrade` installs an available update, and
+successful `code-atlas upgrade --json` runs return the same fields.
+
+Automatic updates are supported only for an unambiguous global npm or pnpm
+installation on POSIX. CodeAtlas installs the exact registry version and runs the
+installed CLI to verify it. Local, linked, Homebrew, wrapper-based, or ambiguous
+installations fail closed without an automatic install. On Windows, both
+automatic updates and registry checks fail closed without invoking package
+manager shims; `upgrade --check` directs contributors to run
+`npm view @showdar2112/code-atlas@latest version` manually. On POSIX, check-only
+mode can use the npm registry when the active installation source is unsupported.
 
 Common workflows:
 
@@ -475,6 +503,21 @@ pnpm lint
 pnpm run ui:typecheck
 pnpm run eval:context
 ```
+
+Focused Phase15E checks:
+
+```bash
+node --import tsx/esm --test \
+  test/phase15e-mcp-metadata.test.ts \
+  test/phase15e-upgrade-check.test.ts \
+  test/phase15e-upgrade-install.test.ts
+pnpm run test:mcp:inspector
+```
+
+The Inspector check launches the actual stdio server and verifies protocol
+initialization, `tools/list`, and tool calls. MCP Inspector is pinned to 2.7.0.
+Its verifier skips on Node versions below 22.19; CodeAtlas itself still supports
+Node.js 22 and newer. The full contributor test suite is `pnpm test` above.
 
 The evaluation baseline is updated only as an explicit reviewed maintenance
 operation, after correctness and determinism are verified:
