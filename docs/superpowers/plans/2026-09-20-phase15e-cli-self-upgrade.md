@@ -15,6 +15,8 @@
 - Stay on `feat/phase15e-dx-integration-hardening`; preserve primary `AGENTS.md` and `.worktrees/` exactly.
 - Do not add auto-update to ordinary commands.
 - Automatic install is only for an unambiguous global npm/pnpm package on POSIX. Unsupported sources/platforms never mutate.
+- On Windows, `upgrade --check` must not invoke npm/pnpm `.cmd` shims through `execFile`; return manual registry-check instructions with no process calls.
+- Unknown or ambiguous install sources must not display a guessed global install command; direct users to their original installation method.
 - Do not invoke a package-manager command with `shell: true`; do not invoke `latest` for installation.
 - Never touch a developer's actual global install in tests; no local project dependency update, sudo, force, or cleanup.
 - Preserve CLI progress/theme behavior and existing global `--json` error behavior.
@@ -32,7 +34,7 @@
 - Manager detection compares resolved package roots and refuses ambiguous or unsupported installs.
 - Registry query honors manager configuration and failures do not proceed to install.
 - Version comparison handles SemVer precedence, including prerelease ordering.
-- Install args contain package name and an exact validated version; all processes are shell-free.
+- Install args contain package name and an exact validated version; all processes are shell-free. Windows performs no registry process invocation, and unknown sources receive no guessed install command.
 - Verification launches the installed entrypoint and compares its reported version.
 - Tests cannot modify the real global install; Windows limitation and manual guidance are explicit.
 
@@ -49,7 +51,7 @@
 - [ ] Add tests for `upgrade --check` output, JSON success shape, already-latest/update-available, SemVer precedence (including prereleases), registry failure, current version, and no install invocation.
 - [ ] Run tests to record RED.
 - [ ] Implement explicit lazy command, help/known-command registration, manager registry selection, exact SemVer comparison, and `--check` output using injected dependencies.
-- [ ] Test npm/pnpm source detection via temporary roots/fakes; unsupported source and Windows report actionable manual guidance without mutation.
+- [ ] Test npm/pnpm source detection via temporary roots/fakes; unsupported sources receive original-install-method guidance without a guessed command, while Windows provides manual registry-check instructions without process invocation.
 - [ ] Run focused tests, self-review, fresh independent review, and fix P0/P1/P2 findings.
 - [ ] Commit only CLI/help/module/test files as `feat(cli): add upgrade check`.
 
@@ -99,4 +101,3 @@
 - [ ] No test uses or mutates the real global installation.
 - [ ] README describes only implemented behavior.
 - [ ] Reviews contain no unresolved P0/P1/P2 findings.
-

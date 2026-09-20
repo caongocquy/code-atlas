@@ -47,7 +47,10 @@ const groups: HelpGroup[] = [
   },
   {
     title: "Other",
-    commands: [["hook", "Install, remove, or inspect Git hooks"]],
+    commands: [
+      ["hook", "Install, remove, or inspect Git hooks"],
+      ["upgrade", "Check for and install a CodeAtlas update"],
+    ],
   },
 ];
 
@@ -288,6 +291,16 @@ const details: Record<string, string[]> = {
     "  --post-commit           Select the post-commit hook",
     "  --post-checkout         Select the post-checkout hook",
     "  --json                  Print machine-readable output",
+  ],
+  upgrade: [
+    "Usage: code-atlas upgrade --check [--json]",
+    "",
+    "Check the configured registry for the latest CodeAtlas version.",
+    "This command does not install or modify anything.",
+    "",
+    "Options:",
+    "  --check    Check for an update without installing it",
+    "  --json     Print machine-readable output",
   ],
   mcp: [
     "Usage: code-atlas mcp",

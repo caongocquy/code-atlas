@@ -118,6 +118,11 @@ async function main(): Promise<void> {
       await runGateCommand(args);
       return;
     }
+    case "upgrade": {
+      const { runUpgradeCommand } = await import("./adapters/cli/upgrade.command.js");
+      await runUpgradeCommand(args, packageJson.version);
+      return;
+    }
     case "help":
       process.stdout.write(args[0] ? `${formatCommandHelp(args[0])}\n` : `${formatRootHelp()}\n`);
       return;

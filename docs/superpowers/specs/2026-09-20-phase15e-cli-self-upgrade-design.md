@@ -13,9 +13,9 @@ Both commands use the existing `--json` convention for success output. Existing 
 
 The executable is `dist/cli.js`; CLI dispatch is a switch in `src/cli.ts`, and version is loaded from the package manifest. README and an isolated-prefix release smoke test support global npm installation. README documents global pnpm installation, but no pnpm smoke test exists. The package's `packageManager` field identifies repository tooling, not the user's installation source. The package has no shared process-runner abstraction.
 
-Automatic upgrades support only an unambiguous global npm or global pnpm installation on POSIX systems (macOS/Linux), identified by comparing the running CodeAtlas package path with each manager's `root -g` package path. Local project dependencies, links, Homebrew, wrappers, ambiguous managers, and Windows command shims are unsupported and never mutated. Windows receives a clear manual command because invoking `.cmd` requires shell mediation that conflicts with the shell-free execution requirement and available repository evidence does not establish a safe cross-platform shim strategy.
+Automatic upgrades support only an unambiguous global npm or global pnpm installation on POSIX systems (macOS/Linux), identified by comparing the running CodeAtlas package path with each manager's `root -g` package path. Local project dependencies, links, Homebrew, wrappers, ambiguous managers, and Windows command shims are unsupported and never mutated. On Windows, `upgrade --check` does not try to invoke npm or pnpm registry commands because these commonly resolve to `.cmd` shims that require shell mediation; it returns an actionable manual registry-check instruction instead.
 
-For `--check`, use the detected manager to query its configured registry where possible; on supported POSIX systems, an unsupported source may use npm's configured registry if the npm executable is available. If no shell-free manager invocation is available, return an actionable lookup error. Registry errors never fall through to installation. Upgrade refuses to mutate unsupported/ambiguous sources and prints a manual global command when safe.
+For `--check`, use the detected manager to query its configured registry; on POSIX, an unsupported source may use npm's configured registry if the npm executable is available. Windows performs no manager or registry process invocation. Registry errors never fall through to installation. Upgrade refuses to mutate unsupported/ambiguous sources. When the source is unknown or ambiguous, output must not guess a package manager or print a global install command; direct the user to the original installation method.
 
 ## Architecture
 
@@ -25,11 +25,11 @@ Resolve the manager's configured registry `latest` tag, validate its output as a
 
 ## Outputs
 
-Human output reports current and available/installed versions, manager, and next action. JSON success includes stable fields `currentVersion`, `latestVersion`, `updateAvailable`, `manager`, `upgraded`, and `verifiedVersion` (null when no installation was attempted). Unsupported source can be represented as `manager: null`; errors follow current top-level JSON error behavior.
+Human output reports current and available/installed versions, manager, and next action. For unknown sources, the next action says automatic update is unavailable and points to the original installation method without guessing a manager. JSON success includes stable fields `currentVersion`, `latestVersion`, `updateAvailable`, `manager`, `upgraded`, and `verifiedVersion` (null when no installation was attempted). Unsupported source can be represented as `manager: null`; errors follow current top-level JSON error behavior. Windows registry-check limitations use the existing top-level error behavior and include manual check instructions.
 
 ## Tests
 
-Use fakes/temp roots to cover: npm detection; pnpm detection; local/link/ambiguous unsupported detection; already latest; update available; manager-configured registry lookup; registry/network failure; install command failure; post-install mismatch; successful exact upgrade; and JSON output. Assert command arguments contain an exact version and no shell execution; tests never run real npm/pnpm global commands.
+Use fakes/temp roots to cover: npm detection; pnpm detection; local/link/ambiguous unsupported detection; already latest; update available; manager-configured registry lookup; registry/network failure; install command failure; post-install mismatch; successful exact upgrade; and JSON output. Assert Windows performs no manager or registry invocation, and unknown/ambiguous sources receive no guessed install command. Assert command arguments contain an exact version and no shell execution; tests never run real npm/pnpm global commands.
 
 ## Non-goals and limitations
 
@@ -42,7 +42,7 @@ Use fakes/temp roots to cover: npm detection; pnpm detection; local/link/ambiguo
 
 - [x] Explicit command only; ordinary command dispatch has no auto-update path.
 - [x] npm/pnpm installation detection is based on actual global package roots, not `packageManager` metadata or PATH guesses.
-- [x] Unsupported/ambiguous sources fail closed and can still check a configured npm registry without mutating.
+- [x] Unsupported/ambiguous POSIX sources can check the configured npm registry without mutating; Windows performs no package-manager invocation.
 - [x] Exact resolved version, shell-free invocation, and post-install verification are defined.
 - [x] Tests do not use the machine's real global install state.
 - [x] Windows is an explicit limitation, not an unsupported safety assumption.
