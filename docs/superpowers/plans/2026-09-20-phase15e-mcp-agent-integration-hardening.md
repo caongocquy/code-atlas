@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-20-phase15e-mcp-agent-integration-hardening-design.md`
 
-**Status:** MCP implementation and named Phase15E-A gates are complete on the feature worktree. The final shared feature-worktree suite result is 855 total, 819 passed, 34 failed, and 2 skipped: 12 canonical failure identities exactly match the accepted base list, and the other 22 are known `/private/tmp` durable-launcher/integration identities. This is not a full-suite pass. Independent cross-document review of the final spec/plan consistency corrections passed; canonical post-merge full-suite verification remains pending.
+**Status:** MCP implementation and Phase15E-A gates are complete. The final shared feature-worktree suite had 855 total, 819 passed, 34 failed, and 2 skipped: 12 canonical failure identities match the accepted base list, and the other 22 are known `/private/tmp` durable-launcher/integration identities. Canonical post-merge verification passed with 855 total, 841 passed, the same 12 accepted baseline failures, and 2 skipped.
 
 ## Global Constraints
 
@@ -76,6 +76,8 @@
 
 **Recorded results:** MCP metadata plus CLI focused tests 16/16; Inspector 1/1; Phase15D acceptance 6/6; `pnpm run eval:context` exit 0; `pnpm run build` exit 0; CLI `tsc --noEmit` exit 0; UI typecheck exit 0; lint exit 0; commit-range diff check exit 0. Full suite: 855 total, 819 passed, 34 failed, 2 skipped; its 12 canonical failure identities exactly match the accepted base list and the other 22 are known `/private/tmp` durable-launcher/integration identities. This is not a full-suite pass. Full-suite TAP: `.superpowers/sdd/2026-09-20-phase15e-cli-self-upgrade/final-full-suite.tap`, copied byte-for-byte from `/private/tmp/phase15e-full-suite-final.tap` without rerunning.
 
+**Recorded primary post-merge results:** canonical `node --import tsx/esm --test test/*.test.ts` completed with 855 total, 841 passed, 12 failed, and 2 skipped; all 12 failures are the accepted baseline identities. MCP metadata plus CLI focused tests 16/16; Inspector 1/1; Phase15D acceptance 6/6; context evaluator exit 0; build, CLI/UI typechecks, lint, and commit-range diff check passed. TAP: `/private/tmp/phase15e-postmerge-canonical-with-inspector.tap`. The primary checkout's `pnpm run` dependency check requested a noninteractive modules-directory purge, so verification used equivalent direct Node/test and local-binary commands without installing or purging dependencies.
+
 - [x] Run all listed gates freshly from the feature worktree and record exact outcomes above.
 - [x] Run focused self-review and a fresh independent subsystem reviewer against the spec and task diff; fix P0/P1/P2 findings and re-review changed ranges.
 - [x] Confirm no new Phase15D failure identities were introduced in focused acceptance.
@@ -88,3 +90,4 @@
 - [x] Inspector exact pin and command are repeatable on the fixture.
 - [x] Final independent review confirms the cross-document completion/status edits contain no unresolved P0/P1/P2 findings.
 - [x] Phase15D evaluator and acceptance still pass.
+- [x] Canonical full suite was rerun after local merge; only the 12 accepted baseline failure identities remain.

@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-20-phase15e-cli-self-upgrade-design.md`
 
-**Status:** Implementation, task-level reviews, README delivery, and named feature-worktree gates are complete. Independent cross-document review of the final spec/plan consistency corrections passed; canonical post-merge full-suite verification remains pending.
+**Status:** Implementation, task-level reviews, README delivery, feature-worktree gates, and independent cross-document review are complete. Canonical post-merge verification passed with only the 12 accepted baseline failure identities.
 
 ## Global Constraints
 
@@ -80,7 +80,9 @@
 
 **Tests:** focused upgrade tests, Phase15D evaluator and acceptance, build, CLI/UI typechecks, lint, and commit-range diff check.
 
-**Recorded feature-worktree results:** MCP metadata plus CLI focused tests 16/16; Inspector 1/1; Phase15D acceptance 6/6; `pnpm run eval:context` exit 0; `pnpm run build` exit 0; CLI `tsc --noEmit` exit 0; UI typecheck exit 0; lint exit 0; commit-range `git diff --check` exit 0. The full suite ran with 855 total, 819 passed, 34 failed, and 2 skipped. Its 12 canonical failure identities exactly match the accepted base list; the other 22 are known `/private/tmp` durable-launcher/integration identities. This is not a full-suite pass; canonical post-merge verification remains required. Full-suite TAP: `.superpowers/sdd/2026-09-20-phase15e-cli-self-upgrade/final-full-suite.tap`, copied byte-for-byte from `/private/tmp/phase15e-full-suite-final.tap` without rerunning.
+**Recorded feature-worktree results:** MCP metadata plus CLI focused tests 16/16; Inspector 1/1; Phase15D acceptance 6/6; `pnpm run eval:context` exit 0; `pnpm run build` exit 0; CLI `tsc --noEmit` exit 0; UI typecheck exit 0; lint exit 0; commit-range `git diff --check` exit 0. The full suite ran with 855 total, 819 passed, 34 failed, and 2 skipped. Its 12 canonical failure identities exactly match the accepted base list; the other 22 are known `/private/tmp` durable-launcher/integration identities. This is not a full-suite pass; the canonical post-merge result is recorded below. Full-suite TAP: `.superpowers/sdd/2026-09-20-phase15e-cli-self-upgrade/final-full-suite.tap`, copied byte-for-byte from `/private/tmp/phase15e-full-suite-final.tap` without rerunning.
+
+**Recorded primary post-merge results:** canonical `node --import tsx/esm --test test/*.test.ts` completed with 855 total, 841 passed, 12 failed, and 2 skipped; all 12 failures are the accepted baseline identities. MCP metadata plus CLI focused tests 16/16; Inspector 1/1; Phase15D acceptance 6/6; context evaluator exit 0; build, CLI/UI typechecks, lint, and commit-range diff check passed. TAP: `/private/tmp/phase15e-postmerge-canonical-with-inspector.tap`. The primary checkout's `pnpm run` dependency check requested a noninteractive modules-directory purge, so verification used the equivalent direct Node/test and local-binary commands without installing or purging dependencies.
 
 - [x] Run every listed gate freshly from the feature worktree and record exact outcomes above.
 - [x] Run focused self-review and a fresh independent subsystem review against the spec, tests, and task diff; fix P0/P1/P2 findings and re-review.
@@ -108,3 +110,4 @@
 - [x] No test uses or mutates the real global installation.
 - [x] README describes only implemented behavior.
 - [x] Final independent review confirms no unresolved P0/P1/P2 findings in the spec/plan consistency corrections.
+- [x] Canonical full suite was rerun after local merge; only the 12 accepted baseline failure identities remain.
