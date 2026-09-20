@@ -79,7 +79,7 @@ test("MCP tools/list distinguishes adjacent tools and guides material inputs", a
     assert.match(description("search_code"), /matching code/i);
     assert.match(description("get_symbol"), /known symbol/i);
     assert.match(description("context_read"), /selected file or range/i);
-    assert.match(description("compile_task_context"), /bounded evidence/i);
+    assert.match(description("compile_task_context"), /bounded.*task evidence/i);
     assert.match(description("inspect_retrieval"), /diagnos/i);
     assert.match(description("index_repository"), /local generated index state/i);
     assert.match(description("sync_repository"), /local generated index state/i);
@@ -98,6 +98,18 @@ test("MCP tools/list distinguishes adjacent tools and guides material inputs", a
 
     assert.match(property("search_code", "repoPath")?.description ?? "", /local repository/i);
     assert.match(property("search_code", "mode")?.description ?? "", /lexical.*hybrid/i);
+    assert.match(property("search_code", "mode")?.description ?? "", /lexical-only/i);
+    assert.match(property("search_code", "mode")?.description ?? "", /not_configured/i);
+    assert.match(property("inspect_retrieval", "includeSemantic")?.description ?? "", /request.*diagnostics/i);
+    assert.match(property("inspect_retrieval", "includeSemantic")?.description ?? "", /no embedding provider.*not_configured/i);
+    assert.match(property("inspect_retrieval", "includeReranker")?.description ?? "", /request.*diagnostics/i);
+    assert.match(property("inspect_retrieval", "includeReranker")?.description ?? "", /no reranker provider/i);
+    for (const name of ["index_repository", "sync_repository"]) {
+      const includeSemantic = property(name, "includeSemantic")?.description ?? "";
+      assert.match(includeSemantic, /no embedding provider wired/i);
+      assert.match(includeSemantic, /not-configured only when no active semantic capability exists/i);
+      assert.match(includeSemantic, /active semantic capability.*fail closed/i);
+    }
     assert.match(property("inspect_retrieval", "tokenBudget")?.description ?? "", /cap/i);
     assert.match(property("inspect_change", "mode")?.description ?? "", /working.*staged.*commit.*range/i);
     assert.match(property("inspect_change", "commit")?.description ?? "", /commit/i);
@@ -110,7 +122,17 @@ test("MCP tools/list distinguishes adjacent tools and guides material inputs", a
     assert.match(property("impact", "maxDepth")?.description ?? "", /bound/i);
     assert.match(property("inspect_change", "maxDepth")?.description ?? "", /bound/i);
     assert.match(property("explain_incomplete", "maxDepth")?.description ?? "", /bound/i);
+    assert.match(property("explain_incomplete", "detail")?.description ?? "", /compact.*full/i);
+    assert.match(property("explain_incomplete", "scope")?.description ?? "", /repository.*change.*tests/i);
+    assert.match(property("explain_incomplete", "mode")?.description ?? "", /working.*staged.*commit.*range/i);
+    assert.match(property("explain_incomplete", "commit")?.description ?? "", /required.*commit mode/i);
+    assert.match(property("explain_incomplete", "base")?.description ?? "", /required.*range mode.*head/i);
+    assert.match(property("explain_incomplete", "head")?.description ?? "", /required.*range mode.*base/i);
     assert.match(property("trace", "maxDepth")?.description ?? "", /bound/i);
+    assert.match(property("trace", "mode")?.description ?? "", /directed.*edge direction/i);
+    assert.match(property("trace", "mode")?.description ?? "", /explanatory.*inverse edges/i);
+    assert.match(description("compile_task_context"), /search_code.*matching-code lookup/i);
+    assert.match(description("compile_task_context"), /assemble.*task evidence/i);
   } finally {
     await client.close();
     await server.close();

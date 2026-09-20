@@ -530,7 +530,7 @@ export function createMcpServer(): McpServer {
   registerJsonTool(server, "search_code", "Find matching code in the indexed repository; use get_symbol when the symbol is already known.", z.object({
     ...commonInput,
     query: queryInput,
-    mode: z.enum(["lexical", "hybrid"]).describe("lexical uses FTS5; hybrid combines lexical and locally configured semantic retrieval.").optional().default("lexical"),
+    mode: z.enum(["lexical", "hybrid"]).describe("lexical uses FTS5; hybrid requests semantic fusion but this MCP server has no embedding provider wired, so it falls back to lexical-only with semanticState not_configured.").optional().default("lexical"),
     filePrefix: z.string().min(1).optional(),
   }).strict(), async (args) => {
     const repoPath = resolveRepo(args.repoPath as string | undefined);
@@ -601,7 +601,7 @@ export function createMcpServer(): McpServer {
     projection: CONTEXT_AWARE_SOURCE_PROJECTION,
   }));
 
-  registerJsonTool(server, "compile_task_context", "Assemble bounded evidence for a task; use context_read to deliver a selected file or range.", z.object({
+  registerJsonTool(server, "compile_task_context", "Assemble bounded task evidence; use search_code for matching-code lookup and context_read to deliver a selected file or range.", z.object({
     task: z.string().min(1),
     repoPath: repoInput,
     anchors: z.array(z.union([
@@ -726,12 +726,12 @@ export function createMcpServer(): McpServer {
 
   const explainIncompleteSchema = z.object({
     repoPath: repoInput,
-    detail: z.enum(["compact", "full"]).optional().default("compact"),
-    scope: z.enum(["repository", "change", "tests"]).optional().default("repository"),
-    mode: z.enum(["working", "staged", "commit", "range"]).optional(),
-    commit: z.string().min(1).optional(),
-    base: z.string().min(1).optional(),
-    head: z.string().min(1).optional(),
+    detail: z.enum(["compact", "full"]).describe("compact returns bounded output; full returns all available details.").optional().default("compact"),
+    scope: z.enum(["repository", "change", "tests"]).describe("Explain repository-wide evidence, one change, or affected tests; change-source fields apply only to change or tests scope.").optional().default("repository"),
+    mode: z.enum(["working", "staged", "commit", "range"]).describe("Choose working-tree or staged changes, one commit, or a revision range; commit requires commit, and range requires base and head.").optional(),
+    commit: z.string().min(1).describe("Commit revision required for commit mode; valid only with change or tests scope.").optional(),
+    base: z.string().min(1).describe("Base revision required for range mode; range mode also requires head and is valid only with change or tests scope.").optional(),
+    head: z.string().min(1).describe("Head revision required for range mode; range mode also requires base and is valid only with change or tests scope.").optional(),
     maxDepth: z.number().int().min(0).max(10).describe("Bound change or test traversal when the selected scope uses a change source.").optional(),
   }).strict().superRefine((value, context) => {
     const mode = value.mode ?? "working";
@@ -809,7 +809,7 @@ export function createMcpServer(): McpServer {
     from: queryInput,
     to: queryInput,
     maxDepth: z.number().int().min(0).max(32).describe("Bound graph path traversal depth.").optional(),
-    mode: z.enum(["directed", "explanatory"]).optional(),
+    mode: z.enum(["directed", "explanatory"]).describe("directed follows edge direction; explanatory may traverse inverse edges to explain a relation.").optional(),
   }).strict(), async (args) => withGraph(resolveRepo(args.repoPath as string | undefined), async (context) => ({
     ...traceGraph(context.graph, args.from as string, args.to as string, {
       maxDepth: args.maxDepth as number | undefined,
@@ -823,8 +823,8 @@ export function createMcpServer(): McpServer {
   registerJsonTool(server, "inspect_retrieval", "Diagnose retrieval stages and ranking; use search_code for default matching-code retrieval.", z.object({
     ...commonInput,
     query: queryInput,
-    includeSemantic: z.boolean().describe("Include semantic retrieval only when locally configured; no remote model is provided by default.").optional().default(false),
-    includeReranker: z.boolean().describe("Include reranking only when locally configured; no remote provider is provided by default.").optional().default(false),
+    includeSemantic: z.boolean().describe("Request semantic-stage diagnostics; this MCP server has no embedding provider wired, so semantic retrieval is not_configured.").optional().default(false),
+    includeReranker: z.boolean().describe("Request reranker-stage diagnostics; this MCP server has no reranker provider wired, so reranking is unavailable.").optional().default(false),
     graphEnabled: z.boolean().describe("Enable or disable graph expansion during retrieval inspection.").optional(),
     tokenBudget: z.number().int().min(100).max(20_000).describe("Cap the estimated context tokens returned by inspection.").optional(),
   }).strict(), async (args) => {
@@ -906,7 +906,7 @@ export function createMcpServer(): McpServer {
     registerJsonTool(server, name, `${name === "index_repository" ? "Build" : "Synchronize"} the local generated index state; this does not modify source files or Git data.`, z.object({
       repoPath: repoInput,
       skipGit: z.boolean().describe("Skip read-only Git candidate discovery during indexing.").optional().default(false),
-      includeSemantic: z.boolean().describe("Include semantic indexing only with locally configured providers.").optional().default(false),
+      includeSemantic: z.boolean().describe("Request semantic indexing; this MCP server has no embedding provider wired, so semantic is not-configured only when no active semantic capability exists; an active semantic capability makes the operation fail closed.").optional().default(false),
     }).strict(), async (args) => {
       const repoPath = resolveRepo(args.repoPath as string | undefined);
       return withWriteLock(repoPath, async () => {
