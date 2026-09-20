@@ -72,8 +72,22 @@ code-atlas disconnect --all
 
 ## Task context compiler
 
-Phase15B selects what is worth reading before Phase15A decides how much to
-deliver. Compile a bounded, deterministic `ContextSubject` plan from a task:
+CodeAtlas separates context selection from context delivery. The current stack
+works as follows:
+
+- **Context-aware delivery (Phase15A):** decides how much source/context to
+  deliver for an explicit file or symbol request. `context_read` remains the
+  explicit delivery surface.
+- **Task context compilation (Phase15B):** decides which files and symbols are
+  worth reading. It produces a bounded, deterministic, evidence-backed plan;
+  it does not return source bodies directly.
+- **Durable task context (Phase15C):** gives a task context an explicit
+  `taskContextId` and durable start, refresh, and close lifecycle. The
+  lifecycle keeps its session and context-generation identities and reports
+  delivery metrics such as full, unchanged, delta, and rehydrated results when
+  those modes apply.
+
+Compile a bounded task-context plan with the CLI:
 
 ```bash
 code-atlas context-compile --task "Fix repository status handling"
@@ -81,8 +95,44 @@ code-atlas context-compile --task "Fix repository status handling" --json
 ```
 
 The same capability is available through the MCP `compile_task_context` tool.
-It returns file/symbol references and evidence metadata, not source bodies;
-`context_read` remains the explicit delivery step.
+The durable lifecycle is available through the CLI commands
+`context-start`, `context-refresh`, and `context-close`, and through the MCP
+tools `start_task_context`, `refresh_task_context`, and `close_task_context`.
+The compiled plan returns file/symbol references and evidence metadata, not
+source bodies; `context_read` remains the explicit delivery step.
+
+## Internal context evaluation gate
+
+Phase15D is an internal contributor and release-verification gate for the
+Phase15A/B/C context behavior. It is not a new runtime intelligence feature
+and is not a public `code-atlas eval` command.
+
+Run the deterministic, offline evaluator with:
+
+```bash
+pnpm run eval:context
+```
+
+It uses reviewed synthetic fixtures covering the 12 production languages in
+the language registry and frozen real-world snapshots. The gate checks
+selection and delivery correctness, exact reconstruction, deterministic
+selection/ranking, authority and explicit incomplete-evidence diagnostics,
+durable lifecycle behavior, and reviewed quality-regression policy. It emits
+human-readable output and a machine-readable report under the transient
+`artifacts/` directory. It uses no LLM judge, network access, or runtime
+corpus download.
+
+Correctness and determinism failures are hard failures. Incomplete evidence
+must remain explicit rather than being treated as authoritative negative
+evidence. Versioned golden baselines provide catastrophic per-case regression
+protection and aggregate quality limits; performance observations are
+non-blocking and are not semantic equality criteria.
+
+Synthetic fixtures provide controlled cross-language coverage. Frozen snapshots
+provide realistic repository cases with tracked provenance and license-notice
+metadata. The evaluator protects corpus truth from accidental mutation; these
+snapshots are evaluation inputs, not third-party source shipped as runtime
+content.
 
 ## Why CodeAtlas
 
@@ -423,7 +473,17 @@ pnpm build
 pnpm test
 pnpm lint
 pnpm run ui:typecheck
+pnpm run eval:context
 ```
+
+The evaluation baseline is updated only as an explicit reviewed maintenance
+operation, after correctness and determinism are verified:
+
+```bash
+pnpm run eval:context:update-baseline -- --write
+```
+
+The normal `pnpm run eval:context` command never writes the golden baseline.
 
 The npm package is `@showdar2112/code-atlas`; it installs the `code-atlas`
 command. The package can also be installed globally with pnpm:
