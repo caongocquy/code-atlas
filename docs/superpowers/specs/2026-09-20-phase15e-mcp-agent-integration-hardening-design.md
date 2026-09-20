@@ -57,7 +57,7 @@ The MCP server itself uses stdio. No current registered handler makes an externa
 
 Every tool description states the operation and its best use. Where a nearby tool could be confused, distinguish its role:
 
-- `search_code` finds matching code; `get_symbol` retrieves one known symbol; `compile_task_context` assembles bounded evidence for a task; `context_read` safely reads/delivers a selected file or range and records delivery; `inspect_retrieval` diagnoses retrieval stages and ranking rather than serving as default search.
+- `search_code` finds matching code; `get_symbol` retrieves one known symbol; `compile_task_context` assembles bounded evidence for a task; `context_read` safely reads/delivers a selected file and records delivery; `inspect_retrieval` diagnoses retrieval stages and ranking rather than serving as default search.
 - `repository_status` checks index and capability readiness when freshness or availability is unknown.
 - `inspect_change` describes a change snapshot; `impact` follows structural graph dependencies; `graph_delta` compares graph structure between snapshots; `architecture_drift` checks policy-level architecture changes; `change_gate` combines change checks; `affected_tests` identifies relevant tests; `explain_incomplete` explains missing or uncertain evidence.
 - `trace` follows a graph path; `list_communities` discovers groups; `get_community` expands a known group; `important_symbols` ranks central symbols; `architectural_bridges` finds cross-community links; `find_cycles` reports cycles.
