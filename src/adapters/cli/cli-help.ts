@@ -293,10 +293,9 @@ const details: Record<string, string[]> = {
     "  --json                  Print machine-readable output",
   ],
   upgrade: [
-    "Usage: code-atlas upgrade --check [--json]",
+    "Usage: code-atlas upgrade [--check] [--json]",
     "",
-    "Check the configured registry for the latest CodeAtlas version.",
-    "This command does not install or modify anything.",
+    "Check for a CodeAtlas update, or install and verify it when one is available.",
     "",
     "Options:",
     "  --check    Check for an update without installing it",

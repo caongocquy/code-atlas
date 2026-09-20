@@ -178,5 +178,5 @@ test("registry failures and invalid latest metadata return actionable errors wit
 test("upgrade command is listed, known, and has detailed check help", () => {
   assert.equal(isKnownCommand("upgrade"), true);
   assert.match(formatRootHelp(), /upgrade\s+Check for and install a CodeAtlas update/);
-  assert.match(formatCommandHelp("upgrade"), /Usage: code-atlas upgrade --check/);
+  assert.match(formatCommandHelp("upgrade"), /Usage: code-atlas upgrade \[--check\]/);
 });

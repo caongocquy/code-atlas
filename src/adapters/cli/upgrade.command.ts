@@ -13,6 +13,7 @@ type ExecOptions = { encoding: "utf8"; shell: false; windowsHide: true };
 export type UpgradeCheckDependencies = {
   platform: string;
   packageRoot: string;
+  execPath?: string;
   realpath(path: string): Promise<string>;
   execFile(file: string, args: string[], options: ExecOptions): Promise<{ stdout: string }>;
 };
@@ -22,14 +23,15 @@ type UpgradeCheckResult = {
   latestVersion: string;
   updateAvailable: boolean;
   manager: PackageManager | null;
-  upgraded: false;
-  verifiedVersion: null;
+  upgraded: boolean;
+  verifiedVersion: string | null;
 };
 
 function systemDependencies(): UpgradeCheckDependencies {
   return {
     platform: process.platform,
     packageRoot: path.resolve(import.meta.dirname, "../../../"),
+    execPath: process.execPath,
     realpath,
     async execFile(file, args) {
       const { stdout } = await execFileAsync(file, args, execOptions);
@@ -46,8 +48,10 @@ async function detectInstallManager(dependencies: UpgradeCheckDependencies): Pro
   for (const manager of ["npm", "pnpm"] as const) {
     try {
       const { stdout } = await dependencies.execFile(manager, ["root", "-g"], execOptions);
-      const managerRoot = await dependencies.realpath(stdout.trim());
-      const packageRoot = await dependencies.realpath(path.join(stdout.trim(), ...PACKAGE_NAME.split("/")));
+      const globalRoot = stdout.trim();
+      if (!globalRoot) continue;
+      const managerRoot = await dependencies.realpath(globalRoot);
+      const packageRoot = await dependencies.realpath(path.join(globalRoot, ...PACKAGE_NAME.split("/")));
       const relativeRoot = path.relative(managerRoot, packageRoot);
       if (!relativeRoot || relativeRoot === ".." || relativeRoot.startsWith(`..${path.sep}`) || path.isAbsolute(relativeRoot)) continue;
       if (packageRoot === currentRoot) matches.push(manager);
@@ -57,6 +61,35 @@ async function detectInstallManager(dependencies: UpgradeCheckDependencies): Pro
   }
 
   return matches.length === 1 ? matches[0]! : null;
+}
+
+async function verifyInstalledVersion(
+  manager: PackageManager,
+  targetVersion: string,
+  dependencies: UpgradeCheckDependencies,
+): Promise<string> {
+  const { stdout } = await dependencies.execFile(manager, ["root", "-g"], execOptions);
+  const globalRoot = stdout.trim();
+  if (!globalRoot) throw new Error(`${manager} returned an empty global package root`);
+  const managerRoot = await dependencies.realpath(globalRoot);
+  const packageRoot = await dependencies.realpath(path.join(globalRoot, ...PACKAGE_NAME.split("/")));
+  const relativeRoot = path.relative(managerRoot, packageRoot);
+  if (!relativeRoot || relativeRoot === ".." || relativeRoot.startsWith(`..${path.sep}`) || path.isAbsolute(relativeRoot)) {
+    throw new Error(`${manager} resolved CodeAtlas outside its global package root`);
+  }
+
+  const entrypoint = path.join(packageRoot, "dist", "cli.js");
+  let installedVersion: string;
+  try {
+    const result = await dependencies.execFile(dependencies.execPath ?? process.execPath, [entrypoint, "--version"], execOptions);
+    installedVersion = result.stdout.trim();
+  } catch (error) {
+    throw new Error(`Unable to run the installed CodeAtlas CLI at ${entrypoint}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (installedVersion !== targetVersion) {
+    throw new Error(`Upgrade verification failed: expected ${targetVersion}, found ${installedVersion || "no version output"}.`);
+  }
+  return installedVersion;
 }
 
 function parseSemVer(version: string): { core: bigint[]; prerelease: string[] } {
@@ -131,9 +164,11 @@ async function getCheckResult(
 function formatHumanResult(result: UpgradeCheckResult): string {
   const manager = result.manager ?? "unsupported install source";
   const nextAction = result.updateAvailable
-    ? result.manager
-      ? "Run `code-atlas upgrade` to install this update."
-      : "Automatic update is unavailable for this installation. Use the original installation method to update CodeAtlas; no package manager can be safely inferred."
+    ? result.upgraded
+      ? `Installed and verified CodeAtlas ${result.verifiedVersion}.`
+      : result.manager
+        ? "Run `code-atlas upgrade` to install this update."
+        : "Automatic update is unavailable for this installation. Use the original installation method to update CodeAtlas; no package manager can be safely inferred."
     : "CodeAtlas is already up to date.";
   return [
     "CodeAtlas update check",
@@ -151,8 +186,30 @@ export async function runUpgradeCommand(
   dependencies: UpgradeCheckDependencies = systemDependencies(),
   write: (text: string) => unknown = (text) => process.stdout.write(text),
 ): Promise<void> {
-  if (!args.includes("--check")) throw new Error("Use `code-atlas upgrade --check` to check for updates.");
-  if (args.some((arg) => arg !== "--check" && arg !== "--json")) throw new Error("Use `code-atlas upgrade --check [--json]`.");
+  const checkOnly = args.includes("--check");
+  if (args.some((arg) => arg !== "--check" && arg !== "--json")) {
+    throw new Error("Use `code-atlas upgrade [--check] [--json]`.");
+  }
+  if (dependencies.platform === "win32" && !checkOnly) {
+    throw new Error("Automatic upgrade is unavailable on Windows because npm and pnpm use .cmd shims that this shell-free command cannot invoke. Use the original installation method to update CodeAtlas.");
+  }
   const result = await getCheckResult(currentVersion, dependencies);
+  if (!checkOnly && result.updateAvailable) {
+    if (!result.manager) {
+      throw new Error("Automatic update is unavailable for this installation. Use the original installation method to update CodeAtlas; no package manager can be safely inferred.");
+    }
+    const installCommand = result.manager === "npm" ? "install" : "add";
+    try {
+      await dependencies.execFile(result.manager, [installCommand, "-g", `${PACKAGE_NAME}@${result.latestVersion}`], execOptions);
+    } catch (error) {
+      throw new Error(`Unable to install CodeAtlas ${result.latestVersion} using ${result.manager}. Check global package permissions and retry. (${error instanceof Error ? error.message : String(error)})`);
+    }
+    try {
+      result.verifiedVersion = await verifyInstalledVersion(result.manager, result.latestVersion, dependencies);
+    } catch (error) {
+      throw new Error(`Unable to verify CodeAtlas ${result.latestVersion} using ${result.manager}. Confirm its global installation and retry. (${error instanceof Error ? error.message : String(error)})`);
+    }
+    result.upgraded = true;
+  }
   write(args.includes("--json") ? `${JSON.stringify(result, null, 2)}\n` : `${formatHumanResult(result)}\n`);
 }
