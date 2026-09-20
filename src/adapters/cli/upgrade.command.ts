@@ -84,7 +84,7 @@ async function verifyInstalledVersion(
     const result = await dependencies.execFile(dependencies.execPath ?? process.execPath, [entrypoint, "--version"], execOptions);
     installedVersion = result.stdout.trim();
   } catch (error) {
-    throw new Error(`Unable to run the installed CodeAtlas CLI at ${entrypoint}: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`Unable to run the installed CodeAtlas CLI at ${entrypoint}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   }
   if (installedVersion !== targetVersion) {
     throw new Error(`Upgrade verification failed: expected ${targetVersion}, found ${installedVersion || "no version output"}.`);
@@ -148,6 +148,7 @@ async function getCheckResult(
   } catch (error) {
     throw new Error(
       `Unable to check for CodeAtlas updates using ${lookupManager}. Check its configured registry and network connection, then retry. (${error instanceof Error ? error.message : String(error)})`,
+      { cause: error },
     );
   }
 
@@ -202,12 +203,12 @@ export async function runUpgradeCommand(
     try {
       await dependencies.execFile(result.manager, [installCommand, "-g", `${PACKAGE_NAME}@${result.latestVersion}`], execOptions);
     } catch (error) {
-      throw new Error(`Unable to install CodeAtlas ${result.latestVersion} using ${result.manager}. Check global package permissions and retry. (${error instanceof Error ? error.message : String(error)})`);
+      throw new Error(`Unable to install CodeAtlas ${result.latestVersion} using ${result.manager}. Check global package permissions and retry. (${error instanceof Error ? error.message : String(error)})`, { cause: error });
     }
     try {
       result.verifiedVersion = await verifyInstalledVersion(result.manager, result.latestVersion, dependencies);
     } catch (error) {
-      throw new Error(`Unable to verify CodeAtlas ${result.latestVersion} using ${result.manager}. Confirm its global installation and retry. (${error instanceof Error ? error.message : String(error)})`);
+      throw new Error(`Unable to verify CodeAtlas ${result.latestVersion} using ${result.manager}. Confirm its global installation and retry. (${error instanceof Error ? error.message : String(error)})`, { cause: error });
     }
     result.upgraded = true;
   }
