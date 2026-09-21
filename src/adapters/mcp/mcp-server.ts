@@ -1,4 +1,5 @@
 import path from "node:path";
+import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -6,7 +7,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
-import { getRepositoryStatus } from "../../core/repository/repository-status.service.js";
+import { getRepositoryStatus, getRepositoryStatusReadOnly } from "../../core/repository/repository-status.service.js";
 import { canonicalRepositoryPath } from "../../core/repository/repository-identity.js";
 import { loadIndexedGraphReadOnly, type IndexedGraph } from "../../core/graph/indexed-graph.service.js";
 import { searchLexical } from "../../core/lexical/lexical-search.service.js";
@@ -42,6 +43,15 @@ import { inspectChange } from "../../core/change/inspect-change.service.js";
 import type { InspectChangeInput } from "../../core/change/change.types.js";
 import { affectedTests } from "../../core/change/affected-tests.service.js";
 import type { DefaultProviderSet } from "../../infrastructure/provider-defaults.js";
+import { createConfiguredProviders, closeConfiguredProviders } from "../../infrastructure/semantic/repository-providers.js";
+import {
+  cleanSemanticIndex,
+  disableSemanticProvider,
+  getSemanticStatus,
+  setupSemanticProvider,
+  testSemanticProvider,
+  upgradeSemanticProvider,
+} from "../../infrastructure/semantic/semantic-lifecycle.service.js";
 import { explainIncomplete } from "../../core/diagnostics/explain-incomplete.service.js";
 import { graphDelta } from "../../core/change/graph-delta.service.js";
 import type { GraphDeltaInput } from "../../core/change/graph-delta.types.js";
@@ -54,6 +64,7 @@ import { CONTEXT_AWARE_SOURCE_PROJECTION } from "../../core/context/context-deli
 import { compileTaskContextForRepository, TaskContextRepositoryCompilerError } from "../../core/context/task-context-repository-compiler.js";
 import { closeTaskContext, refreshTaskContext, startTaskContext } from "../../core/context/task-context-lifecycle.service.js";
 import { TaskContextLifecycleDomainError } from "../../core/context/task-context-lifecycle.types.js";
+import { SemanticProviderError } from "../../core/semantic/semantic-provider-error.js";
 
 const MAX_LIMIT = 1_000;
 const MAX_CANDIDATES = 20;
@@ -125,6 +136,12 @@ const toolAnnotations: Record<string, McpToolAnnotations> = {
   find_cycles: readOnlyAnnotations,
   index_repository: localWriteAnnotations,
   sync_repository: localWriteAnnotations,
+  semantic_setup: { ...localWriteAnnotations, openWorldHint: true },
+  semantic_status: readOnlyAnnotations,
+  semantic_test: { ...readOnlyAnnotations, openWorldHint: true },
+  semantic_upgrade: { ...localWriteAnnotations, openWorldHint: true },
+  semantic_disable: localWriteAnnotations,
+  semantic_clean: localWriteAnnotations,
 };
 
 class McpToolError extends Error {
@@ -144,6 +161,8 @@ function resolveRepo(repoPath?: string): string {
 function errorResult(error: unknown): CallToolResult {
   const failure = error instanceof TaskContextLifecycleDomainError
     ? { code: error.operationError.code, message: error.operationError.message, details: error.operationError }
+    : error instanceof SemanticProviderError
+    ? { code: error.code, message: error.message, ...(error.env ? { env: error.env } : {}) }
     : error instanceof McpToolError
     ? { code: error.code, message: error.message, ...(error.details ? { details: error.details } : {}) }
     : { code: "internal_error", message: error instanceof Error ? error.message : String(error) };
@@ -490,16 +509,17 @@ async function withWriteLock<T>(repoPath: string, callback: () => Promise<T>): P
   }
 }
 
-async function optionalProviders(repoPath: string, enabled: boolean): Promise<DefaultProviderSet | undefined> {
+async function optionalProviders(repoPath: string, enabled: boolean, readOnly = true): Promise<DefaultProviderSet | undefined> {
   if (!enabled) return undefined;
-  const { createDefaultProviders } = await import("../../infrastructure/provider-defaults.js");
-  return createDefaultProviders(repoPath);
+  if (readOnly) {
+    try { await fs.access(path.join(repoPath, ".codeatlas", "atlas.db")); }
+    catch { return undefined; }
+  }
+  return createConfiguredProviders(repoPath, { readOnly });
 }
 
 async function closeProviders(providers: DefaultProviderSet | undefined): Promise<void> {
-  if (providers && "close" in providers.vectorStore && typeof providers.vectorStore.close === "function") {
-    providers.vectorStore.close();
-  }
+  closeConfiguredProviders(providers);
 }
 
 export function createMcpServer(): McpServer {
@@ -530,14 +550,14 @@ export function createMcpServer(): McpServer {
   registerJsonTool(server, "search_code", "Find matching code in the indexed repository; use get_symbol when the symbol is already known.", z.object({
     ...commonInput,
     query: queryInput,
-    mode: z.enum(["lexical", "hybrid"]).describe("lexical uses FTS5; hybrid requests semantic fusion but this MCP server has no embedding provider wired, so it falls back to lexical-only with semanticState not_configured.").optional().default("lexical"),
+    mode: z.enum(["lexical", "hybrid"]).describe("lexical uses FTS5; hybrid combines semantic and lexical results when the configured provider and index are compatible, and otherwise returns lexical-only results for semantic states such as not_configured or stale.").optional().default("lexical"),
     filePrefix: z.string().min(1).optional(),
   }).strict(), async (args) => {
     const repoPath = resolveRepo(args.repoPath as string | undefined);
-    const status = await lexicalStatus(repoPath);
     const limit = (args.limit as number | undefined) ?? DEFAULT_LIMIT;
     const query = args.query as string;
     if (args.mode !== "hybrid") {
+      const status = await lexicalStatus(repoPath);
       const results = await searchLexical(query, limit + 1, repoPath, args.filePrefix as string | undefined);
       return {
         mode: "lexical",
@@ -552,10 +572,15 @@ export function createMcpServer(): McpServer {
 
     const providers = await optionalProviders(repoPath, true);
     try {
+      const status = await getRepositoryStatusReadOnly(repoPath, providers ? {
+        embeddingProvider: providers.embeddingProvider,
+        vectorStore: providers.vectorStore,
+      } : {});
       const { inspectHybridSearch } = await import("../../core/retrieval/hybrid-search.service.js");
       const stages = await inspectHybridSearch(query, limit, repoPath, {
-        embeddingProvider: providers!.embeddingProvider,
-        vectorStore: providers!.vectorStore,
+        embeddingProvider: providers?.embeddingProvider,
+        vectorStore: providers?.vectorStore,
+        semanticState: status.capabilities.semantic.state,
       });
       return {
         mode: "hybrid",
@@ -823,7 +848,7 @@ export function createMcpServer(): McpServer {
   registerJsonTool(server, "inspect_retrieval", "Diagnose retrieval stages and ranking; use search_code for default matching-code retrieval.", z.object({
     ...commonInput,
     query: queryInput,
-    includeSemantic: z.boolean().describe("Request semantic-stage diagnostics; this MCP server has no embedding provider wired, so semantic retrieval is not_configured.").optional().default(false),
+    includeSemantic: z.boolean().describe("Request semantic-stage diagnostics; the embedding provider loads from repository configuration when available. With no embedding provider configured, semantic retrieval is not_configured.").optional().default(false),
     includeReranker: z.boolean().describe("Request reranker-stage diagnostics; this MCP server has no reranker provider wired, so reranking is unavailable.").optional().default(false),
     graphEnabled: z.boolean().describe("Enable or disable graph expansion during retrieval inspection.").optional(),
     tokenBudget: z.number().int().min(100).max(20_000).describe("Cap the estimated context tokens returned by inspection.").optional(),
@@ -906,16 +931,17 @@ export function createMcpServer(): McpServer {
     registerJsonTool(server, name, `${name === "index_repository" ? "Build" : "Synchronize"} the local generated index state; this does not modify source files or Git data.`, z.object({
       repoPath: repoInput,
       skipGit: z.boolean().describe("Skip read-only Git candidate discovery during indexing.").optional().default(false),
-      includeSemantic: z.boolean().describe("Request semantic indexing; this MCP server has no embedding provider wired, so semantic is not-configured only when no active semantic capability exists; an active semantic capability makes the operation fail closed.").optional().default(false),
+      includeSemantic: z.boolean().describe("Request semantic indexing; when omitted, semantic runs if an enabled provider is configured. With no embedding provider wired, semantic is not-configured only when no active semantic capability exists; an active semantic capability must fail closed while graph and lexical publication continue.").optional(),
     }).strict(), async (args) => {
       const repoPath = resolveRepo(args.repoPath as string | undefined);
       return withWriteLock(repoPath, async () => {
-        const providers = await optionalProviders(repoPath, args.includeSemantic === true);
+        const providers = await optionalProviders(repoPath, true, false);
+        const includeSemantic = args.includeSemantic === true || (args.includeSemantic === undefined && providers?.embeddingProvider !== undefined);
         try {
           const outcome = await operation(repoPath, {
             skipGit: args.skipGit === true,
-            includeSemantic: args.includeSemantic === true,
-            semanticProviders: providers?.embeddingProvider ? {
+            includeSemantic,
+            semanticProviders: includeSemantic && providers?.embeddingProvider ? {
               embeddingProvider: providers.embeddingProvider,
               vectorStore: providers.vectorStore,
             } : undefined,
@@ -933,6 +959,23 @@ export function createMcpServer(): McpServer {
       });
     });
   }
+
+  const semanticProviderInput = z.discriminatedUnion("type", [
+    z.object({ type: z.literal("builtin-local"), model: z.string().min(1).optional(), revision: z.string().min(1).optional(), dimensions: z.number().int().positive().optional() }).strict(),
+    z.object({ type: z.literal("openai-compatible"), baseUrl: z.string().min(1), model: z.string().min(1), apiKeyEnv: z.string().min(1).optional(), dimensions: z.number().int().positive().optional() }).strict(),
+  ]);
+  registerJsonTool(server, "semantic_setup", "Configure and probe a semantic provider without indexing. API keys are read from the named process environment variable.", z.object({ repoPath: repoInput, provider: semanticProviderInput }).strict(), async (args) =>
+    setupSemanticProvider(resolveRepo(args.repoPath as string | undefined), args.provider));
+  registerJsonTool(server, "semantic_status", "Inspect semantic provider and index readiness without network requests or runtime loading.", z.object({ repoPath: repoInput }).strict(), async (args) =>
+    getSemanticStatus(resolveRepo(args.repoPath as string | undefined)));
+  registerJsonTool(server, "semantic_test", "Actively probe the configured semantic provider without changing config or index state.", z.object({ repoPath: repoInput }).strict(), async (args) =>
+    testSemanticProvider(resolveRepo(args.repoPath as string | undefined)));
+  registerJsonTool(server, "semantic_upgrade", "Provision and probe the latest built-in local model revision, or report that an OpenAI-compatible provider is externally managed.", z.object({ repoPath: repoInput }).strict(), async (args) =>
+    upgradeSemanticProvider(resolveRepo(args.repoPath as string | undefined)));
+  registerJsonTool(server, "semantic_disable", "Disable semantic retrieval while retaining provider configuration and vectors.", z.object({ repoPath: repoInput }).strict(), async (args) =>
+    disableSemanticProvider(resolveRepo(args.repoPath as string | undefined)));
+  registerJsonTool(server, "semantic_clean", "Remove only semantic vectors and metadata for this repository.", z.object({ repoPath: repoInput }).strict(), async (args) =>
+    cleanSemanticIndex(resolveRepo(args.repoPath as string | undefined)));
 
   return server;
 }

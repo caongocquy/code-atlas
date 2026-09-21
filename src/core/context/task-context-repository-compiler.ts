@@ -5,13 +5,14 @@ import { inspectChange } from "../change/inspect-change.service.js";
 import { loadIndexedGraphReadOnly } from "../graph/indexed-graph.service.js";
 import { analyzeImpact } from "../graph/query/impact.service.js";
 import { searchLexical } from "../lexical/lexical-search.service.js";
-import { getRepositoryStatus } from "../repository/repository-status.service.js";
+import { getRepositoryStatus, getRepositoryStatusReadOnly } from "../repository/repository-status.service.js";
 import { inspectHybridSearch } from "../retrieval/hybrid-search.service.js";
 import { canonicalRepositoryPath, getRepositoryIdentity } from "../repository/repository-identity.js";
 import { getWorkspaceIdentity } from "./context-identity.js";
 import { collectTaskContextCandidates, enrichTaskContextCandidates, enrichTaskContextGraph } from "./task-context-candidates.js";
 import { compileTaskContext } from "./task-context-compiler.js";
 import type { CompileTaskContextInput, NormalizedTaskContextInput, TaskContextCandidate, TaskContextPlanDetail, TaskContextReliability } from "./task-context.types.js";
+import { createConfiguredProviders, closeConfiguredProviders } from "../../infrastructure/semantic/repository-providers.js";
 
 export type RepositoryCompilerDeps = {
   compile?: typeof compileTaskContext;
@@ -41,31 +42,51 @@ export async function compileTaskContextForRepository(repoPath: string, input: C
     }
     throw error;
   }
-  const collectionDeps = {
-    repositoryPath: root,
-    loadGraph: async () => indexed,
-    getStatus: getRepositoryStatus,
-    lexicalSearch: searchLexical,
-    hybridSearch: inspectHybridSearch,
-    inspectChange,
-    analyzeImpact: async (...args: Parameters<typeof analyzeImpact>) => analyzeImpact(...args),
-    affectedTests,
-  };
-  return compiler(input, {
-    repositoryPath: root,
-    repositoryIdentity: repository.identityKey,
-    workspaceIdentity: workspace.workspaceIdentity,
-    collect: async (normalized) => {
-      const collected = await collectTaskContextCandidates(normalized, collectionDeps);
-      const enriched = await enrichTaskContextCandidates(collected.candidates, normalized, indexed.graph, collectionDeps);
-      return {
-        candidates: enrichTaskContextGraph(enriched.candidates, indexed.graph),
-        reliability: {
-          ...collected.reliability,
-          mayBeIncomplete: collected.reliability.mayBeIncomplete || enriched.reliability.mayBeIncomplete,
-          diagnostics: [...collected.reliability.diagnostics, ...enriched.reliability.diagnostics],
-        },
-      };
-    },
-  });
+  const providers = await createConfiguredProviders(root, { readOnly: true });
+  try {
+    let semanticState: ReturnType<typeof getRepositoryStatusReadOnly> | undefined;
+    const getSemanticState = async () => {
+      semanticState ??= getRepositoryStatusReadOnly(root, {
+        embeddingProvider: providers.embeddingProvider,
+        vectorStore: providers.vectorStore,
+      });
+      return (await semanticState).capabilities.semantic.state;
+    };
+    const collectionDeps = {
+      repositoryPath: root,
+      loadGraph: async () => indexed,
+      getStatus: (repositoryPath: string) => getRepositoryStatus(repositoryPath, {
+        embeddingProvider: providers.embeddingProvider,
+        vectorStore: providers.vectorStore,
+      }),
+      lexicalSearch: searchLexical,
+      hybridSearch: async (query: string, limit: number, repositoryPath: string) => inspectHybridSearch(query, limit, repositoryPath, {
+        embeddingProvider: providers.embeddingProvider,
+        vectorStore: providers.vectorStore,
+        semanticState: await getSemanticState(),
+      }),
+      inspectChange,
+      analyzeImpact: async (...args: Parameters<typeof analyzeImpact>) => analyzeImpact(...args),
+      affectedTests,
+    };
+    return await compiler(input, {
+      repositoryPath: root,
+      repositoryIdentity: repository.identityKey,
+      workspaceIdentity: workspace.workspaceIdentity,
+      collect: async (normalized) => {
+        const collected = await collectTaskContextCandidates(normalized, collectionDeps);
+        const enriched = await enrichTaskContextCandidates(collected.candidates, normalized, indexed.graph, collectionDeps);
+        return {
+          candidates: enrichTaskContextGraph(enriched.candidates, indexed.graph),
+          reliability: {
+            ...collected.reliability,
+            mayBeIncomplete: collected.reliability.mayBeIncomplete || enriched.reliability.mayBeIncomplete,
+            diagnostics: [...collected.reliability.diagnostics, ...enriched.reliability.diagnostics],
+          },
+        };
+      },
+    });
+  } finally {
+    closeConfiguredProviders(providers);
+  }
 }

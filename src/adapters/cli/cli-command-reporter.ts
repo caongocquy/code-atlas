@@ -35,6 +35,7 @@ export type CliCommand =
   | "inspect-change"
   | "integrations"
   | "status"
+  | "semantic"
   | "sync";
 
 const commandSubtitles: Record<CliCommand, string> = {
@@ -56,6 +57,7 @@ const commandSubtitles: Record<CliCommand, string> = {
   "inspect-change": "Change intelligence",
   integrations: "Agent integrations",
   status: "Repository status",
+  semantic: "Semantic provider lifecycle",
   sync: "Repository indexing",
 };
 

@@ -23,6 +23,7 @@ const expectedTools = [
   "find_imports", "find_imported_by", "impact", "inspect_change", "affected_tests", "explain_incomplete",
   "graph_delta", "architecture_drift", "change_gate", "trace", "inspect_retrieval", "list_communities",
   "get_community", "important_symbols", "architectural_bridges", "find_cycles", "index_repository", "sync_repository",
+  "semantic_setup", "semantic_status", "semantic_test", "semantic_upgrade", "semantic_disable", "semantic_clean",
 ] as const;
 
 const expectedAnnotations: Record<string, Record<string, boolean>> = {
@@ -54,6 +55,12 @@ const expectedAnnotations: Record<string, Record<string, boolean>> = {
   find_cycles: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   index_repository: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   sync_repository: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  semantic_setup: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+  semantic_status: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  semantic_test: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  semantic_upgrade: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+  semantic_disable: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  semantic_clean: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
 };
 
 function inspectorCliPath(): string {
@@ -123,10 +130,24 @@ test("MCP Inspector v2 verifies the actual stdio server contract", { skip: inspe
       openWorldHint: false,
     });
     assert.equal((getSymbol?.inputSchema as { properties?: Record<string, unknown> }).properties?.query !== undefined, true);
+    const semanticSetup = tools.find((tool) => tool.name === "semantic_setup");
+    assert.equal((semanticSetup?.inputSchema as { properties?: Record<string, unknown> }).properties?.provider !== undefined, true);
+    assert.equal(JSON.stringify(semanticSetup?.inputSchema).includes('"apiKey"'), false, "MCP setup must not accept a raw API key");
 
     const status = runInspector("tools/call", { homePath, toolName: "repository_status", toolArgs: { repoPath } });
     assert.equal(status.status, 0, status.stderr);
     assert.ok(jsonOutput(status).result, "repository_status must succeed without optional capability initialization");
+
+    const semanticStatus = runInspector("tools/call", { homePath, toolName: "semantic_status", toolArgs: { repoPath } });
+    assert.equal(semanticStatus.status, 0, semanticStatus.stderr);
+    assert.match(JSON.stringify(jsonOutput(semanticStatus)), /configured|missing/);
+    const rawSecret = runInspector("tools/call", {
+      homePath,
+      toolName: "semantic_setup",
+      toolArgs: { repoPath, provider: { type: "openai-compatible", baseUrl: "http://localhost:8080/v1", model: "embed-v1", apiKey: "must-not-be-accepted" } },
+    });
+    assert.equal(rawSecret.status, 5, rawSecret.stderr);
+    assert.equal(await readFile(path.join(repoPath, "codeatlas.config.json")).then(() => true, () => false), false);
 
     const symbol = runInspector("tools/call", { homePath, toolName: "get_symbol", toolArgs: { repoPath, query: "alpha" } });
     assert.equal(symbol.status, 0, symbol.stderr);

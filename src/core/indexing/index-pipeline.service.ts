@@ -46,6 +46,7 @@ import { analyzeFramework, builtinFrameworkAdapters, detectFrameworks, expandFra
 import { planFrameworkInvalidation } from "../framework/framework-invalidation.js";
 import type { FrameworkAnalysisContext, FrameworkConfigFact, FrameworkConfigValue } from "../framework/framework.types.js";
 import { frameworkMaterializationContributions } from "../reliability/reliability-incremental.js";
+import { semanticGenerationIdentity } from "../semantic/provider-identity.js";
 
 const RESOLVER_BUDGETS = {
   candidateExpansions: 1000,
@@ -566,26 +567,40 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
     store.writeCandidateLexicalDocuments(generation.id, lexical);
     const semanticStartedAt = performance.now();
     let semantic: SemanticIndexResult | undefined;
+    const previousSemanticStates = store.getFileCapabilityStates(repoId, "semantic");
     const activeSemanticEnabled = store.hasActiveSemanticCapability(repoId);
     let semanticPreserved = false;
+    let semanticFailure: string | undefined;
     if (options.includeSemantic) {
       const providers = options.semanticProviders;
       if (!providers) {
-        if (activeSemanticEnabled) throw new Error("Semantic provider is not configured while an active semantic capability exists");
-        semantic = semanticResult(repoPath, repoId, "not-configured", semanticStartedAt);
+        if (activeSemanticEnabled) {
+          semanticFailure = "Semantic provider is not configured while an active semantic capability exists.";
+          store.copyActiveSemanticVectorsToCandidate(generation.id);
+          semanticPreserved = true;
+          semantic = semanticResult(repoPath, repoId, "unavailable", semanticStartedAt, undefined, semanticFailure);
+        } else semantic = semanticResult(repoPath, repoId, "not-configured", semanticStartedAt);
       } else {
         try {
           const available = await providers.embeddingProvider.isAvailable() && await providers.vectorStore.isAvailable();
           if (!available) {
-            if (activeSemanticEnabled) throw new Error("Semantic provider is unavailable while an active semantic capability exists");
-            semantic = semanticResult(repoPath, repoId, "unavailable", semanticStartedAt);
+            if (activeSemanticEnabled) {
+              semanticFailure = "Semantic provider is unavailable while an active semantic capability exists.";
+              store.copyActiveSemanticVectorsToCandidate(generation.id);
+              semanticPreserved = true;
+              semantic = semanticResult(repoPath, repoId, "unavailable", semanticStartedAt, undefined, semanticFailure);
+            } else semantic = semanticResult(repoPath, repoId, "unavailable", semanticStartedAt);
           } else {
             semanticCandidate = await prepareSemanticCandidateFromFacts(repoId, generation.id, units, providers.embeddingProvider, providers.vectorStore);
             semantic = semanticResult(repoPath, repoId, "indexed", semanticStartedAt, semanticCandidate);
           }
         } catch (error) {
-          if (activeSemanticEnabled) throw error;
-          semantic = semanticResult(repoPath, repoId, "unavailable", semanticStartedAt, undefined, error instanceof Error ? error.message : String(error));
+          semanticFailure = error instanceof Error ? error.message : String(error);
+          if (activeSemanticEnabled) {
+            store.copyActiveSemanticVectorsToCandidate(generation.id);
+            semanticPreserved = true;
+          }
+          semantic = semanticResult(repoPath, repoId, "unavailable", semanticStartedAt, undefined, semanticFailure);
         }
       }
     } else if (activeSemanticEnabled) {
@@ -593,7 +608,6 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       semanticPreserved = true;
     }
     if (semanticCandidate) store.writeCandidateSemanticVectors(generation.id, semanticCandidate.points);
-    const previousSemanticStates = semanticPreserved ? store.getFileCapabilityStates(repoId, "semantic") : undefined;
     const configFileStates = [...changes.fileHashes.entries()]
       .filter(([file]) => isModuleConfigPath(file))
       .map(([file, fileHash]) => ({
@@ -609,8 +623,29 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       return [
         { file: unit.relativePath, capability: "graph" as const, input: { fileHash: unit.facts.contentHash, version: GRAPH_INDEX_VERSION, state: "ready" as const, generation: generation.id, itemCount: graphCount } },
         { file: unit.relativePath, capability: "lexical" as const, input: { fileHash: unit.facts.contentHash, version: LEXICAL_INDEX_VERSION, state: "ready" as const, generation: generation.id, itemCount: lexicalCount } },
-        ...(semanticCandidate ? [{ file: unit.relativePath, capability: "semantic" as const, input: { fileHash: unit.facts.contentHash, version: VECTOR_INDEX_VERSION, state: "ready" as const, generation: generation.id, providerIdentity: semanticCandidate.providerIdentity, itemCount: semanticCount } }] : []),
-        ...(preservedSemantic ? [{ file: unit.relativePath, capability: "semantic" as const, input: { fileHash: preservedSemantic.fileHash, version: preservedSemantic.version, state: preservedSemantic.state, generation: generation.id, providerIdentity: preservedSemantic.providerIdentity, itemCount: preservedSemantic.itemCount, lastError: preservedSemantic.lastError } }] : []),
+        ...(semanticCandidate ? [{ file: unit.relativePath, capability: "semantic" as const, input: {
+          fileHash: unit.facts.contentHash,
+          version: VECTOR_INDEX_VERSION,
+          state: "ready" as const,
+          generation: semanticGenerationIdentity(
+            unit.facts.contentHash,
+            semanticCandidate.providerIdentity,
+            options.semanticProviders!.vectorStore.id,
+            previousSemanticStates.get(unit.relativePath)?.providerIdentity,
+            previousSemanticStates.has(unit.relativePath),
+          ),
+          providerIdentity: semanticCandidate.providerIdentity,
+          itemCount: semanticCount,
+        } }] : []),
+        ...(preservedSemantic ? [{ file: unit.relativePath, capability: "semantic" as const, input: {
+          fileHash: preservedSemantic.fileHash,
+          version: preservedSemantic.version,
+          state: semanticFailure ? "error" as const : preservedSemantic.state,
+          generation: preservedSemantic.generation,
+          providerIdentity: preservedSemantic.providerIdentity,
+          itemCount: preservedSemantic.itemCount,
+          lastError: semanticFailure ?? preservedSemantic.lastError,
+        } }] : []),
       ];
     })];
     const deletedFiles = [...new Set([

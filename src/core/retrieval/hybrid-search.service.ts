@@ -3,6 +3,8 @@ import { searchCode } from "./code-search.service.js";
 import type { CapabilityState } from "../../storage/atlas/atlas.types.js";
 import type { EmbeddingProvider } from "../semantic/embedding-provider.js";
 import type { VectorStore } from "../semantic/vector-store.js";
+import { SemanticProviderError } from "../semantic/semantic-provider-error.js";
+import { getRepositoryStatusReadOnly } from "../repository/repository-status.service.js";
 import {
   lexicalSearchCode,
   type LexicalSearchResult,
@@ -31,6 +33,7 @@ export type HybridSearchStages = {
 export type HybridSearchProviders = {
   embeddingProvider?: EmbeddingProvider;
   vectorStore?: VectorStore;
+  semanticState?: CapabilityState;
 };
 
 function createResultKey(result: SearchResult): string {
@@ -73,10 +76,28 @@ export async function inspectHybridSearch(
         return [];
       }
 
-      if (
-        !(await providers.embeddingProvider.isAvailable()) ||
-        !(await providers.vectorStore.isAvailable())
-      ) {
+      const compatibleState = providers.semanticState ?? (repoPath
+        ? (await getRepositoryStatusReadOnly(repoPath, {
+          embeddingProvider: providers.embeddingProvider,
+          vectorStore: providers.vectorStore,
+        })).capabilities.semantic.state
+        : "not_configured");
+      if (compatibleState !== "ready") {
+        semanticState = compatibleState;
+        return [];
+      }
+
+      if (!(await providers.embeddingProvider.isAvailable())) {
+        semanticState = "unavailable";
+        return [];
+      }
+      let vectorStoreAvailable: boolean;
+      try {
+        vectorStoreAvailable = await providers.vectorStore.isAvailable();
+      } catch (cause) {
+        throw new SemanticProviderError("SEMANTIC_RUNTIME_FAILED", "Semantic vector store is unavailable.", { cause });
+      }
+      if (!vectorStoreAvailable) {
         semanticState = "unavailable";
         return [];
       }
@@ -88,7 +109,8 @@ export async function inspectHybridSearch(
       });
       semanticState = "ready";
       return results;
-    } catch {
+    } catch (error) {
+      if (!(error instanceof SemanticProviderError)) throw error;
       semanticState = "error";
       return [];
     } finally {

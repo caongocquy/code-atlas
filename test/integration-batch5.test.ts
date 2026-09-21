@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import test from "node:test";
+import test, { after } from "node:test";
 
 import { runIntegrationCommand } from "../src/adapters/cli/integration.command.js";
 import { createAgentIntegrationService } from "../src/infrastructure/integration/default-integrations.js";
@@ -15,6 +15,12 @@ import type { PickerStdin, PickerStdout } from "../src/adapters/cli/integration-
 const execFile = promisify(execFileCallback);
 const cliPath = path.resolve("src/cli.ts");
 const tsxLoader = createRequire(import.meta.url).resolve("tsx/esm");
+let testCliDirectory: string | undefined;
+let testCliExecutable: Promise<string> | undefined;
+
+after(async () => {
+  if (testCliDirectory) await rm(testCliDirectory, { recursive: true, force: true });
+});
 
 test("connect --all configures only detected integrations in registry order", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "code-atlas-batch5-all-"));
@@ -281,12 +287,13 @@ test("disconnect keeps guidance while another managed integration remains", asyn
 });
 
 async function runCli(root: string, args: string[], bin: string): Promise<{ stdout: string; stderr: string }> {
+  testCliExecutable ??= createTestCliExecutable();
   return execFile(process.execPath, ["--import", tsxLoader, cliPath, ...args], {
     cwd: root,
     env: {
       ...process.env,
       PATH: `${bin}:/usr/bin:/bin`,
-      CODE_ATLAS_CLI: path.resolve("dist/cli.js"),
+      CODE_ATLAS_CLI: await testCliExecutable,
       HOME: root,
       NODE_PATH: undefined,
       CODEX_HOME: path.join(root, ".codex-home"),
@@ -294,6 +301,22 @@ async function runCli(root: string, args: string[], bin: string): Promise<{ stdo
       NO_COLOR: "1",
     },
   });
+}
+
+async function createTestCliExecutable(): Promise<string> {
+  testCliDirectory = await mkdtemp(path.join(process.cwd(), "test", ".integration-cli-"));
+  const executable = path.join(testCliDirectory, "code-atlas.cjs");
+  await writeFile(executable, `#!/usr/bin/env node
+const { spawnSync } = require("node:child_process");
+const child = spawnSync(${JSON.stringify(process.execPath)}, [
+  "--import", ${JSON.stringify(tsxLoader)},
+  ${JSON.stringify(cliPath)},
+  ...process.argv.slice(2),
+], { stdio: "inherit" });
+process.exit(child.status ?? 1);
+`);
+  await chmod(executable, 0o755);
+  return executable;
 }
 
 async function exists(filePath: string): Promise<boolean> {

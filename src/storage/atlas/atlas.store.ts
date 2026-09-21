@@ -1102,6 +1102,8 @@ export class AtlasStore {
 
     this.database.exec("BEGIN IMMEDIATE;");
     try {
+      this.database.prepare("DELETE FROM generation_semantic_vectors WHERE repository_id = ? AND generation_id = ?")
+        .run(generation.repository_id, generationId);
       this.database.prepare(
         `INSERT OR REPLACE INTO generation_semantic_vectors
          (repository_id, generation_id, point_id, vector, file_path, file_hash, payload_json)
@@ -1873,6 +1875,42 @@ export class AtlasStore {
     this.database
       .prepare("DELETE FROM semantic_vectors WHERE repository_id = ? AND file_path = ?")
       .run(repoId, file);
+  }
+
+  deleteSemanticIndex(repoId: string): { vectors: number; files: number } {
+    this.database.exec("BEGIN IMMEDIATE;");
+    try {
+      const legacyVectors = this.database
+        .prepare("DELETE FROM semantic_vectors WHERE repository_id = ?")
+        .run(repoId).changes;
+      const generationVectors = this.database
+        .prepare("DELETE FROM generation_semantic_vectors WHERE repository_id = ?")
+        .run(repoId).changes;
+      const files = this.database
+        .prepare("DELETE FROM file_capability_state WHERE repository_id = ? AND capability = 'semantic'")
+        .run(repoId).changes;
+      this.database
+        .prepare("DELETE FROM index_versions WHERE repository_id = ? AND axis = 'semantic'")
+        .run(repoId);
+      const indexState = this.database.prepare(
+        "SELECT active_provenance_metadata FROM repository_index_state WHERE repository_id = ?",
+      ).get(repoId) as { active_provenance_metadata: string } | undefined;
+      if (indexState) {
+        const provenance = JSON.parse(indexState.active_provenance_metadata) as Record<string, unknown>;
+        this.database.prepare(
+          "UPDATE repository_index_state SET active_provenance_metadata = ? WHERE repository_id = ?",
+        ).run(JSON.stringify({ ...provenance, semanticEnabled: false }), repoId);
+      }
+      const hasVectors = this.database.prepare(
+        "SELECT 1 FROM semantic_vectors UNION ALL SELECT 1 FROM generation_semantic_vectors LIMIT 1",
+      ).get();
+      if (!hasVectors) this.database.prepare("DELETE FROM semantic_vector_config").run();
+      this.database.exec("COMMIT;");
+      return { vectors: Number(legacyVectors) + Number(generationVectors), files: Number(files) };
+    } catch (error) {
+      this.database.exec("ROLLBACK;");
+      throw error;
+    }
   }
 
   getVersion(repoId: string, axis: AtlasIndexAxis): string | undefined {

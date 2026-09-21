@@ -43,13 +43,19 @@ const expectedAnnotations = {
   find_cycles: [true, false, true, false],
   index_repository: [false, true, false, false],
   sync_repository: [false, true, false, false],
+  semantic_setup: [false, true, false, true],
+  semantic_status: [true, false, true, false],
+  semantic_test: [true, false, true, true],
+  semantic_upgrade: [false, true, false, true],
+  semantic_disable: [false, true, false, false],
+  semantic_clean: [false, true, false, false],
 } as const;
 
 test("MCP tools/list exposes truthful local safety annotations", async () => {
   const { client, server } = await connectedClient();
   try {
     const result = await client.listTools();
-    assert.equal(result.tools.length, 28);
+    assert.equal(result.tools.length, 34);
     const tools = new Map(result.tools.map((tool) => [tool.name, tool]));
     assert.deepEqual([...tools.keys()].sort(), Object.keys(expectedAnnotations).sort());
 

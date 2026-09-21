@@ -71,6 +71,11 @@ async function main(): Promise<void> {
       await runIndexingCommand("status", args);
       return;
     }
+    case "semantic": {
+      const { runSemanticCommand } = await import("./adapters/cli/semantic.command.js");
+      await runSemanticCommand(args);
+      return;
+    }
     case "context-read": {
       const { runContextReadCommand } = await import("./adapters/cli/context-read.command.js");
       await runContextReadCommand(args);
