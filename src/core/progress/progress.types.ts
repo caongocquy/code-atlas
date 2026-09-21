@@ -13,6 +13,7 @@ export type ProgressTask = {
 };
 
 export type ProgressRunner = {
+  update?(message: string): void;
   run<T>(
     title: string,
     work: (reporter: ProgressReporter) => Promise<T> | T,

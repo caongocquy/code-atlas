@@ -21,7 +21,7 @@ const KIND_WEIGHT: Record<GraphNode["type"], number> = {
   file: 0.55,
 };
 
-const ARCHITECTURAL_EDGE_TYPES = new Set(["calls", "imports", "extends"]);
+const ARCHITECTURAL_EDGE_TYPES = new Set(["calls", "imports", "extends", "implements", "references"]);
 
 type Counts = {
   callers: number;
@@ -91,7 +91,7 @@ function createCounts(graph: CodeGraph): Map<string, Counts> {
       addCrossFileReach(target.id, source.file);
     }
 
-    if (edge.type === "calls") {
+    if (edge.type === "calls" || edge.type === "references") {
       incomingCalls.set(edge.to, (incomingCalls.get(edge.to) ?? 0) + 1);
       outgoingCalls.set(edge.from, (outgoingCalls.get(edge.from) ?? 0) + 1);
       const dependents = incomingDependents.get(edge.to) ?? new Set<string>();
@@ -99,7 +99,7 @@ function createCounts(graph: CodeGraph): Map<string, Counts> {
       incomingDependents.set(edge.to, dependents);
     }
 
-    if (edge.type === "extends") {
+    if (edge.type === "extends" || edge.type === "implements") {
       inheritance.set(edge.to, (inheritance.get(edge.to) ?? 0) + 1);
       inheritance.set(edge.from, (inheritance.get(edge.from) ?? 0) + 1);
       const dependents = incomingDependents.get(edge.to) ?? new Set<string>();

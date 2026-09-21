@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
@@ -17,14 +18,14 @@ import { createDefaultProviders } from "../../infrastructure/provider-defaults.j
 import { getRepositoryStatus } from "../../core/repository/repository-status.service.js";
 import { resolveRepoSourcePath } from "./repository-source-path.js";
 import {
-  answerCodebase,
   inspectRetrieval,
   type RetrievalInspectOptions,
 } from "../../core/retrieval/retrieval-inspector.service.js";
 
 const app = Fastify({ logger: true });
 const repoPath = path.resolve(process.env.CODE_RAG_REPO_PATH ?? process.cwd());
-const uiRoot = path.resolve("dist/ui");
+const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const uiRoot = path.join(packageRoot, "dist", "ui");
 const defaultProviders = createDefaultProviders(repoPath);
 
 async function loadGraph() {
@@ -140,8 +141,8 @@ app.get("/api/graph/neighbors/:id", async (request, reply) => {
     const graph = await loadGraph();
     const edgeTypes = query.edgeTypes
       ?.split(",")
-      .filter((type): type is "calls" | "imports" | "extends" | "contains" =>
-        ["calls", "imports", "extends", "contains"].includes(type),
+      .filter((type): type is "calls" | "imports" | "extends" | "implements" | "references" | "contains" =>
+        ["calls", "imports", "extends", "implements", "references", "contains"].includes(type),
       );
 
     return getGraphNeighborhood(
@@ -208,21 +209,6 @@ app.post("/api/retrieval/inspect", async (request, reply) => {
     });
   } catch (error) {
     return reply.code(400).send(requestError(error));
-  }
-});
-
-app.post("/api/retrieval/answer", async (request, reply) => {
-  const body = request.body as RetrievalInspectOptions & { query?: unknown };
-  const query = typeof body?.query === "string" ? body.query : "";
-
-  try {
-    return await answerCodebase(query, {
-      ...body,
-      repoPath,
-      providers: defaultProviders,
-    });
-  } catch (error) {
-    return reply.code(503).send(requestError(error));
   }
 });
 

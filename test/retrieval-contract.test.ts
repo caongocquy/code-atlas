@@ -2,10 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { SearchResult } from "../src/core/retrieval/code-search.service.js";
-import { buildCodebaseMessages } from "../src/core/retrieval/prompt.js";
 import { buildContext } from "../src/core/retrieval/context.js";
 
-test("inspector prompt uses the exact context representation sent to the model", () => {
+test("retrieval context preserves source evidence for external consumers", () => {
   const chunks: SearchResult[] = [
     {
       score: 0.42,
@@ -18,8 +17,7 @@ test("inspector prompt uses the exact context representation sent to the model",
     },
   ];
   const context = buildContext(chunks);
-  const messages = buildCodebaseMessages("where is run?", context);
 
-  assert.equal(messages[1]?.content.endsWith(context), true);
-  assert.match(messages[1]?.content ?? "", /Question:\nwhere is run\?/);
+  assert.match(context, /src\/example\.ts/);
+  assert.match(context, /function run/);
 });

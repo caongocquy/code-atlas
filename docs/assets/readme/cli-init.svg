@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="754" viewBox="0 0 1180 754"><rect width="1180" height="754" rx="14" fill="#111827"/><circle cx="28" cy="28" r="6" fill="#fb7185"/><circle cx="48" cy="28" r="6" fill="#facc15"/><circle cx="68" cy="28" r="6" fill="#4ade80"/><text x="100" y="34" fill="#9ca3af" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="14">CodeAtlas</text><text x="28" y="78" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#22d3ee" font-weight="700">$</tspan><tspan fill="#e5e7eb"> code-atlas init</tspan></text>
+<text x="28" y="105" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#e5e7eb">CodeAtlas Init</tspan></text>
+<text x="28" y="132" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#22d3ee" font-weight="700">CODEATLAS</tspan></text>
+<text x="28" y="159" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#6b7280">Local-first change intelligence</tspan></text>
+<text x="28" y="186" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"> </text>
+<text x="28" y="213" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#e5e7eb" font-weight="700">Repository</tspan></text>
+<text x="28" y="240" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#6b7280">Repository   </tspan><tspan fill="#e5e7eb">  </tspan><tspan fill="#6b7280">demo-repo</tspan></text>
+<text x="28" y="267" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#6b7280">Git          </tspan><tspan fill="#e5e7eb">  detected</tspan></text>
+<text x="28" y="294" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#6b7280">State        </tspan><tspan fill="#e5e7eb">  .codeatlas/</tspan></text>
+<text x="28" y="321" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#6b7280">Index        </tspan><tspan fill="#e5e7eb">  </tspan><tspan fill="#4ade80">ready</tspan></text>
+<text x="28" y="348" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#6b7280">Source files </tspan><tspan fill="#e5e7eb">  5</tspan></text>
+<text x="28" y="375" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#6b7280">Indexed files</tspan><tspan fill="#e5e7eb">  3</tspan></text>
+<text x="28" y="402" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#6b7280">Symbols      </tspan><tspan fill="#e5e7eb">  8</tspan></text>
+<text x="28" y="429" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#6b7280">Relationships</tspan><tspan fill="#e5e7eb">  7</tspan></text>
+<text x="28" y="456" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#6b7280">Graph        </tspan><tspan fill="#e5e7eb">  ✓ ready</tspan></text>
+<text x="28" y="483" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#6b7280">Lexical      </tspan><tspan fill="#e5e7eb">  ✓ ready</tspan></text>
+<text x="28" y="510" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#6b7280">Guidance     </tspan><tspan fill="#e5e7eb">  updated</tspan></text>
+<text x="28" y="537" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"> </text>
+<text x="28" y="564" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#e5e7eb" font-weight="700">Result</tspan></text>
+<text x="28" y="591" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#e5e7eb">Duration  0.05s</tspan></text>
+<text x="28" y="618" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"> </text>
+<text x="28" y="645" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#e5e7eb">┌─────────────────────────┐</tspan></text>
+<text x="28" y="672" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#e5e7eb">│ </tspan><tspan fill="#4ade80">✓</tspan><tspan fill="#e5e7eb"> </tspan><tspan fill="#4ade80">CodeAtlas initialized</tspan><tspan fill="#e5e7eb">│</tspan></text>
+<text x="28" y="699" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16"><tspan fill="#e5e7eb">└─────────────────────────┘</tspan></text></svg>

@@ -83,7 +83,7 @@ test("impact follows reverse dependency edges with deterministic bounds and cove
   assert.equal(result.directImpact[0]?.direction, "inverse");
   assert.equal(result.mayBeIncomplete, true);
   assert.equal(result.summary.totalCount, 2);
-  assert.equal(result.risk, "low");
+  assert.equal(result.risk, "unknown");
 
   const bounded = analyzeImpact(graph, "target", { maxDepth: 1, maxResults: 1 });
   assert.equal(bounded.status, "resolved");

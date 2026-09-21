@@ -12,8 +12,8 @@ export class SqliteVectorStore implements VectorStore {
   private readonly store: AtlasStore;
   private readonly defaultRepositoryId?: string;
 
-  constructor(databasePath: string, defaultRepositoryId?: string) {
-    this.store = new AtlasStore(databasePath);
+  constructor(databasePath: string, defaultRepositoryId?: string, options: { readOnly?: boolean } = {}) {
+    this.store = new AtlasStore(databasePath, options);
     this.defaultRepositoryId = defaultRepositoryId;
   }
 

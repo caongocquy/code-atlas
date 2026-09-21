@@ -6,8 +6,8 @@ import type {
   ProgressRunner,
 } from "../progress/progress.types.js";
 import { GRAPH_INDEX_VERSION } from "../../config/constants.js";
-import { buildFileGraphs } from "./build-file-updates.js";
-import { buildCodeGraphWithResolution } from "./build-graph.js";
+import { buildFileGraphs, buildFileGraphsFromFacts } from "./build-file-updates.js";
+import { buildCodeGraphWithResolution, buildCodeGraphWithResolutionFromFacts } from "./build-graph.js";
 import { AtlasStore } from "../../storage/atlas/atlas.store.js";
 import type { GraphFileState, GraphFileUpdate } from "../../storage/atlas/atlas.types.js";
 import type { CodeGraph } from "./types.js";
@@ -22,6 +22,7 @@ import {
   scanRepo,
 } from "../repository/repository-files.js";
 import { graphRefreshMode } from "../repository/index-version.js";
+import type { IndexedSourceUnit } from "../indexing/indexing.types.js";
 
 export type GraphIndexOptions = {
   progress?: ProgressRunner;
@@ -29,6 +30,7 @@ export type GraphIndexOptions = {
   candidateFiles?: string[];
   fileHashes?: Map<string, string>;
   forceFullRebuild?: boolean;
+  units?: IndexedSourceUnit[];
 };
 
 export type GraphIndexResult = {
@@ -247,7 +249,9 @@ export async function indexGraph(
           title: "Building CodeGraph",
           kind: "graph",
           work: async (reporter) => {
-            const built = await buildCodeGraphWithResolution(repoPath, reporter, repoId, files);
+            const built = options.units
+              ? await buildCodeGraphWithResolutionFromFacts(repoPath, options.units, reporter, repoId)
+              : await buildCodeGraphWithResolution(repoPath, reporter, repoId, files);
             graph = built.graph;
             resolutionByFile = built.resolutionByFile;
             assertUniqueNodeIds(graph);
@@ -315,14 +319,16 @@ export async function indexGraph(
         title: "Building CodeGraph",
         kind: "graph",
         work: async (reporter) => {
-          builtFiles = await buildFileGraphs(
-            repoPath,
-            repoId,
-            impactedList,
-            currentFileSet,
-            previousGraph,
-            reporter,
-          );
+          builtFiles = options.units
+            ? await buildFileGraphsFromFacts(
+              repoPath,
+              repoId,
+              options.units.filter((unit) => impactedFiles.has(unit.relativePath)),
+              currentFileSet,
+              previousGraph,
+              reporter,
+            )
+            : await buildFileGraphs(repoPath, repoId, impactedList, currentFileSet, previousGraph, reporter);
         },
       },
       {

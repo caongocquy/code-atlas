@@ -1,0 +1,7 @@
+{
+  "language": "javascript",
+  "requiredFacts": ["bindings", "calls", "members"],
+  "normalizedEdges": [{"type":"references","sourceLogicalIdentity":"[\"phase14b-fixtures\",\"phase14b/conformance/main.js\",\"javascript\",\"class\",\"Service\",\"symbol:3\"]","targetLogicalIdentity":"[\"phase14b-fixtures\",\"phase14b/conformance/main.js\",\"javascript\",\"method\",\"refresh\",\"symbol:6\"]","strategy":"receiver-member","confidence":"strong","resolutionVersion":"14b-2","evidence":[{"kind":"member","sourceUnit":"phase14b-fixtures:phase14b/conformance/main.js:javascript","startLine":1,"endLine":1,"evidenceId":"phase14b/conformance/main.js:member:member:15"}]}],
+  "decisions": [{"status":"resolved","language":"javascript","sourceUnit":{"repositoryId":"phase14b-fixtures","relativePath":"phase14b/conformance/main.js","language":"javascript"},"edgeKind":"references","strategy":"receiver-member","confidence":"strong","targetLogicalIdentity":"[\"phase14b-fixtures\",\"phase14b/conformance/main.js\",\"javascript\",\"method\",\"refresh\",\"symbol:6\"]","attemptedStrategies":["lexical-local","imports-exports","explicit-type","constructor","assignment","parameter","return","alias","inheritance","receiver-member","chained-call","bounded-interprocedural"],"evidenceIds":["phase14b/conformance/main.js:member:member:15"],"resolutionVersion":"14b-2"}],
+  "diagnostics": [{"kind":"resolved","language":"javascript","file":"phase14b/conformance/main.js","strategy":"receiver-member","count":1}], "mayBeIncomplete": false
+}

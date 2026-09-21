@@ -4,7 +4,7 @@ import path from "node:path";
 import { parseCodeSymbols } from "./parsers/code-parser.js";
 import { extractCalls, hasParserErrors } from "./calls.js";
 import { resolveCallResults } from "./call-resolution.js";
-import { getQualifiedSymbolName } from "./build-graph.js";
+import { factsCalls, factsImportBindings, getQualifiedSymbolName } from "./build-graph.js";
 import { extractImportBindings } from "./import-bindings.js";
 import {
   extractImports,
@@ -19,9 +19,68 @@ import type {
   GraphNodeType,
 } from "./types.js";
 import { resolveMemberCallResults } from "./member-resolution.js";
-import { resolveExtendsResults } from "./extends.js";
-import { mergeResolutionCoverage, type GraphResolutionFile } from "./resolution.types.js";
+import { extractExtendsFactEvidence, resolveExtendsResults } from "./extends.js";
+import { emptyResolutionCoverage, mergeResolutionCoverage, type GraphResolutionFile } from "./resolution.types.js";
 import type { ProgressReporter } from "../progress/progress.types.js";
+import { codeChunksFromFacts, type IndexedSourceUnit } from "../indexing/indexing.types.js";
+import { symbolIdentity, symbolIdentityKey, type SymbolIdentity } from "./resolver/identities.js";
+
+export type CandidateSymbolBinding = {
+  identity: SymbolIdentity;
+  graphNodeId: string;
+};
+
+export function buildCandidateSymbolBindings(
+  repoId: string,
+  units: readonly IndexedSourceUnit[],
+  graph: CodeGraph,
+): CandidateSymbolBinding[] {
+  const bindings = units.flatMap((unit) => unit.facts.symbols.flatMap((fact) => {
+    const identity = symbolIdentity({
+      repositoryId: repoId,
+      relativePath: unit.relativePath,
+      language: unit.facts.language,
+      kind: fact.kind,
+      qualifiedName: fact.declaredQualifiedName ?? fact.name,
+      discriminator: fact.localId,
+    });
+    const nodes = graph.nodes.filter((node) => node.file === unit.relativePath
+      && node.type === fact.kind
+      && node.qualifiedName === identity.qualifiedName);
+    return nodes.length === 1 ? [{ identity, graphNodeId: nodes[0].id }] : [];
+  })).sort((left, right) => symbolIdentityKey(left.identity).localeCompare(symbolIdentityKey(right.identity)));
+  const identitiesByNode = new Map<string, Set<string>>();
+  for (const binding of bindings) {
+    const identities = identitiesByNode.get(binding.graphNodeId) ?? new Set<string>();
+    identities.add(symbolIdentityKey(binding.identity));
+    identitiesByNode.set(binding.graphNodeId, identities);
+  }
+  return bindings.filter((binding) => identitiesByNode.get(binding.graphNodeId)?.size === 1);
+}
+
+export function rebindCandidateEdges(
+  previousGraph: CodeGraph,
+  candidateSymbols: readonly CandidateSymbolBinding[],
+  resolutionVersion: string,
+): GraphEdge[] {
+  const byIdentity = new Map<string, string>();
+  const ambiguousIdentities = new Set<string>();
+  for (const { identity, graphNodeId } of candidateSymbols) {
+    const key = symbolIdentityKey(identity);
+    const existing = byIdentity.get(key);
+    if (existing !== undefined && existing !== graphNodeId) ambiguousIdentities.add(key);
+    else if (existing === undefined) byIdentity.set(key, graphNodeId);
+  }
+  return previousGraph.edges.flatMap((edge) => {
+    if (edge.type !== "calls" && edge.type !== "references" && edge.type !== "extends" && edge.type !== "implements") return [];
+    const resolution = edge.resolution;
+    if (!resolution || resolution.resolutionVersion !== resolutionVersion) return [];
+    if (ambiguousIdentities.has(resolution.sourceLogicalIdentity) || ambiguousIdentities.has(resolution.targetLogicalIdentity)) return [];
+    const from = byIdentity.get(resolution.sourceLogicalIdentity);
+    const to = byIdentity.get(resolution.targetLogicalIdentity);
+    return from && to ? [{ ...edge, from, to }] : [];
+  });
+}
 
 export type BuiltFileGraph = {
   file: string;
@@ -54,6 +113,18 @@ export async function buildFileGraphs(
   baseGraph: CodeGraph,
   reporter?: ProgressReporter,
 ): Promise<BuiltFileGraph[]> {
+  return buildFileGraphsInternal(repoPath, repoId, files, allRepoFiles, baseGraph, reporter);
+}
+
+async function buildFileGraphsInternal(
+  repoPath: string,
+  repoId: string,
+  files: string[],
+  allRepoFiles: Set<string>,
+  baseGraph: CodeGraph,
+  reporter?: ProgressReporter,
+  unitsByFile?: Map<string, IndexedSourceUnit>,
+): Promise<BuiltFileGraph[]> {
   const results: BuiltFileGraph[] = [];
 
   //
@@ -65,6 +136,7 @@ export async function buildFileGraphs(
     string,
     {
       source: string;
+      facts?: IndexedSourceUnit;
       nodes: GraphNode[];
       edges: GraphEdge[];
       resolution?: GraphResolutionFile;
@@ -80,7 +152,8 @@ export async function buildFileGraphs(
 
     const absolutePath = path.join(repoPath, relativePath);
 
-    const source = await fs.readFile(absolutePath, "utf8");
+    const indexedUnit = unitsByFile?.get(relativePath);
+    const source = indexedUnit?.source ?? await fs.readFile(absolutePath, "utf8");
 
     const fileNodeId = createGraphNodeId(
       repoId,
@@ -101,7 +174,7 @@ export async function buildFileGraphs(
 
     const edges: GraphEdge[] = [];
 
-    const chunks = parseCodeSymbols(source, relativePath);
+    const chunks = indexedUnit ? codeChunksFromFacts(indexedUnit) : parseCodeSymbols(source, relativePath);
 
     for (const chunk of chunks) {
       const nodeType = toGraphNodeType(chunk.symbolType);
@@ -138,6 +211,7 @@ export async function buildFileGraphs(
 
     localGraphs.set(relativePath, {
       source,
+      facts: indexedUnit,
       nodes,
       edges,
     });
@@ -185,9 +259,14 @@ export async function buildFileGraphs(
     // Imports.
     //
 
-    const imports = extractImports(local.source);
+    const imports = local.facts
+      ? local.facts.facts.imports.map((entry) => ({ source: entry.moduleSpecifier }))
+      : extractImports(local.source);
+    const seenImportSources = new Set<string>();
 
     for (const importReference of imports) {
+      if (seenImportSources.has(importReference.source)) continue;
+      seenImportSources.add(importReference.source);
       if (!isRelativeImport(importReference.source)) {
         continue;
       }
@@ -224,13 +303,13 @@ export async function buildFileGraphs(
     // Calls.
     //
 
-    const bindings = extractImportBindings(
-      local.source,
-      relativePath,
-      allRepoFiles,
-    );
+    const bindings = local.facts
+      ? factsImportBindings(local.facts, allRepoFiles)
+      : extractImportBindings(local.source, relativePath, allRepoFiles);
 
-    const calls = extractCalls(local.source, relativePath);
+    const calls = local.facts
+      ? factsCalls(local.facts, codeChunksFromFacts(local.facts))
+      : extractCalls(local.source, relativePath);
 
     const temporaryGraph: CodeGraph = {
       nodes: workingGraph.nodes,
@@ -244,21 +323,21 @@ export async function buildFileGraphs(
       bindings,
     );
 
-    const memberResults = resolveMemberCallResults(
-      temporaryGraph,
-      relativePath,
-      local.source,
-      calls,
-      bindings,
-    );
+    const memberResults = calls.some((call) => call.calleeName.includes("."))
+      ? resolveMemberCallResults(temporaryGraph, relativePath, local.source, calls, bindings, true)
+      : { edges: [], results: [], coverage: emptyResolutionCoverage() };
 
-    const extendsResults = resolveExtendsResults(workingGraph, relativePath, local.source, bindings);
+    const extendsResults = /\bextends\b/.test(local.source)
+      ? resolveExtendsResults(workingGraph, relativePath, local.source, bindings, extractExtendsFactEvidence(local.source))
+      : { edges: [], results: [], coverage: emptyResolutionCoverage() };
     local.edges.push(...callResults.edges, ...memberResults.edges, ...extendsResults.edges);
     const coverage = mergeResolutionCoverage(
       mergeResolutionCoverage(callResults.coverage, memberResults.coverage),
       extendsResults.coverage,
     );
-    coverage.parserErrors = hasParserErrors(local.source, relativePath) ? 1 : 0;
+    coverage.parserErrors = local.facts
+      ? local.facts.facts.parseStatus === "deterministic_partial" ? 1 : 0
+      : hasParserErrors(local.source, relativePath) ? 1 : 0;
     coverage.mayBeIncomplete = coverage.parserErrors > 0 || coverage.unsupportedDynamic > 0 || coverage.unresolvedCalls > 0 || coverage.ambiguousCalls > 0 || coverage.unresolvedExtends > 0 || coverage.ambiguousExtends > 0;
     local.resolution = {
       coverage,
@@ -275,4 +354,23 @@ export async function buildFileGraphs(
   }
 
   return results;
+}
+
+export async function buildFileGraphsFromFacts(
+  repoPath: string,
+  repoId: string,
+  units: IndexedSourceUnit[],
+  allRepoFiles: Set<string>,
+  baseGraph: CodeGraph,
+  reporter?: ProgressReporter,
+): Promise<BuiltFileGraph[]> {
+  return buildFileGraphsInternal(
+    repoPath,
+    repoId,
+    units.map((unit) => unit.relativePath),
+    allRepoFiles,
+    baseGraph,
+    reporter,
+    new Map(units.map((unit) => [unit.relativePath, unit])),
+  );
 }

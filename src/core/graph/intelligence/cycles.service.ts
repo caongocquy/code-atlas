@@ -9,7 +9,7 @@ import type {
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1_000;
 const DEFAULT_RELATIONS: CycleRelation[] = ["calls", "imports", "extends"];
-const relationPriority: Record<CycleRelation, number> = { calls: 0, extends: 1, imports: 2 };
+const relationPriority: Record<CycleRelation, number> = { calls: 0, extends: 1, implements: 1, imports: 2, references: 3 };
 
 function nodeKey(node: GraphNode): string {
   return [node.file, node.type, node.qualifiedName ?? node.name, node.id].join(":");

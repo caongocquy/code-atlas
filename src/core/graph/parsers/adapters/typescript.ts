@@ -204,6 +204,13 @@ export const typescriptAdapter: LanguageAdapter = {
   language: "typescript",
   extensions: [".ts"],
   grammar: TypeScript.typescript,
+  metadata: {
+    runtimeName: "tree-sitter",
+    runtimeVersion: "0.25.1",
+    packageName: "tree-sitter-typescript",
+    grammarName: "tree-sitter-typescript",
+    grammarVersion: "0.23.2",
+  },
   extractSymbols(root) {
     return extract(root, "typescript");
   },
@@ -213,6 +220,13 @@ export const tsxAdapter: LanguageAdapter = {
   language: "tsx",
   extensions: [".tsx"],
   grammar: TypeScript.tsx,
+  metadata: {
+    runtimeName: "tree-sitter",
+    runtimeVersion: "0.25.1",
+    packageName: "tree-sitter-typescript",
+    grammarName: "tree-sitter-typescript",
+    grammarVersion: "0.23.2",
+  },
   extractSymbols(root) {
     return extract(root, "tsx");
   },

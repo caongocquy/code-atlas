@@ -1,0 +1,176 @@
+name: Publish CodeAtlas
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Verify and publish npm package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+      published: ${{ steps.registry.outputs.published }}
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Use Trusted Publishing-compatible npm
+        run: |
+          set -euo pipefail
+          npm install --global npm@11.5.1
+          node --version
+          npm --version
+          node -e 'const [major, minor] = process.versions.node.split(".").map(Number); if (major < 22 || (major === 22 && minor < 14)) throw new Error("Trusted publishing requires Node >=22.14.0");'
+          node -e 'const [major, minor, patch] = process.argv[1].split(".").map(Number); if (major < 11 || (major === 11 && (minor < 5 || (minor === 5 && patch < 1)))) throw new Error("Trusted publishing requires npm >=11.5.1");' "$(npm --version)"
+
+      - name: Validate release tag and package metadata
+        id: metadata
+        env:
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "Invalid release tag: $TAG" >&2
+            exit 1
+          }
+          tag_version="${TAG#v}"
+          package_version="$(node -p "require('./package.json').version")"
+          package_name="$(node -p "require('./package.json').name")"
+          bin_path="$(node -p "require('./package.json').bin['code-atlas']")"
+          [[ "$tag_version" == "$package_version" ]] || {
+            echo "Tag $tag_version does not match package.json $package_version" >&2
+            exit 1
+          }
+          [[ "$package_name" == "@showdar2112/code-atlas" ]] || {
+            echo "Unexpected package name: $package_name" >&2
+            exit 1
+          }
+          [[ "$bin_path" == "dist/cli.js" ]] || {
+            echo "Unexpected code-atlas bin target: $bin_path" >&2
+            exit 1
+          }
+          echo "version=$tag_version" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies with lifecycle scripts
+        run: |
+          set -euo pipefail
+          npm install --global pnpm@11.22.0
+          pnpm --version
+          pnpm install --frozen-lockfile
+
+      - name: Run release verification
+        env:
+          CODE_ATLAS_CLI: ${{ github.workspace }}/node_modules/.bin/code-atlas
+        run: |
+          set -euo pipefail
+          pnpm run build
+          global_bin="$GITHUB_WORKSPACE/node_modules/.bin"
+          mkdir -p "$global_bin"
+          chmod +x "$GITHUB_WORKSPACE/dist/cli.js"
+          ln -sf "$GITHUB_WORKSPACE/dist/cli.js" "$global_bin/code-atlas"
+          echo "$global_bin" >> "$GITHUB_PATH"
+          export PATH="$global_bin:$PATH"
+          export CODE_ATLAS_CLI="$global_bin/code-atlas"
+          command -v code-atlas
+          pnpm run lint
+          CODE_ATLAS_CLI="$global_bin/code-atlas" node --import tsx/esm --test \
+            test/cli-presentation.test.ts \
+            test/cli-ux-cleanup.test.ts \
+            test/phase12-cli-regression.test.ts \
+            test/phase14d-reliability-contract.test.ts \
+            test/phase14d-reliability-incremental.test.ts \
+            test/phase14d-reliability-mcp.test.ts \
+            test/phase14d-reliability-public-surfaces.test.ts
+
+      - name: Validate npm pack contents
+        run: |
+          set -euo pipefail
+          npm pack --dry-run --json > "$RUNNER_TEMP/code-atlas-pack.json"
+          PACK_FILE="$RUNNER_TEMP/code-atlas-pack.json" node <<'NODE'
+          const fs = require("node:fs");
+          const pack = JSON.parse(fs.readFileSync(process.env.PACK_FILE, "utf8"))[0];
+          const required = [
+            "dist/cli.js",
+            "dist/adapters/cli/cli-output.js",
+            "dist/adapters/cli/cli-presentation.js",
+            "dist/adapters/mcp/mcp-server.js",
+            "README.md",
+            "LICENSE",
+            "package.json",
+          ];
+          const files = new Set(pack.files.map(({ path }) => path));
+          for (const file of required) {
+            if (!files.has(file)) throw new Error(`Missing package file: ${file}`);
+          }
+          if (pack.name !== "@showdar2112/code-atlas") throw new Error(`Unexpected packed name: ${pack.name}`);
+          console.log(JSON.stringify({ name: pack.name, version: pack.version, files: pack.entryCount }));
+          NODE
+
+      - name: Install and smoke-test packed artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          tarball="$(npm pack --silent --pack-destination "$RUNNER_TEMP")"
+          consumer="$RUNNER_TEMP/code-atlas-consumer"
+          repo="$RUNNER_TEMP/code-atlas-smoke-repo"
+          mkdir -p "$consumer" "$repo" "$consumer/home" "$consumer/xdg"
+          printf '{"name":"code-atlas-consumer","private":true}\n' > "$consumer/package.json"
+          printf 'export const value = 1;\n' > "$repo/source.ts"
+          (cd "$consumer" && npm install --ignore-scripts=false --no-audit --no-fund "$RUNNER_TEMP/$tarball")
+          bin="$consumer/node_modules/.bin/code-atlas"
+          HOME="$consumer/home" XDG_CONFIG_HOME="$consumer/xdg" "$bin" --help > "$RUNNER_TEMP/code-atlas-help.txt"
+          (
+            cd "$repo"
+            HOME="$consumer/home" XDG_CONFIG_HOME="$consumer/xdg" "$bin" init --no-index --no-guidance > "$RUNNER_TEMP/code-atlas-init.txt"
+            HOME="$consumer/home" XDG_CONFIG_HOME="$consumer/xdg" "$bin" status > "$RUNNER_TEMP/code-atlas-status.txt"
+            HOME="$consumer/home" XDG_CONFIG_HOME="$consumer/xdg" "$bin" init --no-index --no-guidance --json > "$RUNNER_TEMP/code-atlas-json.txt"
+          )
+          node -e 'const fs=require("node:fs"); const files=process.argv.slice(1); for (const file of files) { const text=fs.readFileSync(file,"utf8"); if (/\u001b\[/.test(text)) throw new Error(`ANSI in ${file}`); } JSON.parse(fs.readFileSync(files.at(-1),"utf8"));' "$RUNNER_TEMP/code-atlas-help.txt" "$RUNNER_TEMP/code-atlas-init.txt" "$RUNNER_TEMP/code-atlas-status.txt" "$RUNNER_TEMP/code-atlas-json.txt"
+          printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"release-smoke","version":"1"}}}\n' | "$bin" mcp > "$RUNNER_TEMP/code-atlas-mcp.txt"
+          node -e 'const fs=require("node:fs"); const text=fs.readFileSync(process.argv[1],"utf8"); if (/\u001b\[/.test(text)) throw new Error("ANSI in MCP stdout"); for (const line of text.trim().split(/\n/)) JSON.parse(line);' "$RUNNER_TEMP/code-atlas-mcp.txt"
+
+      - name: Check registry and publish once
+        id: registry
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          query_file="$RUNNER_TEMP/code-atlas-npm-query.json"
+          error_file="$RUNNER_TEMP/code-atlas-npm-query.err"
+          set +e
+          npm view "@showdar2112/code-atlas@$VERSION" version --json > "$query_file" 2> "$error_file"
+          query_status=$?
+          set -e
+          if [[ "$query_status" -eq 0 ]]; then
+            published_version="$(node -p "JSON.parse(require('fs').readFileSync('$query_file', 'utf8'))")"
+            [[ "$published_version" == "$VERSION" ]] || {
+              echo "Registry returned unexpected version: $published_version" >&2
+              exit 1
+            }
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            echo "@showdar2112/code-atlas@$VERSION already exists; skipping duplicate publish"
+          elif grep -qiE 'E404|404 Not Found' "$error_file"; then
+            npm publish --access public --provenance
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            cat "$error_file" >&2
+            exit "$query_status"
+          fi

@@ -219,6 +219,8 @@ export function graphEdgeBreakdown(graph: CodeGraph): Record<GraphEdgeType, numb
     calls: graph.edges.filter((edge) => edge.type === "calls").length,
     imports: graph.edges.filter((edge) => edge.type === "imports").length,
     extends: graph.edges.filter((edge) => edge.type === "extends").length,
+    implements: graph.edges.filter((edge) => edge.type === "implements").length,
+    references: graph.edges.filter((edge) => edge.type === "references").length,
     contains: graph.edges.filter((edge) => edge.type === "contains").length,
   };
 }

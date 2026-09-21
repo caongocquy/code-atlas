@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc">
+  <title id="title">CodeAtlas local-first code intelligence</title>
+  <desc id="desc">A repository graph connecting files, symbols, calls, impact, and coding agents.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#111827"/>
+      <stop offset="1" stop-color="#172554"/>
+    </linearGradient>
+    <linearGradient id="line" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#67e8f9"/>
+      <stop offset="1" stop-color="#a78bfa"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="1200" height="360" rx="24" fill="url(#bg)"/>
+  <path d="M0 286H1200M0 74H1200" stroke="#334155" stroke-opacity=".35"/>
+  <g fill="none" stroke="url(#line)" stroke-width="2" stroke-opacity=".68">
+    <path d="M710 68L810 126L923 84L1045 144L1138 92"/>
+    <path d="M740 232L850 176L954 240L1062 190L1150 252"/>
+    <path d="M810 126L850 176M923 84L954 240M1045 144L1062 190"/>
+  </g>
+  <g fill="#0f172a" stroke="#67e8f9" stroke-width="3" filter="url(#glow)">
+    <circle cx="710" cy="68" r="7"/><circle cx="810" cy="126" r="9"/>
+    <circle cx="923" cy="84" r="6"/><circle cx="1045" cy="144" r="10"/>
+    <circle cx="1138" cy="92" r="6"/><circle cx="740" cy="232" r="6"/>
+    <circle cx="850" cy="176" r="9"/><circle cx="954" cy="240" r="7"/>
+    <circle cx="1062" cy="190" r="6"/><circle cx="1150" cy="252" r="9"/>
+  </g>
+  <g font-family="Inter, ui-sans-serif, system-ui, sans-serif" fill="#f8fafc">
+    <text x="72" y="116" font-size="58" font-weight="700" letter-spacing="-2">CodeAtlas</text>
+    <text x="76" y="162" font-size="22" fill="#cbd5e1">Local-first code intelligence for coding agents</text>
+    <text x="76" y="224" font-size="16" fill="#94a3b8">Structure · dependencies · blast radius · evidence</text>
+    <text x="76" y="302" font-size="15" fill="#67e8f9" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">FILES  →  SYMBOLS  →  IMPACT  →  AGENT DECISIONS</text>
+  </g>
+</svg>

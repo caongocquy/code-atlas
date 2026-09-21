@@ -1,0 +1,19 @@
+{
+  "languages": ["javascript", "typescript", "tsx"],
+  "requiredFacts": [
+    "bindings",
+    "imports",
+    "exports",
+    "calls",
+    "constructors",
+    "assignments",
+    "parameters",
+    "returns",
+    "members",
+    "aliases",
+    "declaredTypes",
+    "interfaces",
+    "implements"
+  ],
+  "parseStatus": ["complete", "deterministic_partial"]
+}

@@ -14,8 +14,8 @@ const DEFAULT_MAX_DEPTH = 3;
 const DEFAULT_MAX_RESULTS = 100;
 const MAX_DEPTH = 10;
 const MAX_RESULTS = 1_000;
-const impactRelations: GraphEdgeType[] = ["calls", "imports", "extends"];
-const relationPriority: Record<GraphEdgeType, number> = { calls: 0, extends: 1, imports: 2, contains: 3 };
+const impactRelations: GraphEdgeType[] = ["calls", "imports", "extends", "implements", "references"];
+const relationPriority: Record<GraphEdgeType, number> = { calls: 0, extends: 1, implements: 1, imports: 2, references: 3, contains: 4 };
 
 function clamp(value: number | undefined, fallback: number, maximum: number): number {
   return Math.max(0, Math.min(maximum, Math.floor(value ?? fallback)));
@@ -79,7 +79,8 @@ function summarize(items: ImpactItem[], target: GraphNode): ImpactSummary {
   };
 }
 
-function riskFor(summary: ImpactSummary): "low" | "medium" | "high" {
+function riskFor(summary: ImpactSummary, mayBeIncomplete: boolean): "low" | "medium" | "high" | "unknown" {
+  if (mayBeIncomplete) return "unknown";
   if (summary.directCount >= 10 || summary.totalCount >= 50 || summary.crossDirectoryCount >= 5) return "high";
   if (summary.directCount >= 3 || summary.totalCount >= 10 || summary.crossFileCount >= 3) return "medium";
   return "low";
@@ -180,7 +181,7 @@ export function analyzeImpact(
     directImpact: items.filter((item) => item.depth === 1),
     transitiveImpact: items.filter((item) => item.depth > 1),
     summary,
-    risk: riskFor(summary),
+    risk: riskFor(summary, mayBeIncomplete),
     mayBeIncomplete,
     limits,
     truncated,

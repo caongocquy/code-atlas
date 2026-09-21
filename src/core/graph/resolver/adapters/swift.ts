@@ -1,0 +1,86 @@
+import type { FactLocalId, ParsedFactsBlob, SourceRangeFact } from "../../../facts/facts.types.js";
+import { symbolIdentity, type ModuleIdentity, type ScopeIdentity } from "../identities.js";
+import type { AdapterContext, LanguageSemanticAdapter, SemanticCapabilities, SemanticEvidenceBatch, TypeRef } from "../types.js";
+
+export const SWIFT_CAPABILITIES: SemanticCapabilities = {
+  moduleImport: "partial", localBinding: "full", directCall: "partial", declaredType: "partial", constructorType: "partial",
+  receiverMember: "partial", assignment: "partial", parameterFlow: "partial", returnFlow: "partial", inheritance: "partial",
+};
+const empty = (): SemanticEvidenceBatch => ({ bindings: [], imports: [], exports: [], typeAnnotations: [], constructors: [], assignments: [], parameters: [], returns: [], members: [], inheritance: [], implementations: [], aliases: [], modules: [], calls: [], diagnostics: [] });
+
+export function normalizeSwiftFacts(facts: ParsedFactsBlob, context: AdapterContext): SemanticEvidenceBatch {
+  const result = empty();
+  const unit = context.sourceUnit;
+  const base = (kind: string, localId: string, range: SourceRangeFact) => ({ evidenceId: `${unit.relativePath}:${kind}:${localId}` as never, sourceUnit: unit, range });
+  const symbols = new Map(facts.symbols.map((item) => [item.localId, symbolIdentity({ repositoryId: context.repositoryIdentity.id, relativePath: unit.relativePath, language: unit.language, kind: item.kind, qualifiedName: item.declaredQualifiedName ?? item.name, discriminator: item.localId })]));
+  const byName = new Map<string, typeof symbols extends Map<string, infer V> ? V[] : never>();
+  for (const item of facts.symbols) { const symbol = symbols.get(item.localId); if (symbol) byName.set(item.name, [...(byName.get(item.name) ?? []), symbol]); }
+  const scopes = new Map(facts.containmentScopes.map((item) => [item.localId, item]));
+  const scopeOf = (localId: string | undefined): ScopeIdentity => ({ sourceUnit: unit, localId: localId ?? "scope:1", parentLocalId: localId ? scopes.get(localId as FactLocalId)?.parentId : undefined });
+  const typeOf = (value: string | undefined): TypeRef | undefined => {
+    if (!value) return undefined;
+    let normalized = value.trim();
+    if (normalized.startsWith(":")) normalized = normalized.slice(1).trim();
+    if (normalized.endsWith("?")) normalized = normalized.slice(0, -1).trim();
+    const name = normalized.split(".").at(-1) ?? normalized;
+    const candidate = byName.get(name);
+    return candidate?.length === 1 ? { kind: "known", symbol: candidate[0]! } : { kind: "named", name };
+  };
+  const typeByBinding = new Map<string, TypeRef>();
+  for (const item of facts.declaredTypeAnnotations) { const type = typeOf(item.text); if (type) typeByBinding.set(item.ownerId, type); }
+  for (const item of facts.constructors) if (item.resultBindingId) { const type = typeOf(item.constructedTypeName); if (type) typeByBinding.set(item.resultBindingId, type); }
+  for (const item of facts.bindingSeeds) result.bindings = [...result.bindings, { ...base("binding", item.localId, item.range), kind: "binding", scope: scopeOf(item.ownerId), name: item.name, bindingId: item.localId, declaredType: typeByBinding.get(item.localId) }];
+  for (const item of facts.imports) result.imports = [...result.imports, { ...base("import", item.localId, item.range), kind: "import", specifier: item.moduleSpecifier, localName: item.localName, importedName: item.importedName, module: { repositoryId: context.repositoryIdentity.id, normalizedName: item.moduleSpecifier } satisfies ModuleIdentity }];
+  for (const item of facts.modules) result.modules = [...result.modules, { ...base("module", item.localId, item.range), kind: "module", module: { repositoryId: context.repositoryIdentity.id, normalizedName: item.name, relativePath: unit.relativePath }, exportedNames: [] }];
+  for (const item of facts.declaredTypeAnnotations) { const type = typeOf(item.text); if (type) result.typeAnnotations = [...result.typeAnnotations, { ...base("type", item.localId, item.range), kind: "type_annotation", subjectLocalId: item.ownerId, type }]; }
+  for (const item of facts.constructors) result.constructors = [...result.constructors, { ...base("constructor", item.localId, item.range), kind: "constructor", constructedType: typeOf(item.constructedTypeName) ?? { kind: "named", name: item.constructedTypeName }, resultBindingId: item.resultBindingId }];
+  for (const item of facts.parameters) { const callable = symbols.get(item.ownerSymbolId); if (callable) result.parameters = [...result.parameters, { ...base("parameter", item.localId, item.range), kind: "parameter", callable, index: item.index, bindingId: item.bindingId ?? item.localId, type: typeOf(item.typeText) }]; }
+  for (const item of facts.returns) { const callable = symbols.get(item.ownerSymbolId); if (callable) result.returns = [...result.returns, { ...base("return", item.localId, item.range), kind: "return", callable, type: typeOf(item.typeText) }]; }
+  for (const item of facts.implementations) { const subject = symbols.get(item.subjectId); if (subject) result.implementations = [...result.implementations, { ...base("implementation", item.localId, item.range), kind: "implementation", subject, target: typeOf(item.targetName) ?? { kind: "named", name: item.targetName }, relation: item.relationKind }]; }
+  const expressions = new Map(facts.expressions.map((item) => [item.localId, item]));
+  const parentScope = (localId: FactLocalId | undefined): FactLocalId | undefined => localId ? scopes.get(localId)?.parentId : undefined;
+  const enclosingProtocol = (localId: FactLocalId | undefined): ParsedFactsBlob["symbols"][number] | undefined => {
+    let current = localId;
+    while (current) {
+      const scope = scopes.get(current);
+      if (scope?.kind === "protocol_declaration") return facts.symbols.find((symbol) => symbol.scopeId === current && symbol.kind === "interface");
+      current = parentScope(current);
+    }
+    return undefined;
+  };
+  const protocolMethodNames = new Set(facts.symbols.filter((symbol) => symbol.kind === "method" && enclosingProtocol(symbol.scopeId)).map((symbol) => symbol.name));
+  const overloadedNames = new Set<string>();
+  for (const name of new Set(facts.symbols.filter((symbol) => ["function", "method"].includes(symbol.kind)).map((symbol) => symbol.name))) {
+    if (facts.symbols.filter((symbol) => ["function", "method"].includes(symbol.kind) && symbol.name === name).length > 1) overloadedNames.add(name);
+  }
+  for (const name of overloadedNames) {
+    const first = facts.symbols.find((symbol) => symbol.name === name)!;
+    result.diagnostics = [...result.diagnostics,
+      { ...base("overload", first.localId, first.range), code: "overload_ambiguity", message: `Swift overload set requires declared argument types: ${name}`, sourceUnit: unit },
+      { ...base("dispatch", first.localId, first.range), code: "compiler_dispatch_unknown", message: `Swift compiler dispatch is underdetermined: ${name}`, sourceUnit: unit },
+    ];
+  }
+  for (const item of facts.members) {
+    const ownerFact = item.ownerSymbolId ? facts.symbols.find((candidate) => candidate.localId === item.ownerSymbolId) : undefined;
+    const receiver = item.receiverId ? expressions.get(item.receiverId) : undefined;
+    const receiverBinding = receiver ? facts.bindingSeeds.find((binding) => binding.name === receiver.text) : undefined;
+    const ownerType = ownerFact ? typeOf(ownerFact.name) : receiverBinding ? typeByBinding.get(receiverBinding.localId) : undefined;
+    const ownerName = ownerType?.kind === "known" ? ownerType.symbol.qualifiedName : undefined;
+    const memberCandidates = facts.symbols.filter((candidate) => candidate.name === item.memberName && (!ownerName || candidate.declaredQualifiedName?.startsWith(`${ownerName}.`)));
+    const memberFact = memberCandidates.length === 1 ? memberCandidates[0] : undefined;
+    const member = memberFact ? symbols.get(memberFact.localId) : undefined;
+    if (item.receiverId) {
+      const ownerSymbol = ownerType?.kind === "known" ? facts.symbols.find((candidate) => symbols.get(candidate.localId) === ownerType.symbol) : undefined;
+      const protocolWitness = Boolean(ownerSymbol && facts.implementations.some((implementation) => implementation.subjectId === ownerSymbol.localId && implementation.relationKind === "protocol_conformance") && protocolMethodNames.has(item.memberName));
+      const overload = memberCandidates.length > 1 || overloadedNames.has(item.memberName);
+      if (protocolWitness) result.diagnostics = [...result.diagnostics, { ...base("member", item.localId, item.range), code: "protocol_witness_ambiguity", message: `Swift protocol witness dispatch is not statically unique for ${item.memberName}`, sourceUnit: unit }];
+      else if (overload) result.diagnostics = [...result.diagnostics, { ...base("member", item.localId, item.range), code: "overload_ambiguity", message: `Swift overload set is not statically unique for ${item.memberName}`, sourceUnit: unit }];
+      else if (ownerType && member) result.members = [...result.members, { ...base("member", item.localId, item.range), kind: "member", ownerType, memberName: item.memberName, member, access: item.access }];
+    } else if (ownerType && member) result.members = [...result.members, { ...base("member", item.localId, item.range), kind: "member", ownerType, memberName: item.memberName, member, access: item.access }];
+  }
+  for (const item of facts.callSites) result.calls = [...result.calls, { ...base("call", item.localId, item.range), kind: "call", site: { sourceUnit: unit, localId: item.localId }, calleeName: item.calleeText, arguments: [] }];
+  if (facts.parseStatus !== "complete" || facts.parserDiagnostics.length) result.diagnostics = [...result.diagnostics, { ...base("parse", "status", facts.containmentScopes[0]?.range ?? { startLine: 1, endLine: 1 }), code: "parse_uncertain", message: facts.parserDiagnostics.join(", ") || "Tree-sitter reported an uncertain Swift parse" }, { ...base("parse", "unsupported", facts.containmentScopes[0]?.range ?? { startLine: 1, endLine: 1 }), code: "language_capability_unsupported", message: "Partial Swift facts are not authoritative" }];
+  return result;
+}
+
+export const swiftSemanticAdapter: LanguageSemanticAdapter = { adapterId: "swift-phase14b", adapterVersion: 1, languages: ["swift"], capabilities: () => SWIFT_CAPABILITIES, normalizeFile: normalizeSwiftFacts };

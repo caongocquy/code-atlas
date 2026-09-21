@@ -15,7 +15,8 @@ import type {
 import type { EmbeddingProvider } from "../semantic/embedding-provider.js";
 import type { VectorStore } from "../semantic/vector-store.js";
 import type { RerankerProvider } from "../retrieval/reranker-provider.js";
-import type { ResolutionCoverage } from "../graph/resolution.types.js";
+import { emptyResolutionCoverage, type ResolutionCoverage } from "../graph/resolution.types.js";
+import { summarizeFrameworkCoverage, type FrameworkStatus } from "../framework/framework-coverage.js";
 import {
   embeddingProviderIdentity,
   hasVectorStoreGeneration,
@@ -30,6 +31,12 @@ import {
   scanRepo,
 } from "./repository-files.js";
 import { detectChangeDetectionMode } from "../indexing/change-detector.js";
+import { CURRENT_INDEX_VERSION_DOMAINS } from "./index-version.js";
+import type { LanguageId } from "../graph/parsers/types.js";
+import {
+  getLanguageAdapter,
+  getSupportedLanguages,
+} from "../graph/resolver/adapter-registry.js";
 
 export type RepositoryStatus = {
   changeDetection: "git" | "filesystem";
@@ -39,6 +46,7 @@ export type RepositoryStatus = {
     sourceFiles: number;
   };
   capabilities: {
+    languages: readonly LanguageId[];
     graph: CapabilitySummary;
     lexical: CapabilitySummary;
     semantic: CapabilitySummary;
@@ -52,7 +60,7 @@ export type RepositoryStatus = {
     chunks: number;
     backend: string;
     reachable: boolean;
-    status: "ready" | "not-indexed" | "stale" | "unavailable" | "not-configured";
+    status: CapabilityState;
     needsSync: boolean;
     updatedAt?: string;
     error?: string;
@@ -67,15 +75,18 @@ export type RepositoryStatus = {
       calls: number;
       imports: number;
       extends: number;
+      implements: number;
+      references: number;
       contains: number;
     };
     resolutionCoverage: ResolutionCoverage;
     sqlitePath: string;
     reachable: boolean;
-    status: "ready" | "not-indexed" | "stale";
+    status: CapabilityState;
     needsRebuild: boolean;
     updatedAt?: string;
   };
+  framework: FrameworkStatus;
 };
 
 export type RepositoryStatusProviders = {
@@ -94,6 +105,65 @@ export type CapabilitySummary = {
   lastError?: string;
 };
 
+async function providerAvailable(
+  provider: { isAvailable: () => Promise<boolean> } | undefined,
+): Promise<boolean> {
+  if (!provider) return false;
+  try {
+    return await provider.isAvailable();
+  } catch {
+    return false;
+  }
+}
+
+async function emptyStatus(
+  repoPath: string,
+  sourceFiles: number,
+  changeDetection: RepositoryStatus["changeDetection"],
+  providers: RepositoryStatusProviders,
+): Promise<RepositoryStatus> {
+  const repoId = getRepositoryIdentity(repoPath).id;
+  const semanticConfigured = providers.embeddingProvider !== undefined && providers.vectorStore !== undefined;
+  const semanticReady = semanticConfigured
+    && await providerAvailable(providers.embeddingProvider)
+    && await providerAvailable(providers.vectorStore);
+  const rerankerReady = await providerAvailable(providers.rerankerProvider);
+  return {
+    changeDetection,
+    repository: { path: repoPath, repoId, sourceFiles },
+    capabilities: {
+      languages: getSupportedLanguages(),
+      graph: { state: "not_indexed", indexedFiles: 0, itemCount: 0 },
+      lexical: { state: "not_indexed", indexedFiles: 0, itemCount: 0 },
+      semantic: { state: semanticConfigured ? (semanticReady ? "not_indexed" : "unavailable") : "not_configured", indexedFiles: 0, itemCount: 0 },
+      reranker: { state: providers.rerankerProvider ? (rerankerReady ? "ready" : "unavailable") : "not_configured", indexedFiles: 0, itemCount: 0 },
+    },
+    vector: {
+      currentVersion: VECTOR_INDEX_VERSION,
+      indexedFiles: 0,
+      points: 0,
+      chunks: 0,
+      backend: "sqlite",
+      reachable: false,
+      status: "not_indexed",
+      needsSync: false,
+    },
+    graph: {
+      currentVersion: GRAPH_INDEX_VERSION,
+      indexedFiles: 0,
+      nodes: 0,
+      edges: 0,
+      edgeBreakdown: { calls: 0, imports: 0, extends: 0, implements: 0, references: 0, contains: 0 },
+      resolutionCoverage: emptyResolutionCoverage(),
+      sqlitePath: path.join(repoPath, ".codeatlas", "atlas.db"),
+      reachable: false,
+      status: "not_indexed",
+      needsRebuild: false,
+    },
+    framework: summarizeFrameworkCoverage(undefined, ""),
+  };
+}
+
 async function currentHashes(
   repoPath: string,
   files: string[],
@@ -102,6 +172,7 @@ async function currentHashes(
 
   for (const filePath of files) {
     const relativePath = repositoryRelativePath(repoPath, filePath);
+    if (!getLanguageAdapter(relativePath)) continue;
     hashes.set(relativePath, createFileHash(await fs.readFile(filePath, "utf8")));
   }
 
@@ -154,12 +225,15 @@ function capabilityFromFiles(
       .filter(([, state]) => state.state === "ready" && state.fileHash !== undefined)
       .map(([file, state]) => [file, { fileHash: state.fileHash! }]),
   );
-  let state: CapabilityState = "not_configured";
+  const hasPersistedIndex = metadata !== undefined || states.size > 0;
+  let state: CapabilityState = hasPersistedIndex ? "ready" : "not_indexed";
 
   if (error) {
     state = "error";
   } else if (explicitState) {
     state = explicitState.state;
+  } else if (!hasPersistedIndex) {
+    state = "not_indexed";
   } else if (staleState) {
     state = "stale";
   } else if (metadata?.version !== currentVersion || hasChanges(hashes, readyStates)) {
@@ -271,6 +345,7 @@ async function getCapabilitySummaries(
   const lexicalStates = store.getFileCapabilityStates(repoId, "lexical");
 
   return {
+    languages: getSupportedLanguages(),
     graph: capabilityFromFiles(
       graphStates,
       store.getMetadata(repoId, "graph"),
@@ -291,23 +366,31 @@ async function getCapabilitySummaries(
 export async function getRepositoryStatus(
   inputPath = process.cwd(),
   providers: RepositoryStatusProviders = {},
+  options: { readOnly?: boolean } = { readOnly: true },
 ): Promise<RepositoryStatus> {
   const repoPath = canonicalRepositoryPath(path.resolve(inputPath));
   const files = await scanRepo(repoPath);
   const hashes = await currentHashes(repoPath, files);
   const changeDetection = await detectChangeDetectionMode(repoPath);
-  const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
-  const repository = store.ensureRepository(getRepositoryIdentity(repoPath));
+  const databasePath = path.join(repoPath, ".codeatlas", "atlas.db");
+  if (options.readOnly) {
+    try {
+      await fs.access(databasePath);
+    } catch {
+      return emptyStatus(repoPath, files.length, changeDetection, providers);
+    }
+  }
+  const store = new AtlasStore(databasePath, options);
+  const repository = options.readOnly
+    ? store.findRepository(getRepositoryIdentity(repoPath))
+    : store.ensureRepository(getRepositoryIdentity(repoPath));
+  if (!repository) {
+    store.close();
+    return emptyStatus(repoPath, files.length, changeDetection, providers);
+  }
   const repoId = repository.id;
 
   try {
-    const vector = await getVectorStatus(
-      repoId,
-      hashes,
-      store.getMetadata(repoId, "semantic"),
-      store.getFileCapabilityStates(repoId, "semantic"),
-      providers.vectorStore,
-    );
     const graph = await getGraphStatus(
       repoId,
       path.join(repoPath, ".codeatlas", "atlas.db"),
@@ -321,6 +404,18 @@ export async function getRepositoryStatus(
       store,
       providers,
     );
+    const vector = await getVectorStatus(
+      repoId,
+      store,
+      hashes,
+      store.getMetadata(repoId, "semantic"),
+      store.getFileCapabilityStates(repoId, "semantic"),
+      capabilities.semantic.state,
+      providers.vectorStore,
+    );
+    const frameworkSnapshot = store.loadFramework(repoId);
+    const reliability = store.loadReliabilityInputs(repoId);
+    const frameworkVersion = CURRENT_INDEX_VERSION_DOMAINS.frameworkResolutionVersion ?? "";
 
     return {
       changeDetection,
@@ -332,17 +427,27 @@ export async function getRepositoryStatus(
       capabilities,
       vector,
       graph,
+      framework: summarizeFrameworkCoverage(frameworkSnapshot, frameworkVersion, reliability, { capability: "framework_repository" }),
     };
   } finally {
     store.close();
   }
 }
 
+export async function getRepositoryStatusReadOnly(
+  inputPath = process.cwd(),
+  providers: RepositoryStatusProviders = {},
+): Promise<RepositoryStatus> {
+  return getRepositoryStatus(inputPath, providers, { readOnly: true });
+}
+
 async function getVectorStatus(
   repoId: string,
+  store: AtlasStore,
   hashes: Map<string, string>,
   metadata: IndexMetadata | undefined,
   capabilityStates: Map<string, { fileHash?: string; state: string }>,
+  semanticState: CapabilityState,
   vectorStore?: VectorStore,
 ): Promise<RepositoryStatus["vector"]> {
   const base = {
@@ -353,19 +458,12 @@ async function getVectorStatus(
     chunks: 0,
     backend: vectorStore?.id ?? "sqlite",
     reachable: false,
-    needsSync: metadata?.version !== VECTOR_INDEX_VERSION,
+    needsSync: false,
     updatedAt: metadata?.updatedAt,
   };
 
-  if (!vectorStore) {
-    return {
-      ...base,
-      status: "not-configured",
-    };
-  }
-
   try {
-    if (!(await vectorStore.isAvailable())) {
+    if (vectorStore && !(await vectorStore.isAvailable())) {
       return {
         ...base,
         status: "unavailable",
@@ -378,11 +476,19 @@ async function getVectorStatus(
         .filter(([, state]) => state.fileHash !== undefined)
         .map(([file, state]) => [file, { fileHash: state.fileHash! }]),
     );
-    const count = await vectorStore.count(repoId);
-    const needsSync = base.needsSync || hasChanges(hashes, readyStates);
-    const status = !metadata && capabilityStates.size === 0 && count === 0
-      ? "not-indexed"
-      : needsSync
+    const count = vectorStore
+      ? await vectorStore.count(repoId)
+      : store.countSemanticVectors(repoId);
+    const hasPersistedIndex = metadata !== undefined || capabilityStates.size > 0 || count > 0;
+    const semanticCanSync = semanticState !== "not_configured" &&
+      semanticState !== "unavailable" && semanticState !== "disabled";
+    const isStale = hasPersistedIndex && (
+      metadata?.version !== VECTOR_INDEX_VERSION || hasChanges(hashes, readyStates)
+    );
+    const needsSync = semanticCanSync && isStale;
+    const status = !hasPersistedIndex
+      ? "not_indexed"
+      : isStale
         ? "stale"
         : "ready";
 
@@ -421,6 +527,8 @@ async function getGraphStatus(
       calls: 0,
       imports: 0,
       extends: 0,
+      implements: 0,
+      references: 0,
       contains: 0,
     },
     resolutionCoverage: store.getGraphResolutionCoverage(repoId),
@@ -435,7 +543,7 @@ async function getGraphStatus(
   if (states.size === 0) {
     return {
       ...base,
-      status: "not-indexed",
+      status: "not_indexed",
     };
   }
 
@@ -444,6 +552,8 @@ async function getGraphStatus(
       calls: graph.edges.filter((edge) => edge.type === "calls").length,
       imports: graph.edges.filter((edge) => edge.type === "imports").length,
       extends: graph.edges.filter((edge) => edge.type === "extends").length,
+      implements: graph.edges.filter((edge) => edge.type === "implements").length,
+      references: graph.edges.filter((edge) => edge.type === "references").length,
       contains: graph.edges.filter((edge) => edge.type === "contains").length,
   };
   const needsRebuild = base.needsRebuild || hasChanges(hashes, states);

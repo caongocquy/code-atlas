@@ -5,6 +5,8 @@ import type { AtlasCapability, AtlasFileCapabilityState } from "../../storage/at
 import type { AtlasStore } from "../../storage/atlas/atlas.store.js";
 import type { ProgressRunner } from "../progress/progress.types.js";
 import { createFileHash } from "../repository/file-hash.js";
+import type { FactExtractionOutcome } from "../facts/facts-extractor.js";
+import type { ParsedFactsBlob } from "../facts/facts.types.js";
 import {
   repositoryRelativePath,
   scanRepo,
@@ -28,6 +30,77 @@ export type ChangeDetectorOptions = {
 
 type FileStates = Map<IndexCapability, Map<string, AtlasFileCapabilityState>>;
 
+const MODULE_CONFIG_FILENAMES = new Set(["package.json", "tsconfig.json", "jsconfig.json"]);
+const CONFIG_SCAN_IGNORED_DIRECTORIES = new Set([
+  ".git", ".codeatlas", ".code-rag", "node_modules", "dist", "build", ".next", ".turbo",
+  "coverage", ".dart_tool", "Pods", "DerivedData", ".gradle", ".venv", "venv", "vendor",
+  ".opencode", ".codex", ".claude", ".omo", ".agents", ".local", ".playwright-mcp",
+  ".jarvis-chat-session",
+]);
+
+export function isModuleConfigPath(relativePath: string): boolean {
+  return MODULE_CONFIG_FILENAMES.has(path.posix.basename(relativePath));
+}
+
+async function scanModuleConfigFiles(repoPath: string): Promise<string[]> {
+  const found: string[] = [];
+
+  async function visit(directory: string): Promise<void> {
+    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+      if (entry.isSymbolicLink()) continue;
+      const fullPath = path.join(directory, entry.name);
+      const relativePath = path.relative(repoPath, fullPath).split(path.sep).join("/");
+      if (entry.isDirectory()) {
+        if (!CONFIG_SCAN_IGNORED_DIRECTORIES.has(entry.name)) await visit(fullPath);
+      } else if (entry.isFile() && isModuleConfigPath(relativePath)) {
+        found.push(relativePath);
+      }
+    }
+  }
+
+  await visit(repoPath);
+  return found;
+}
+
+async function moduleConfigPaths(repoPath: string, persistedFiles: ReadonlySet<string>): Promise<string[]> {
+  const paths = new Set([...persistedFiles].filter(isModuleConfigPath));
+  for (const file of await scanModuleConfigFiles(repoPath)) paths.add(file);
+  return [...paths].sort();
+}
+
+export type SourceRead = { source: string; contentHash: string };
+export type SourceReader = (relativePath: string) => Promise<SourceRead>;
+export type StableFactExtraction = { source: string; facts: ParsedFactsBlob };
+
+export class SourceRaceError extends Error {
+  constructor(relativePath: string) {
+    super(`Source changed during fact extraction: ${relativePath}`);
+    this.name = "SourceRaceError";
+  }
+}
+
+export async function extractStableFacts(
+  relativePath: string,
+  reader: SourceReader,
+  extractor: (read: SourceRead) => FactExtractionOutcome,
+  maxAttempts = 2,
+): Promise<StableFactExtraction> {
+  const attempts = Math.min(2, Math.max(1, maxAttempts));
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const before = await reader(relativePath);
+    const extracted = extractor(before);
+    if (extracted.kind !== "facts") throw extracted.error;
+    const after = await reader(relativePath);
+
+    if (before.contentHash === after.contentHash) {
+      return { source: before.source, facts: extracted.facts };
+    }
+  }
+
+  throw new SourceRaceError(relativePath);
+}
+
 function statesByCapability(
   store: AtlasStore,
   repoId: string,
@@ -43,10 +116,12 @@ function statesByCapability(
 
 function stateNeedsIndex(
   state: AtlasFileCapabilityState | undefined,
+  binding: { contentHash: string; language: string } | undefined,
   capability: IndexCapability,
   version: string | undefined,
   fileHash: string | undefined,
 ): boolean {
+  if (!state && binding?.contentHash === fileHash) return false;
   if (!state || state.state !== "ready" || state.version !== version) {
     return true;
   }
@@ -78,8 +153,14 @@ export async function detectFilesystemChanges(
   const currentFiles = new Set(relativeFiles);
   const persistedFiles = options.store.getIndexedFilePaths(options.repoId);
   const states = statesByCapability(options.store, options.repoId, options.capabilities);
+  const activeBindings = new Map(
+    options.store.getGenerationManifest(options.repoId)?.files.map((file) => [file.relativePath, file]) ?? [],
+  );
   const candidateHint = options.candidateFiles;
-  const shouldHashAll = options.forceFullScan || candidateHint === undefined;
+  const configPaths = await moduleConfigPaths(repoPath, persistedFiles);
+  // The unified pipeline needs hashes for every current file to materialize
+  // generation bindings and distinguish fact reuse from a parser miss.
+  const shouldHashAll = true;
   const fileHashes = new Map<string, string>();
 
   const hashes = async (reporter: { setProgress(current: number, total: number): void }) => {
@@ -91,7 +172,7 @@ export async function detectFilesystemChanges(
         continue;
       }
 
-      const shouldHash = shouldHashAll || candidateHint.has(relativeFile);
+      const shouldHash = shouldHashAll || candidateHint?.has(relativeFile) === true;
 
       if (shouldHash) {
         fileHashes.set(relativeFile, createFileHash(await fs.readFile(file, "utf8")));
@@ -107,6 +188,15 @@ export async function detectFilesystemChanges(
     await hashes({ setProgress() {} });
   }
 
+  for (const relativeFile of configPaths) {
+    try {
+      fileHashes.set(relativeFile, createFileHash(await fs.readFile(path.join(repoPath, relativeFile), "utf8")));
+      currentFiles.add(relativeFile);
+    } catch {
+      // A removed config is reported from persistedFiles below.
+    }
+  }
+
   const candidateFiles = new Set<string>();
   const addedFiles: string[] = [];
   const changedFiles: string[] = [];
@@ -117,6 +207,7 @@ export async function detectFilesystemChanges(
     const needsIndex = options.forceFullScan || options.capabilities.some((capability) =>
       stateNeedsIndex(
         states.get(capability)?.get(relativeFile),
+        capability === "graph" || capability === "lexical" ? activeBindings.get(relativeFile) : undefined,
         capability,
         options.versions[capability],
         hash,
@@ -137,6 +228,17 @@ export async function detectFilesystemChanges(
   const deletedFiles = Array.from(persistedFiles)
     .filter((file) => !currentFiles.has(file))
     .sort();
+  for (const relativeFile of configPaths) {
+    const hash = fileHashes.get(relativeFile);
+    const state = states.get("graph")?.get(relativeFile);
+    const needsIndex = hash !== undefined && stateNeedsIndex(state, undefined, "graph", options.versions.graph, hash);
+    if (needsIndex) candidateFiles.add(relativeFile);
+    if (!persistedFiles.has(relativeFile)) addedFiles.push(relativeFile);
+    else if (needsIndex) changedFiles.push(relativeFile);
+  }
+  const moduleConfigChanged = configPaths.some((file) =>
+    (fileHashes.has(file) && candidateFiles.has(file)) || deletedFiles.includes(file),
+  );
 
   return {
     changeDetection: options.changeDetection ?? "filesystem",
@@ -147,5 +249,6 @@ export async function detectFilesystemChanges(
     addedFiles: addedFiles.sort(),
     changedFiles: changedFiles.sort(),
     deletedFiles,
+    ...(moduleConfigChanged ? { moduleConfigChanged: true } : {}),
   };
 }

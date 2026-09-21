@@ -1,10 +1,12 @@
 import { mkdtemp, rm } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
+import { ATLAS_SCHEMA_VERSION } from "../src/storage/atlas/atlas.schema.js";
 import type { CodeGraph } from "../src/core/graph/types.js";
 
 function canonicalGraph(graph: CodeGraph): string {
@@ -34,6 +36,9 @@ test("AtlasStore rolls back a failing replacement without partial state", async 
 
   try {
     const store = new AtlasStore(dbPath);
+    const schema = new DatabaseSync(dbPath, { readOnly: true });
+    assert.equal((schema.prepare("SELECT version FROM atlas_schema WHERE id = 1").get() as { version: string }).version, ATLAS_SCHEMA_VERSION);
+    schema.close();
 
     try {
       store.replaceGraph(repoId, committed, new Map([["a.ts", "hash-a"]]));

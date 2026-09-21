@@ -64,7 +64,7 @@ export type ImpactResult =
       directImpact: ImpactItem[];
       transitiveImpact: ImpactItem[];
       summary: ImpactSummary;
-      risk: "low" | "medium" | "high";
+      risk: "low" | "medium" | "high" | "unknown";
       mayBeIncomplete: boolean;
       limits: GraphTraversalLimits;
       truncated: boolean;

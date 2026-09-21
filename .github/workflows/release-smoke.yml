@@ -1,0 +1,180 @@
+name: Release smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-smoke:
+    name: Verify packed npm consumer
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout current master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 1
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install npm and pnpm toolchain
+        run: |
+          set -euo pipefail
+          npm install --global npm@11.5.1 pnpm@11.22.0
+          node --version
+          npm --version
+          pnpm --version
+
+      - name: Install repository dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run release verification
+        run: |
+          set -euo pipefail
+          pnpm run build
+          pnpm exec tsc --noEmit
+          pnpm run lint
+          pnpm exec node --import tsx/esm --test \
+            test/phase14f-release-workflows.test.ts \
+            test/cli-startup.test.ts \
+            test/cli-presentation.test.ts \
+            test/cli-ux-cleanup.test.ts \
+            test/integration-picker.test.ts \
+            test/phase12-cli-regression.test.ts \
+            test/phase14b-parser-packaging.test.ts \
+            test/phase14b-language-c-family.test.ts \
+            test/phase14b-language-capabilities.test.ts \
+            test/phase14b-language-dart.test.ts \
+            test/phase14b-language-ecmascript.test.ts \
+            test/phase14b-language-go.test.ts \
+            test/phase14b-language-jvm.test.ts \
+            test/phase14b-language-python.test.ts \
+            test/phase14b-language-rust.test.ts \
+            test/phase14b-language-swift.test.ts
+
+      - name: Pack and validate runtime manifest
+        id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          tarball_name="$(npm pack --silent --pack-destination "$RUNNER_TEMP")"
+          tarball="$RUNNER_TEMP/$tarball_name"
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+          tar -xOf "$tarball" package/package.json > "$RUNNER_TEMP/packed-package.json"
+          PACKED_MANIFEST="$RUNNER_TEMP/packed-package.json" node <<'NODE'
+          const fs = require("node:fs");
+          const manifest = JSON.parse(fs.readFileSync(process.env.PACKED_MANIFEST, "utf8"));
+          const runtimeFields = {
+            dependencies: manifest.dependencies,
+            optionalDependencies: manifest.optionalDependencies,
+            peerDependencies: manifest.peerDependencies,
+            bundledDependencies: manifest.bundledDependencies,
+          };
+          const serialized = JSON.stringify(runtimeFields);
+          if (/workspace:|link:|file:/.test(serialized)) {
+            throw new Error(`Local-only runtime dependency specifier found: ${serialized}`);
+          }
+          if (manifest.name !== "@showdar2112/code-atlas") throw new Error(`Unexpected package name: ${manifest.name}`);
+          if (manifest.version !== "1.3.0") throw new Error(`Unexpected package version: ${manifest.version}`);
+          if (manifest.bin?.["code-atlas"] !== "dist/cli.js") throw new Error("Unexpected CLI bin target");
+          if (manifest.publishConfig?.access !== "public") throw new Error("Package is not public");
+          console.log(JSON.stringify({ name: manifest.name, version: manifest.version, bin: manifest.bin }, null, 2));
+          NODE
+
+      - name: Install and test clean npm consumer
+        id: consumer
+        shell: bash
+        env:
+          TARBALL: ${{ steps.pack.outputs.tarball }}
+        run: |
+          set -euo pipefail
+          consumer="$RUNNER_TEMP/code-atlas-consumer"
+          fixture="$RUNNER_TEMP/code-atlas-fixture"
+          mkdir -p "$consumer" "$fixture"
+          printf '{"name":"code-atlas-release-consumer","private":true}\n' > "$consumer/package.json"
+          printf 'export function value(): number { return 1; }\n' > "$fixture/source.ts"
+          printf 'export const testValue = 1;\n' > "$fixture/source.test.ts"
+          (
+            cd "$consumer"
+            if ! npm install "$TARBALL" > "$RUNNER_TEMP/npm-consumer-install.stdout" 2> "$RUNNER_TEMP/npm-consumer-install.stderr"; then
+              cat "$RUNNER_TEMP/npm-consumer-install.stdout"
+              cat "$RUNNER_TEMP/npm-consumer-install.stderr" >&2
+              exit 1
+            fi
+          )
+          warning_count="$(grep -Eic 'ERESOLVE|peer dep' "$RUNNER_TEMP/npm-consumer-install.stderr" || true)"
+          echo "warning_count=$warning_count" >> "$GITHUB_OUTPUT"
+          bin="$consumer/node_modules/.bin/code-atlas"
+          mkdir -p "$consumer/home" "$consumer/xdg"
+          run_clean() { HOME="$consumer/home" XDG_CONFIG_HOME="$consumer/xdg" NO_COLOR=1 "$@"; }
+          for flag in --help -h --version -v; do
+            run_clean "$bin" "$flag" > "$RUNNER_TEMP/code-atlas-$flag.stdout" 2> "$RUNNER_TEMP/code-atlas-$flag.stderr"
+            test ! -s "$RUNNER_TEMP/code-atlas-$flag.stderr"
+          done
+          test "$(cat "$RUNNER_TEMP/code-atlas---version.stdout")" = "1.3.0"
+          test "$(cat "$RUNNER_TEMP/code-atlas--v.stdout")" = "1.3.0"
+          grep -q 'Usage: code-atlas' "$RUNNER_TEMP/code-atlas---help.stdout"
+          grep -q 'Usage: code-atlas' "$RUNNER_TEMP/code-atlas--h.stdout"
+          run_clean "$bin" context-compile --help > "$RUNNER_TEMP/code-atlas-context-compile-help.stdout" 2> "$RUNNER_TEMP/code-atlas-context-compile-help.stderr"
+          grep -q 'Usage: code-atlas context-compile' "$RUNNER_TEMP/code-atlas-context-compile-help.stdout"
+          (
+            cd "$fixture"
+            run_clean "$bin" init --no-guidance > "$RUNNER_TEMP/code-atlas-init.stdout" 2> "$RUNNER_TEMP/code-atlas-init.stderr"
+            run_clean "$bin" status > "$RUNNER_TEMP/code-atlas-status.stdout" 2> "$RUNNER_TEMP/code-atlas-status.stderr"
+            run_clean "$bin" index --skip-git > "$RUNNER_TEMP/code-atlas-index.stdout" 2> "$RUNNER_TEMP/code-atlas-index.stderr"
+          )
+          run_clean "$bin" init --no-index --no-guidance --json > "$RUNNER_TEMP/code-atlas-json.stdout" 2> "$RUNNER_TEMP/code-atlas-json.stderr"
+          JSON_FILE="$RUNNER_TEMP/code-atlas-json.stdout" node -e 'JSON.parse(require("node:fs").readFileSync(process.env.JSON_FILE, "utf8"))'
+          printf '%s\n%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"release-smoke","version":"1"}}}' '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | run_clean "$bin" mcp > "$RUNNER_TEMP/code-atlas-mcp.stdout" 2> "$RUNNER_TEMP/code-atlas-mcp.stderr"
+          MCP_FILE="$RUNNER_TEMP/code-atlas-mcp.stdout" node -e 'const s=require("node:fs").readFileSync(process.env.MCP_FILE,"utf8").trim(); if(!s||/\u001b\[/.test(s)) process.exit(1); for(const line of s.split(/\n/)) JSON.parse(line)'
+          grep -q 'compile_task_context' "$RUNNER_TEMP/code-atlas-mcp.stdout"
+
+      - name: Simulate global npm install
+        shell: bash
+        env:
+          TARBALL: ${{ steps.pack.outputs.tarball }}
+        run: |
+          set -euo pipefail
+          prefix="$RUNNER_TEMP/code-atlas-global"
+          if ! npm install -g "$TARBALL" --prefix "$prefix" > "$RUNNER_TEMP/npm-global-install.stdout" 2> "$RUNNER_TEMP/npm-global-install.stderr"; then
+            cat "$RUNNER_TEMP/npm-global-install.stdout"
+            cat "$RUNNER_TEMP/npm-global-install.stderr" >&2
+            exit 1
+          fi
+          HOME="$RUNNER_TEMP/global-home" XDG_CONFIG_HOME="$RUNNER_TEMP/global-xdg" "$prefix/bin/code-atlas" --version | grep -qx '1.3.0'
+          HOME="$RUNNER_TEMP/global-home" XDG_CONFIG_HOME="$RUNNER_TEMP/global-xdg" "$prefix/bin/code-atlas" --help | grep -q 'Usage: code-atlas'
+
+      - name: Publish release smoke summary
+        if: always()
+        shell: bash
+        env:
+          WARNING_COUNT: ${{ steps.consumer.outputs.warning_count }}
+        run: |
+          {
+            echo '## CodeAtlas 1.3.0 release smoke'
+            echo
+            echo 'Package: `@showdar2112/code-atlas@1.3.0`'
+            echo
+            echo '| Check | Result |'
+            echo '| --- | --- |'
+            echo '| Clean consumer install | passed if this step completed |'
+            echo '| Global install | passed if this step completed |'
+            echo '| CLI help/version | passed if this step completed |'
+            echo '| Init/status/parser/index | passed if this step completed |'
+            echo '| MCP initialize | passed if this step completed |'
+            echo "| Tree-sitter peer warning lines | ${WARNING_COUNT:-unknown} |"
+            if [ "${{ job.status }}" = success ]; then echo '**Final: RELEASE-READY**'; else echo '**Final: BLOCKED**'; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload release smoke logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-atlas-release-smoke-logs
+          path: ${{ runner.temp }}/code-atlas-*
+          if-no-files-found: ignore

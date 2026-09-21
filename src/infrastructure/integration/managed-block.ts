@@ -25,14 +25,16 @@ export function updateManagedBlock(
   startMarker: string,
   endMarker: string,
   body: string,
-  metadataComment = "<!-- code-atlas:final-newline={value} -->",
+  metadataComment?: string,
 ): string {
   const range = blockRange(text, startMarker, endMarker);
   const previousBlock = range ? text.slice(range.start, range.end) : "";
   const originalFinalNewline = previousBlock.match(/final-newline=(0|1)/)?.[1]
     ?? (text.endsWith("\n") ? "1" : "0");
-  const metadata = metadataComment.replace("{value}", originalFinalNewline);
-  const block = `${startMarker}\n${metadata}\n${body.trimEnd()}\n${endMarker}`;
+  const metadata = metadataComment
+    ? `${metadataComment.replace("{value}", originalFinalNewline)}\n`
+    : "";
+  const block = `${startMarker}\n${metadata}${body.trimEnd()}\n${endMarker}`;
 
   if (range) {
     return `${text.slice(0, range.start)}${block}${text.slice(range.end)}`;
@@ -51,7 +53,8 @@ export function removeManagedBlock(
   if (!range) return text;
 
   const block = text.slice(range.start, range.end);
-  const restoreFinalNewline = /final-newline=1/.test(block);
+  const restoreFinalNewline = /final-newline=1/.test(block)
+    || (!/final-newline=/.test(block) && text.endsWith("\n"));
 
   let start = range.start;
   const before = text.slice(0, start);

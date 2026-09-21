@@ -4,6 +4,7 @@ import {
   formatProgress,
   formatTaskTitle,
 } from "./cli-output.js";
+import { getTerminalCapabilities } from "./cli-presentation.js";
 import type { ProgressKind } from "../../core/progress/progress.types.js";
 import type {
   ProgressReporter,
@@ -65,12 +66,15 @@ export function createProgressTask(
 }
 
 export async function runProgressTasks(tasks: ListrTask[]): Promise<void> {
+  const capabilities = getTerminalCapabilities();
   await new Listr(tasks, {
-    renderer: "default",
+    renderer: capabilities.interactive || (process.env.LISTR_FORCE_TTY === "1" && process.env.CI !== "true")
+      ? "default"
+      : "simple",
     fallbackRenderer: "simple",
     rendererOptions: {
       formatOutput: "truncate",
-      clearOutput: false,
+      clearOutput: capabilities.interactive || process.env.LISTR_FORCE_TTY === "1",
       collapseSkips: true,
     },
     fallbackRendererOptions: {},
@@ -91,6 +95,33 @@ export async function runProgressTask<T>(
   ]);
 
   return result;
+}
+
+export function createInlineProgressRunner(parent: ProgressReporter): ProgressRunner {
+  return {
+    update(message: string): void {
+      parent.update(message);
+    },
+    async run<T>(
+      title: string,
+      work: (reporter: ProgressReporter) => Promise<T> | T,
+      _kind?: ProgressKind,
+    ): Promise<T> {
+      parent.setTitle?.(title);
+      try {
+        return await work(parent);
+      } finally {
+        parent.setTitle?.("Analyzing repository");
+      }
+    },
+    async runAll(tasks) {
+      for (const task of tasks) {
+        parent.setTitle?.(task.title);
+        await task.work(parent);
+      }
+      parent.setTitle?.("Analyzing repository");
+    },
+  };
 }
 
 export const cliProgressRunner: ProgressRunner = {

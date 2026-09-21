@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 470" role="img" aria-labelledby="title desc">
+  <title id="title">CodeAtlas init terminal output</title>
+  <desc id="desc">Actual CodeAtlas init output captured in a temporary repository, with the machine path normalized.</desc>
+  <rect width="560" height="470" rx="16" fill="#0b1220"/>
+  <rect width="560" height="42" rx="16" fill="#172033"/>
+  <path d="M0 42H560" stroke="#263449"/>
+  <circle cx="24" cy="21" r="6" fill="#fb7185"/><circle cx="45" cy="21" r="6" fill="#fbbf24"/><circle cx="66" cy="21" r="6" fill="#34d399"/>
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="14">
+    <text x="28" y="78" fill="#67e8f9">$</text><text x="48" y="78" fill="#e2e8f0">code-atlas init</text>
+    <text x="28" y="124" fill="#34d399">✔ CodeAtlas initialized</text>
+    <text x="28" y="166" fill="#94a3b8">Repository</text><text x="170" y="166" fill="#e2e8f0">./my-project</text>
+    <text x="28" y="194" fill="#94a3b8">Git</text><text x="170" y="194" fill="#e2e8f0">not detected</text>
+    <text x="28" y="222" fill="#94a3b8">State</text><text x="170" y="222" fill="#e2e8f0">.codeatlas/</text>
+    <text x="28" y="250" fill="#94a3b8">Index</text><text x="170" y="250" fill="#34d399">built</text>
+    <text x="28" y="278" fill="#94a3b8">Files</text><text x="170" y="278" fill="#e2e8f0">1</text>
+    <text x="28" y="306" fill="#94a3b8">Symbols</text><text x="170" y="306" fill="#e2e8f0">1</text>
+    <text x="28" y="334" fill="#94a3b8">Relations</text><text x="170" y="334" fill="#e2e8f0">0</text>
+    <text x="28" y="362" fill="#94a3b8">Graph</text><text x="170" y="362" fill="#34d399">ready</text>
+    <text x="28" y="390" fill="#94a3b8">Lexical</text><text x="170" y="390" fill="#34d399">ready</text>
+    <text x="28" y="418" fill="#94a3b8">Guidance</text><text x="170" y="418" fill="#34d399">updated</text>
+  </g>
+</svg>

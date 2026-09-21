@@ -1,5 +1,8 @@
 import path from "node:path";
 
+import type { ImportFact } from "../facts/facts.types.js";
+import type { SupportedLanguage } from "./parsers/types.js";
+
 export type ImportReference = {
   source: string;
 };
@@ -76,4 +79,46 @@ export function resolveImportCandidates(
     path.join(resolvedBase, "index.js"),
     path.join(resolvedBase, "index.jsx"),
   ];
+}
+
+export function resolveLanguageImportCandidates(
+  importerFile: string,
+  importSource: string,
+  language: SupportedLanguage,
+): string[] {
+  if (language === "python" && importSource.startsWith(".")) {
+    const relative = importSource.replace(/^\.+/, "") || path.basename(importerFile, path.extname(importerFile));
+    const base = path.normalize(path.join(path.dirname(importerFile), relative));
+    return [`${base}.py`, path.join(base, "__init__.py")];
+  }
+
+  if (language === "kotlin") {
+    const name = importSource.split(".").filter(Boolean).at(-2) ?? importSource.split(".").at(-1);
+    return name ? [path.join(path.dirname(importerFile), `${name.toLowerCase()}.kt`)] : [];
+  }
+
+  if (language === "rust") {
+    const name = importSource.split("::").filter(Boolean).at(-2) ?? importSource.split("::").at(-1);
+    return name ? [path.join(path.dirname(importerFile), `${name}.rs`), path.join(path.dirname(importerFile), name, "mod.rs")] : [];
+  }
+
+  return resolveImportCandidates(importerFile, importSource);
+}
+
+export function importFactTargets(
+  importerPath: string,
+  fact: ImportFact,
+): readonly string[] {
+  if (!isRelativeImport(fact.moduleSpecifier)) {
+    return [`module:${fact.moduleSpecifier}`];
+  }
+
+  const candidates = resolveImportCandidates(importerPath, fact.moduleSpecifier);
+  const normalizedSpecifier = path.normalize(path.join(path.dirname(importerPath), fact.moduleSpecifier));
+
+  if (candidates.includes(normalizedSpecifier)) {
+    return [normalizedSpecifier];
+  }
+
+  return candidates.map((candidate) => `unresolved:${candidate}`);
 }

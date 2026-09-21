@@ -1,8 +1,31 @@
 import type Parser from "tree-sitter";
 
-export const LANGUAGE_IDS = ["typescript", "tsx", "javascript"] as const;
+export const LANGUAGE_IDS = [
+  "typescript",
+  "tsx",
+  "javascript",
+  "python",
+  "java",
+  "kotlin",
+  "go",
+  "rust",
+  "swift",
+  "dart",
+  "c",
+  "cpp",
+] as const;
 
-export type SupportedLanguage = (typeof LANGUAGE_IDS)[number];
+export type LanguageId = (typeof LANGUAGE_IDS)[number];
+
+export type SupportedLanguage = LanguageId;
+
+export type ParserAdapterMetadata = {
+  runtimeName: "tree-sitter";
+  runtimeVersion: string;
+  packageName: string;
+  grammarName: string;
+  grammarVersion: string;
+};
 
 export type SymbolType =
   | "class"
@@ -32,5 +55,6 @@ export type LanguageAdapter = {
   language: SupportedLanguage;
   extensions: string[];
   grammar: Parser.Language;
+  metadata: ParserAdapterMetadata;
   extractSymbols(root: Parser.SyntaxNode): CodeChunk[];
 };

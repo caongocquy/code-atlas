@@ -2,6 +2,7 @@ import path from "node:path";
 
 import type { EmbeddingProvider } from "../semantic/embedding-provider.js";
 import type { VectorStore } from "../semantic/vector-store.js";
+import { SemanticProviderError } from "../semantic/semantic-provider-error.js";
 import {
   canonicalRepositoryPath,
   getRepositoryIdentity,
@@ -36,7 +37,7 @@ export async function searchCode(
   const [queryVector] = await options.embeddingProvider.embedBatch([query]);
 
   if (!queryVector) {
-    throw new Error("Embedding provider returned no query vector");
+    throw new SemanticProviderError("SEMANTIC_INVALID_RESPONSE", "Embedding provider returned no query vector.");
   }
 
   const repoId = options.repoPath
@@ -44,7 +45,12 @@ export async function searchCode(
         canonicalRepositoryPath(path.resolve(options.repoPath)),
       ).id
     : undefined;
-  const results = await options.vectorStore.search(repoId, queryVector, limit);
+  let results;
+  try {
+    results = await options.vectorStore.search(repoId, queryVector, limit);
+  } catch (cause) {
+    throw new SemanticProviderError("SEMANTIC_RUNTIME_FAILED", "Semantic vector search failed.", { cause });
+  }
 
   return results.map((point) => ({
     score: point.score,

@@ -83,3 +83,5 @@ blob-report/
 *.pid
 *.pid.lock
 *.seed
+artifacts/context-eval-report.json
+artifacts/phase15d-preflight-baseline.json

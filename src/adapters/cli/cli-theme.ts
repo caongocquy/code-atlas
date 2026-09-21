@@ -1,21 +1,34 @@
-import chalk from "chalk";
 import figures from "figures";
+import picocolors from "picocolors";
 
 import type { ProgressKind } from "../../core/progress/progress.types.js";
+import { getTerminalCapabilities } from "./cli-presentation.js";
 
 export type { ProgressKind } from "../../core/progress/progress.types.js";
 
-export const cliTheme = {
-  active: chalk.cyan,
-  success: chalk.green,
-  error: chalk.red,
-  warning: chalk.yellow,
-  info: chalk.blue,
-  muted: chalk.gray,
-  vector: chalk.cyan,
-  graph: chalk.magenta,
-  metric: chalk.white,
-  value: chalk.bold.white,
+type ThemeColor = (value: string) => string;
+
+function themeColor(style: "blue" | "bold" | "cyan" | "gray" | "green" | "magenta" | "red" | "white" | "yellow"): ThemeColor {
+  return (value) => {
+    const colors = picocolors.createColors(getTerminalCapabilities().color);
+    return colors[style](value);
+  };
+}
+
+export const cliTheme: Record<string, ThemeColor> = {
+  active: themeColor("cyan"),
+  success: themeColor("green"),
+  error: themeColor("red"),
+  warning: themeColor("yellow"),
+  info: themeColor("blue"),
+  muted: themeColor("gray"),
+  vector: themeColor("cyan"),
+  graph: themeColor("magenta"),
+  metric: themeColor("white"),
+  value: (value) => {
+    const colors = picocolors.createColors(getTerminalCapabilities().color);
+    return colors.bold(colors.white(value));
+  },
 };
 
 export const cliIcons = {

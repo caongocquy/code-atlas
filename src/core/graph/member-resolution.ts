@@ -10,10 +10,12 @@ import {
   type ResolutionResult,
 } from "./resolution.types.js";
 import type { CodeGraph, GraphEdge, GraphNode } from "./types.js";
+import { maskSourceSyntax } from "./source-mask.js";
 
 export type ObjectBinding = { localName: string; className: string; targetFile?: string };
 export type ParameterBinding = { callerQualifiedName: string; localName: string; className: string; targetFile?: string };
 export type ClassFieldBinding = { ownerClassName: string; fieldName: string; className: string; targetFile?: string };
+export type MemberResolutionFactEvidence = true;
 
 type MemberCallPath = { root: string; members: string[]; constructedClassName?: string };
 
@@ -41,6 +43,85 @@ function resolveClassBindings(typeName: string, filePath: string, imports: Map<s
   return bindings
     ? bindings.map((binding) => ({ className: binding.importedName, targetFile: binding.targetFile }))
     : [{ className: typeName, targetFile: filePath }];
+}
+
+function typedParameters(text: string): Array<{ localName: string; typeName: string; accessibility: boolean }> {
+  return text.split(",").flatMap((part) => {
+    const value = part.trim().replace(/\s*=.*$/, "");
+    const match = value.match(/^(?:(public|private|protected)\s+)?(?:readonly\s+)?([A-Za-z_$][\w$]*)\??\s*:\s*([A-Za-z_$][\w$]*)$/);
+    return match?.[2] && match[3]
+      ? [{ localName: match[2], typeName: match[3], accessibility: Boolean(match[1]) }]
+      : [];
+  });
+}
+
+function extractFactsObjectBindings(source: string, filePath: string, importBindings: ImportBinding[]): ObjectBinding[] {
+  const maskedSource = maskSourceSyntax(source);
+  const imports = bindingsByLocalName(importBindings);
+  const results: ObjectBinding[] = [];
+  const pattern = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*new\s+([A-Za-z_$][\w$]*)\s*\(/g;
+  for (const match of maskedSource.matchAll(pattern)) {
+    const localName = match[1];
+    const typeName = match[2];
+    if (!localName || !typeName) continue;
+    for (const binding of resolveClassBindings(typeName, filePath, imports)) results.push({ localName, ...binding });
+  }
+  return results;
+}
+
+function extractFactsParameterBindings(source: string, filePath: string, importBindings: ImportBinding[], calls: CallReference[]): ParameterBinding[] {
+  const maskedSource = maskSourceSyntax(source);
+  const imports = bindingsByLocalName(importBindings);
+  const results: ParameterBinding[] = [];
+  const pattern = /(?:\bfunction\s+)?([A-Za-z_$][\w$]*)\s*\(([^)]*)\)/g;
+  for (const match of maskedSource.matchAll(pattern)) {
+    const name = match[1];
+    const parameters = match[2];
+    if (!name || parameters === undefined) continue;
+    const callers = calls.filter((call) => call.callerQualifiedName === name || call.callerQualifiedName?.endsWith(`.${name}`));
+    for (const caller of callers) {
+      if (!caller.callerQualifiedName) continue;
+      for (const parameter of typedParameters(parameters)) {
+        for (const binding of resolveClassBindings(parameter.typeName, filePath, imports)) {
+          results.push({ callerQualifiedName: caller.callerQualifiedName, localName: parameter.localName, ...binding });
+        }
+      }
+    }
+  }
+  return results;
+}
+
+function extractFactsClassFieldBindings(source: string, filePath: string, importBindings: ImportBinding[]): ClassFieldBinding[] {
+  const maskedSource = maskSourceSyntax(source);
+  const imports = bindingsByLocalName(importBindings);
+  const results: ClassFieldBinding[] = [];
+  const classPattern = /\bclass\s+([A-Za-z_$][\w$]*)\b[^{]*\{/g;
+  for (const match of maskedSource.matchAll(classPattern)) {
+    const ownerClassName = match[1];
+    const openBrace = match.index === undefined ? -1 : maskedSource.indexOf("{", match.index);
+    if (!ownerClassName || openBrace < 0) continue;
+    let depth = 0;
+    let closeBrace = -1;
+    for (let index = openBrace; index < maskedSource.length; index += 1) {
+      if (maskedSource[index] === "{") depth += 1;
+      if (maskedSource[index] === "}") depth -= 1;
+      if (depth === 0) {
+        closeBrace = index;
+        break;
+      }
+    }
+    if (closeBrace < 0) continue;
+    const body = maskedSource.slice(openBrace + 1, closeBrace);
+    const constructor = body.match(/\bconstructor\s*\(([^)]*)\)/);
+    const parameters = constructor?.[1];
+    if (parameters === undefined) continue;
+    for (const parameter of typedParameters(parameters).filter((item) => item.accessibility)) {
+      for (const binding of resolveClassBindings(parameter.typeName, filePath, imports)) {
+        results.push({ ownerClassName, fieldName: parameter.localName, ...binding });
+      }
+    }
+  }
+  return results;
 }
 
 function createParser(filePath: string): Parser | undefined {
@@ -190,20 +271,30 @@ export function resolveMemberCallResults(
   source: string,
   calls: CallReference[],
   importBindings: ImportBinding[],
+  factEvidence?: MemberResolutionFactEvidence,
 ): ResolutionBatch {
   const coverage = emptyResolutionCoverage();
   const edges: GraphEdge[] = [];
   const results: ResolutionResult[] = [];
   const imports = bindingsByLocalName(importBindings);
   const objects = new Map<string, ObjectBinding[]>();
-  for (const binding of extractObjectBindings(source, file, importBindings)) objects.set(binding.localName, [...(objects.get(binding.localName) ?? []), binding]);
+  const objectBindings = factEvidence
+    ? extractFactsObjectBindings(source, file, importBindings)
+    : extractObjectBindings(source, file, importBindings);
+  for (const binding of objectBindings) objects.set(binding.localName, [...(objects.get(binding.localName) ?? []), binding]);
   const parameters = new Map<string, ParameterBinding[]>();
-  for (const binding of extractParameterBindings(source, file, importBindings)) {
+  const parameterBindings = factEvidence
+    ? extractFactsParameterBindings(source, file, importBindings, calls)
+    : extractParameterBindings(source, file, importBindings);
+  for (const binding of parameterBindings) {
     const key = [binding.callerQualifiedName, binding.localName].join(":");
     parameters.set(key, [...(parameters.get(key) ?? []), binding]);
   }
   const fields = new Map<string, ClassFieldBinding[]>();
-  for (const binding of extractClassFieldBindings(source, file, importBindings)) {
+  const classFieldBindings = factEvidence
+    ? extractFactsClassFieldBindings(source, file, importBindings)
+    : extractClassFieldBindings(source, file, importBindings);
+  for (const binding of classFieldBindings) {
     const key = [binding.ownerClassName, binding.fieldName].join(":");
     fields.set(key, [...(fields.get(key) ?? []), binding]);
   }

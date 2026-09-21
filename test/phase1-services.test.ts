@@ -46,8 +46,6 @@ test("graph service keeps deterministic incremental behavior with silent progres
 
 test("Phase 1 entrypoints delegate orchestration and services keep CLI/process boundaries", async () => {
   const graphAdapter = await source("src/adapters/cli/index-graph.command.ts");
-  const semanticAdapter = await source("src/adapters/cli/embed-repo.command.ts");
-  const askAdapter = await source("src/adapters/cli/ask-rag.command.ts");
   const graphService = await source("src/core/graph/graph-index.service.ts");
   const semanticService = await source("src/core/semantic/semantic-index.service.ts");
   const progressService = await source("src/core/progress/silent-progress-runner.ts");
@@ -55,13 +53,6 @@ test("Phase 1 entrypoints delegate orchestration and services keep CLI/process b
 
   assert.match(graphAdapter, /syncRepository/);
   assert.doesNotMatch(graphAdapter, /GraphStore|buildFileGraphs|scanRepo|createFileHash/);
-  assert.match(semanticAdapter, /indexSemantic/);
-  assert.doesNotMatch(
-    semanticAdapter,
-    /from ["'][^"']*(?:embedding|code-parser|copy-on-write)/,
-  );
-  assert.match(askAdapter, /answerCodebase/);
-  assert.doesNotMatch(askAdapter, /chatStream/);
 
   assert.match(semanticService, /EmbeddingProvider/);
   assert.match(semanticService, /VectorStore/);
@@ -69,7 +60,6 @@ test("Phase 1 entrypoints delegate orchestration and services keep CLI/process b
   assert.doesNotMatch(inspectorService, /infrastructure\/reranker\/.*\.client\.js/);
   assert.match(semanticService, /runCopyOnWriteGeneration/);
   assert.match(inspectorService, /export async function inspectRetrieval/);
-  assert.match(inspectorService, /export async function answerCodebase/);
 
   for (const serviceSource of [
     graphService,

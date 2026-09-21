@@ -1,0 +1,16 @@
+name: Phase 14B parser platform
+
+on: [push, pull_request]
+
+jobs:
+  linux-x64-native-parsers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - run: node --import tsx/esm --test test/phase14b-parser-packaging.test.ts

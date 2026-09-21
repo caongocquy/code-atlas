@@ -4,7 +4,6 @@ import assert from "node:assert/strict";
 import { expandGraphContextDetailed } from "../src/core/graph/expand.js";
 import type { InspectorChunk, RetrievalInspection } from "../src/core/retrieval/retrieval-inspector.service.js";
 import { buildContext } from "../src/core/retrieval/context.js";
-import { buildCodebaseMessages } from "../src/core/retrieval/prompt.js";
 
 function chunk(file: string, symbolName: string, source: InspectorChunk["source"]): InspectorChunk {
   return {
@@ -68,9 +67,9 @@ test("Inspector preserves stage shapes and graph expansion provenance", () => {
   );
 });
 
-test("Inspector final context is exactly the context sent in LLM messages", () => {
+test("Inspector preserves the final retrieval context for downstream consumers", () => {
   const finalContext = buildContext([chunk("src/a.ts", "run", "lexical")]);
-  const messages = buildCodebaseMessages("where is run?", finalContext);
 
-  assert.equal(messages[1]?.content.endsWith(finalContext), true);
+  assert.match(finalContext, /src\/a\.ts/);
+  assert.match(finalContext, /run/);
 });

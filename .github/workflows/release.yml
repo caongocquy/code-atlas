@@ -1,0 +1,112 @@
+name: GitHub Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  verify-npm:
+    name: Confirm npm publication
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Validate tag and package metadata
+        id: metadata
+        env:
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          version="${TAG#v}"
+          [[ "$(node -p "require('./package.json').version")" == "$version" ]] || exit 1
+          [[ "$(node -p "require('./package.json').name")" == "@showdar2112/code-atlas" ]] || exit 1
+          [[ "$(node -p "require('./package.json').bin['code-atlas']")" == "dist/cli.js" ]] || exit 1
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Verify exact npm version
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          query_file="$RUNNER_TEMP/code-atlas-npm-release-query.json"
+          error_file="$RUNNER_TEMP/code-atlas-npm-release-query.err"
+          for attempt in {1..12}; do
+            set +e
+            npm view "@showdar2112/code-atlas@$VERSION" version --json > "$query_file" 2> "$error_file"
+            query_status=$?
+            set -e
+            if [[ "$query_status" -eq 0 ]]; then
+              published_version="$(node -p "JSON.parse(require('fs').readFileSync('$query_file', 'utf8'))")"
+              [[ "$published_version" == "$VERSION" ]] || {
+                echo "Registry returned unexpected version: $published_version" >&2
+                exit 1
+              }
+              exit 0
+            fi
+            if ! grep -qiE 'E404|404 Not Found' "$error_file"; then
+              cat "$error_file" >&2
+              exit "$query_status"
+            fi
+            echo "@showdar2112/code-atlas@$VERSION is not visible in npm yet; retry $attempt/12"
+            sleep 10
+          done
+          echo "@showdar2112/code-atlas@$VERSION was not published after waiting for npm visibility" >&2
+          exit 1
+
+  github-release:
+    name: Create GitHub Release
+    needs: verify-npm
+    if: ${{ needs.verify-npm.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create or confirm GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          response_file="$RUNNER_TEMP/code-atlas-release.json"
+          error_file="$RUNNER_TEMP/code-atlas-release.err"
+          set +e
+          gh api "repos/$GH_REPO/releases/tags/$TAG" > "$response_file" 2> "$error_file"
+          response_status=$?
+          set -e
+          if [[ "$response_status" -eq 0 ]]; then
+            TAG="$TAG" RELEASE_FILE="$response_file" node -e '
+              const fs = require("node:fs");
+              const release = JSON.parse(fs.readFileSync(process.env.RELEASE_FILE, "utf8"));
+              const expectedTag = process.env.TAG;
+              if (release.tag_name !== expectedTag || release.name !== `CodeAtlas ${expectedTag}` || release.draft || release.prerelease) {
+                throw new Error("Existing GitHub Release does not match the requested stable release");
+              }
+              console.log(`Existing GitHub Release ${expectedTag} matches; skipping duplicate`);
+            '
+          elif grep -qiE 'HTTP/[^ ]+ 404|status code 404|Not Found' "$error_file"; then
+            gh release create "$TAG" --repo "$GH_REPO" --verify-tag --title "CodeAtlas $TAG" --generate-notes --latest
+          else
+            cat "$error_file" >&2
+            exit "$response_status"
+          fi

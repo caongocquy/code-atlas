@@ -10,6 +10,29 @@ export const RESOLUTION_METHODS = [
 
 export type ResolutionMethod = (typeof RESOLUTION_METHODS)[number];
 
+export type ResolutionConfidence = "exact" | "strong" | "weak";
+
+export type AcceptedResolutionConfidence = Exclude<ResolutionConfidence, "weak">;
+
+export type LanguageId = import("./parsers/types.js").SupportedLanguage;
+
+export type CompactEvidence = {
+  kind: string;
+  sourceUnit: string;
+  startLine: number;
+  endLine: number;
+  evidenceId?: string;
+};
+
+export type EdgeResolutionProvenance = {
+  strategy: string;
+  confidence: AcceptedResolutionConfidence;
+  evidence: readonly CompactEvidence[];
+  resolutionVersion: string;
+  sourceLogicalIdentity: string;
+  targetLogicalIdentity: string;
+};
+
 export type ResolutionEvidenceKind = "EXTRACTED" | "INFERRED" | "AMBIGUOUS";
 
 export type ResolutionLocation = {
@@ -23,6 +46,23 @@ export type ResolutionEvidence = {
   source: ResolutionLocation;
   detail?: string;
 };
+
+type ResolutionDecisionBase = {
+  language: LanguageId;
+  edgeKind?: import("./types.js").GraphEdgeType;
+  strategy?: string;
+};
+
+export type ResolutionDecision =
+  | (ResolutionDecisionBase & {
+      status: "resolved";
+      confidence: AcceptedResolutionConfidence;
+      targetLogicalIdentity: string;
+    })
+  | (ResolutionDecisionBase & {
+      status: "ambiguous" | "unknown" | "unsupported" | "budget_exhausted" | "weak_evidence_dropped" | "candidate_overflow";
+      reason: string;
+    });
 
 export type ResolutionResult =
   | {

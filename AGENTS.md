@@ -104,3 +104,14 @@ This project is indexed by GitNexus as **code-atlas** (604 symbols, 1692 relatio
 | Index, status, clean, wiki CLI commands      | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md`             |
 
 <!-- gitnexus:end -->
+
+<!-- code-atlas:start -->
+## CodeAtlas guidance
+
+CodeAtlas provides local code intelligence through MCP when available:
+- use `repository_status` to check indexed capabilities
+- use `search_code` and `get_symbol` for precise navigation
+- indexed capabilities: graph=stale, lexical=stale
+- if results report `mayBeIncomplete`, verify the relevant source files directly
+- fall back to direct source inspection whenever CodeAtlas is unavailable or stale
+<!-- code-atlas:end -->
