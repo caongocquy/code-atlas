@@ -1,0 +1,2513 @@
+{
+  "datasetVersion": "retrieval-eval-v2",
+  "semanticVectorFixtureId": "frozen-fixture-cosine-v1",
+  "cases": [
+    {
+      "id": "pricing-exact-symbol",
+      "profile": "all",
+      "query": "calculateInvoice",
+      "queryClass": "exact-symbol",
+      "fixture": "pricing",
+      "split": "development",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "invoice.ts",
+          "name": "calculateInvoice",
+          "symbolKind": "function"
+        }
+      ],
+      "supporting": [
+        {
+          "kind": "file",
+          "path": "invoice.ts"
+        }
+      ],
+      "irrelevant": [
+        {
+          "kind": "symbol",
+          "path": "tax.ts",
+          "name": "TaxPolicy",
+          "symbolKind": "interface"
+        },
+        {
+          "kind": "symbol",
+          "path": "tax.ts",
+          "name": "StandardTaxPolicy",
+          "symbolKind": "class"
+        },
+        {
+          "kind": "symbol",
+          "path": "tax.ts",
+          "name": "calculateTax",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "invoice.ts",
+          "name": "createInvoice",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "users.ts",
+          "name": "findById",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "orders.ts",
+          "name": "findById",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "tax.ts",
+          "name": "rateFor",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "file",
+          "path": "tax.ts"
+        },
+        {
+          "kind": "file",
+          "path": "users.ts"
+        },
+        {
+          "kind": "file",
+          "path": "orders.ts"
+        }
+      ],
+      "exhaustive": true
+    },
+    {
+      "id": "pricing-implementation",
+      "profile": "all",
+      "query": "TaxPolicy",
+      "queryClass": "implementation-discovery",
+      "fixture": "pricing",
+      "split": "development",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "tax.ts",
+          "name": "StandardTaxPolicy",
+          "symbolKind": "class"
+        }
+      ],
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "tax.ts",
+          "name": "TaxPolicy",
+          "symbolKind": "interface"
+        },
+        {
+          "kind": "symbol",
+          "path": "invoice.ts",
+          "name": "calculateInvoice",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "invoice.ts",
+          "name": "createInvoice",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "tax.ts",
+          "name": "rateFor",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "tax.ts",
+          "name": "calculateTax",
+          "symbolKind": "function"
+        }
+      ],
+      "exhaustive": false
+    },
+    {
+      "id": "pricing-caller",
+      "profile": "all",
+      "query": "calculateInvoice callers",
+      "queryClass": "caller",
+      "fixture": "pricing",
+      "split": "development",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "invoice.ts",
+          "name": "createInvoice",
+          "symbolKind": "function"
+        }
+      ],
+      "exhaustive": false,
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "invoice.ts",
+          "name": "calculateInvoice",
+          "symbolKind": "function"
+        }
+      ],
+      "irrelevant": [
+        {
+          "kind": "symbol",
+          "path": "tax.ts",
+          "name": "calculateTax",
+          "symbolKind": "function"
+        }
+      ]
+    },
+    {
+      "id": "pricing-callee",
+      "profile": "all",
+      "query": "calculateTax",
+      "queryClass": "callee",
+      "fixture": "pricing",
+      "split": "development",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "tax.ts",
+          "name": "calculateTax",
+          "symbolKind": "function"
+        }
+      ],
+      "exhaustive": false,
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "tax.ts",
+          "name": "TaxPolicy",
+          "symbolKind": "interface"
+        },
+        {
+          "kind": "symbol",
+          "path": "tax.ts",
+          "name": "rateFor",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "tax.ts",
+          "name": "StandardTaxPolicy",
+          "symbolKind": "class"
+        }
+      ],
+      "irrelevant": [
+        {
+          "kind": "symbol",
+          "path": "invoice.ts",
+          "name": "calculateInvoice",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "invoice.ts",
+          "name": "createInvoice",
+          "symbolKind": "function"
+        }
+      ]
+    },
+    {
+      "id": "pricing-cross-file",
+      "profile": "all",
+      "query": "regional tax added to an invoice subtotal",
+      "queryClass": "cross-file",
+      "fixture": "pricing",
+      "split": "development",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "invoice.ts",
+          "name": "calculateInvoice",
+          "symbolKind": "function"
+        }
+      ],
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "tax.ts",
+          "name": "calculateTax",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "invoice.ts",
+          "name": "createInvoice",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "tax.ts",
+          "name": "TaxPolicy",
+          "symbolKind": "interface"
+        },
+        {
+          "kind": "symbol",
+          "path": "tax.ts",
+          "name": "rateFor",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "tax.ts",
+          "name": "StandardTaxPolicy",
+          "symbolKind": "class"
+        }
+      ],
+      "exhaustive": false
+    },
+    {
+      "id": "pricing-ambiguous",
+      "profile": "all",
+      "query": "findById",
+      "queryClass": "ambiguous",
+      "fixture": "pricing",
+      "split": "development",
+      "relevant": [],
+      "forbidden": [
+        {
+          "kind": "symbol",
+          "path": "users.ts",
+          "name": "findById",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "orders.ts",
+          "name": "findById",
+          "symbolKind": "function"
+        }
+      ],
+      "exhaustive": false,
+      "ambiguous": true,
+      "expectation": "no-promotion"
+    },
+    {
+      "id": "pricing-natural-language",
+      "profile": "all",
+      "query": "where is the regional sales tax added before the final invoice amount",
+      "queryClass": "natural-language",
+      "fixture": "pricing",
+      "split": "development",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "invoice.ts",
+          "name": "calculateInvoice",
+          "symbolKind": "function"
+        }
+      ],
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "tax.ts",
+          "name": "calculateTax",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "invoice.ts",
+          "name": "createInvoice",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "tax.ts",
+          "name": "TaxPolicy",
+          "symbolKind": "interface"
+        },
+        {
+          "kind": "symbol",
+          "path": "tax.ts",
+          "name": "rateFor",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "tax.ts",
+          "name": "StandardTaxPolicy",
+          "symbolKind": "class"
+        }
+      ],
+      "exhaustive": false
+    },
+    {
+      "id": "pricing-lexical-only",
+      "profile": "all",
+      "query": "StandardTaxPolicy rateFor",
+      "queryClass": "lexical-only",
+      "fixture": "pricing",
+      "split": "development",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "tax.ts",
+          "name": "StandardTaxPolicy",
+          "symbolKind": "class"
+        }
+      ],
+      "exhaustive": false,
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "invoice.ts",
+          "name": "calculateInvoice",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "invoice.ts",
+          "name": "createInvoice",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "tax.ts",
+          "name": "TaxPolicy",
+          "symbolKind": "interface"
+        },
+        {
+          "kind": "symbol",
+          "path": "tax.ts",
+          "name": "rateFor",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "tax.ts",
+          "name": "calculateTax",
+          "symbolKind": "function"
+        }
+      ]
+    },
+    {
+      "id": "dispatch-semantic-paraphrase",
+      "profile": "enabled",
+      "query": "canonicalize whitespace and lowercase a request before searching",
+      "queryClass": "semantic-paraphrase",
+      "fixture": "dispatch",
+      "split": "development",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "text-utils.js",
+          "name": "normalizeTerm",
+          "symbolKind": "function"
+        }
+      ],
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "router.js",
+          "name": "routeSearch",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "router.js",
+          "name": "createSearchHandler",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "router.js",
+          "name": "function_expression@257",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "search-store.js",
+          "name": "searchStore",
+          "symbolKind": "function"
+        }
+      ],
+      "exhaustive": false,
+      "semanticStyle": "weak-lexical-overlap",
+      "semanticVectors": {
+        "queryVector": [
+          1,
+          0
+        ],
+        "candidates": [
+          {
+            "selector": {
+              "kind": "symbol",
+              "path": "text-utils.js",
+              "name": "normalizeTerm",
+              "symbolKind": "function"
+            },
+            "vector": [
+              0.98,
+              0.05
+            ]
+          },
+          {
+            "selector": {
+              "kind": "symbol",
+              "path": "router.js",
+              "name": "routeSearch",
+              "symbolKind": "function"
+            },
+            "vector": [
+              0,
+              1
+            ]
+          },
+          {
+            "selector": {
+              "kind": "symbol",
+              "path": "search-store.js",
+              "name": "searchStore",
+              "symbolKind": "function"
+            },
+            "vector": [
+              0,
+              1
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "dispatch-graph-dependent",
+      "profile": "all",
+      "query": "routeSearch",
+      "queryClass": "graph-dependent",
+      "fixture": "dispatch",
+      "split": "development",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "router.js",
+          "name": "routeSearch",
+          "symbolKind": "function"
+        }
+      ],
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "text-utils.js",
+          "name": "normalizeTerm",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "router.js",
+          "name": "createSearchHandler",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "router.js",
+          "name": "function_expression@257",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "search-store.js",
+          "name": "searchStore",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "search-store.js",
+          "name": "buildStore",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "search-store.js",
+          "name": "arrow_function@154",
+          "symbolKind": "function"
+        }
+      ],
+      "exhaustive": false
+    },
+    {
+      "id": "dispatch-semantic-disabled",
+      "profile": "disabled",
+      "query": "canonicalize whitespace and lowercase a request before searching",
+      "queryClass": "semantic-disabled",
+      "fixture": "dispatch",
+      "split": "development",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "text-utils.js",
+          "name": "normalizeTerm",
+          "symbolKind": "function"
+        }
+      ],
+      "exhaustive": false,
+      "semanticVectors": {
+        "queryVector": [
+          1,
+          0
+        ],
+        "candidates": [
+          {
+            "selector": {
+              "kind": "symbol",
+              "path": "text-utils.js",
+              "name": "normalizeTerm",
+              "symbolKind": "function"
+            },
+            "vector": [
+              0.98,
+              0.05
+            ]
+          }
+        ]
+      },
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "router.js",
+          "name": "createSearchHandler",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "router.js",
+          "name": "function_expression@257",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "search-store.js",
+          "name": "searchStore",
+          "symbolKind": "function"
+        }
+      ]
+    },
+    {
+      "id": "dispatch-semantic-unavailable",
+      "profile": "unavailable",
+      "query": "canonicalize whitespace and lowercase a request before searching",
+      "queryClass": "semantic-unavailable",
+      "fixture": "dispatch",
+      "split": "development",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "text-utils.js",
+          "name": "normalizeTerm",
+          "symbolKind": "function"
+        }
+      ],
+      "exhaustive": false,
+      "semanticVectors": {
+        "queryVector": [
+          1,
+          0
+        ],
+        "candidates": [
+          {
+            "selector": {
+              "kind": "symbol",
+              "path": "text-utils.js",
+              "name": "normalizeTerm",
+              "symbolKind": "function"
+            },
+            "vector": [
+              0.98,
+              0.05
+            ]
+          }
+        ]
+      },
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "router.js",
+          "name": "createSearchHandler",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "router.js",
+          "name": "function_expression@257",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "search-store.js",
+          "name": "searchStore",
+          "symbolKind": "function"
+        }
+      ]
+    },
+    {
+      "id": "registry-scip-cross-file",
+      "profile": "all",
+      "query": "exportReport",
+      "queryClass": "scip-improved-cross-file",
+      "fixture": "dynamic-registry",
+      "split": "held-out",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "report.ts",
+          "name": "generateReport",
+          "symbolKind": "function"
+        }
+      ],
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "exporter.ts",
+          "name": "exportReport",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "exporter.ts",
+          "name": "Exporter",
+          "symbolKind": "type"
+        }
+      ],
+      "exhaustive": false,
+      "scipPair": {
+        "seed": {
+          "kind": "symbol",
+          "path": "exporter.ts",
+          "name": "exportReport",
+          "symbolKind": "function"
+        },
+        "target": {
+          "kind": "symbol",
+          "path": "report.ts",
+          "name": "generateReport",
+          "symbolKind": "function"
+        },
+        "relation": "calls"
+      }
+    },
+    {
+      "id": "registry-natural-language",
+      "profile": "all",
+      "query": "which function renders the monthly report for a registry export",
+      "queryClass": "natural-language",
+      "fixture": "dynamic-registry",
+      "split": "held-out",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "report.ts",
+          "name": "generateReport",
+          "symbolKind": "function"
+        }
+      ],
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "exporter.ts",
+          "name": "exportReport",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "exporter.ts",
+          "name": "Exporter",
+          "symbolKind": "type"
+        }
+      ],
+      "exhaustive": false
+    },
+    {
+      "id": "pricing-path-disambiguation",
+      "query": "users module findById",
+      "queryClass": "ambiguous",
+      "fixture": "pricing",
+      "split": "development",
+      "profile": "all",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "users.ts",
+          "name": "findById",
+          "symbolKind": "function"
+        }
+      ],
+      "forbidden": [
+        {
+          "kind": "symbol",
+          "path": "orders.ts",
+          "name": "findById",
+          "symbolKind": "function"
+        }
+      ],
+      "ambiguous": true,
+      "expectation": "unique-promotion",
+      "exhaustive": false
+    },
+    {
+      "id": "catalog-exact-symbol",
+      "query": "getCatalogItem",
+      "queryClass": "exact-symbol",
+      "fixture": "catalog",
+      "split": "held-out",
+      "profile": "all",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "getCatalogItem",
+          "symbolKind": "function"
+        }
+      ],
+      "exhaustive": false,
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "browseCatalog",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "CatalogStore",
+          "symbolKind": "interface"
+        },
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "MemoryCatalogStore",
+          "symbolKind": "class"
+        },
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "load",
+          "symbolKind": "method"
+        }
+      ],
+      "irrelevant": [
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "CatalogCache",
+          "symbolKind": "class"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "load",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "clear",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "searchCatalogTitles",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "arrow_function@322",
+          "symbolKind": "function"
+        }
+      ]
+    },
+    {
+      "id": "catalog-implementation",
+      "query": "CatalogStore implementation",
+      "queryClass": "implementation-discovery",
+      "fixture": "catalog",
+      "split": "held-out",
+      "profile": "all",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "MemoryCatalogStore",
+          "symbolKind": "class"
+        }
+      ],
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "CatalogStore",
+          "symbolKind": "interface"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "browseCatalog",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "load",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "getCatalogItem",
+          "symbolKind": "function"
+        }
+      ],
+      "scipPair": {
+        "seed": {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "MemoryCatalogStore",
+          "symbolKind": "class"
+        },
+        "target": {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "CatalogStore",
+          "symbolKind": "interface"
+        },
+        "relation": "implements"
+      },
+      "exhaustive": false,
+      "irrelevant": [
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "CatalogCache",
+          "symbolKind": "class"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "load",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "clear",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "searchCatalogTitles",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "arrow_function@322",
+          "symbolKind": "function"
+        }
+      ]
+    },
+    {
+      "id": "catalog-caller",
+      "query": "getCatalogItem callers",
+      "queryClass": "caller",
+      "fixture": "catalog",
+      "split": "held-out",
+      "profile": "all",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "browseCatalog",
+          "symbolKind": "function"
+        }
+      ],
+      "exhaustive": false,
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "getCatalogItem",
+          "symbolKind": "function"
+        }
+      ],
+      "irrelevant": [
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "CatalogCache",
+          "symbolKind": "class"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "load",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "clear",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "searchCatalogTitles",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "arrow_function@322",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "CatalogStore",
+          "symbolKind": "interface"
+        },
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "MemoryCatalogStore",
+          "symbolKind": "class"
+        },
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "load",
+          "symbolKind": "method"
+        }
+      ]
+    },
+    {
+      "id": "catalog-callee",
+      "query": "browseCatalog repository call",
+      "queryClass": "callee",
+      "fixture": "catalog",
+      "split": "held-out",
+      "profile": "all",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "getCatalogItem",
+          "symbolKind": "function"
+        }
+      ],
+      "exhaustive": false,
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "browseCatalog",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "CatalogStore",
+          "symbolKind": "interface"
+        },
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "load",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "MemoryCatalogStore",
+          "symbolKind": "class"
+        }
+      ],
+      "irrelevant": [
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "CatalogCache",
+          "symbolKind": "class"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "load",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "clear",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "searchCatalogTitles",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "arrow_function@322",
+          "symbolKind": "function"
+        }
+      ]
+    },
+    {
+      "id": "catalog-cross-file",
+      "query": "catalog browsing delegates item retrieval",
+      "queryClass": "cross-file",
+      "fixture": "catalog",
+      "split": "held-out",
+      "profile": "all",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "browseCatalog",
+          "symbolKind": "function"
+        }
+      ],
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "getCatalogItem",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "CatalogStore",
+          "symbolKind": "interface"
+        },
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "MemoryCatalogStore",
+          "symbolKind": "class"
+        },
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "load",
+          "symbolKind": "method"
+        }
+      ],
+      "scipPair": {
+        "seed": {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "browseCatalog",
+          "symbolKind": "function"
+        },
+        "target": {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "getCatalogItem",
+          "symbolKind": "function"
+        },
+        "relation": "calls"
+      },
+      "exhaustive": false,
+      "irrelevant": [
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "CatalogCache",
+          "symbolKind": "class"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "load",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "clear",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "searchCatalogTitles",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "arrow_function@322",
+          "symbolKind": "function"
+        }
+      ]
+    },
+    {
+      "id": "catalog-natural-language",
+      "query": "which routine searches titles without case sensitivity",
+      "queryClass": "natural-language",
+      "fixture": "catalog",
+      "split": "held-out",
+      "profile": "all",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "searchCatalogTitles",
+          "symbolKind": "function"
+        }
+      ],
+      "exhaustive": false,
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "arrow_function@322",
+          "symbolKind": "function"
+        }
+      ],
+      "irrelevant": [
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "CatalogCache",
+          "symbolKind": "class"
+        },
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "getCatalogItem",
+          "symbolKind": "function"
+        }
+      ]
+    },
+    {
+      "id": "catalog-lexical-only",
+      "query": "CatalogCache clear",
+      "queryClass": "lexical-only",
+      "fixture": "catalog",
+      "split": "held-out",
+      "profile": "all",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "clear",
+          "symbolKind": "method"
+        }
+      ],
+      "exhaustive": false,
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "CatalogCache",
+          "symbolKind": "class"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "load",
+          "symbolKind": "method"
+        }
+      ],
+      "irrelevant": [
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "browseCatalog",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "searchCatalogTitles",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "arrow_function@322",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "CatalogStore",
+          "symbolKind": "interface"
+        },
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "MemoryCatalogStore",
+          "symbolKind": "class"
+        },
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "load",
+          "symbolKind": "method"
+        }
+      ]
+    },
+    {
+      "id": "catalog-graph-dependent",
+      "query": "browseCatalog expands to repository lookup",
+      "queryClass": "graph-dependent",
+      "fixture": "catalog",
+      "split": "held-out",
+      "profile": "all",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "getCatalogItem",
+          "symbolKind": "function"
+        }
+      ],
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "browseCatalog",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "CatalogStore",
+          "symbolKind": "interface"
+        },
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "load",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "MemoryCatalogStore",
+          "symbolKind": "class"
+        }
+      ],
+      "exhaustive": false,
+      "irrelevant": [
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "CatalogCache",
+          "symbolKind": "class"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "load",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "clear",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "searchCatalogTitles",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "arrow_function@322",
+          "symbolKind": "function"
+        }
+      ]
+    },
+    {
+      "id": "catalog-semantic-synonym",
+      "query": "retrieve a product record from its identifier",
+      "queryClass": "semantic-paraphrase",
+      "fixture": "catalog",
+      "split": "held-out",
+      "profile": "enabled",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "getCatalogItem",
+          "symbolKind": "function"
+        }
+      ],
+      "semanticStyle": "direct-synonym",
+      "semanticVectors": {
+        "queryVector": [
+          1,
+          0
+        ],
+        "candidates": [
+          {
+            "selector": {
+              "kind": "symbol",
+              "path": "repository.ts",
+              "name": "getCatalogItem",
+              "symbolKind": "function"
+            },
+            "vector": [
+              0.98,
+              0.05
+            ]
+          },
+          {
+            "selector": {
+              "kind": "symbol",
+              "path": "catalog-flow.ts",
+              "name": "browseCatalog",
+              "symbolKind": "function"
+            },
+            "vector": [
+              0,
+              1
+            ]
+          }
+        ]
+      },
+      "exhaustive": false,
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "browseCatalog",
+          "symbolKind": "function"
+        }
+      ]
+    },
+    {
+      "id": "catalog-ambiguous-load",
+      "query": "load",
+      "queryClass": "ambiguous",
+      "fixture": "catalog",
+      "split": "held-out",
+      "profile": "all",
+      "relevant": [],
+      "forbidden": [
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "load",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "load",
+          "symbolKind": "method"
+        }
+      ],
+      "ambiguous": true,
+      "expectation": "no-promotion",
+      "exhaustive": false,
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "CatalogCache",
+          "symbolKind": "class"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "browseCatalog",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "CatalogStore",
+          "symbolKind": "interface"
+        },
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "MemoryCatalogStore",
+          "symbolKind": "class"
+        },
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "getCatalogItem",
+          "symbolKind": "function"
+        }
+      ]
+    },
+    {
+      "id": "catalog-context-disambiguation",
+      "query": "CatalogCache load",
+      "queryClass": "ambiguous",
+      "fixture": "catalog",
+      "split": "held-out",
+      "profile": "all",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "load",
+          "symbolKind": "method"
+        }
+      ],
+      "forbidden": [
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "load",
+          "symbolKind": "method"
+        }
+      ],
+      "ambiguous": true,
+      "expectation": "unique-promotion",
+      "exhaustive": false,
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "CatalogCache",
+          "symbolKind": "class"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "clear",
+          "symbolKind": "method"
+        }
+      ],
+      "irrelevant": [
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "browseCatalog",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "searchCatalogTitles",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "arrow_function@322",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "CatalogStore",
+          "symbolKind": "interface"
+        },
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "MemoryCatalogStore",
+          "symbolKind": "class"
+        }
+      ]
+    },
+    {
+      "id": "catalog-semantic-disabled",
+      "query": "catalog title search",
+      "queryClass": "semantic-disabled",
+      "fixture": "catalog",
+      "split": "held-out",
+      "profile": "disabled",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "searchCatalogTitles",
+          "symbolKind": "function"
+        }
+      ],
+      "semanticStyle": "no-added-value",
+      "semanticVectors": {
+        "queryVector": [
+          1,
+          0
+        ],
+        "candidates": [
+          {
+            "selector": {
+              "kind": "symbol",
+              "path": "catalog-flow.ts",
+              "name": "searchCatalogTitles",
+              "symbolKind": "function"
+            },
+            "vector": [
+              0.98,
+              0.05
+            ]
+          },
+          {
+            "selector": {
+              "kind": "symbol",
+              "path": "repository.ts",
+              "name": "getCatalogItem",
+              "symbolKind": "function"
+            },
+            "vector": [
+              0,
+              1
+            ]
+          }
+        ]
+      },
+      "exhaustive": false,
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "arrow_function@322",
+          "symbolKind": "function"
+        }
+      ],
+      "irrelevant": [
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "CatalogCache",
+          "symbolKind": "class"
+        },
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "getCatalogItem",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "load",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-cache.ts",
+          "name": "clear",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "catalog-flow.ts",
+          "name": "browseCatalog",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "CatalogStore",
+          "symbolKind": "interface"
+        },
+        {
+          "kind": "symbol",
+          "path": "repository.ts",
+          "name": "MemoryCatalogStore",
+          "symbolKind": "class"
+        }
+      ]
+    },
+    {
+      "id": "workflow-exact-symbol",
+      "query": "runTask",
+      "queryClass": "exact-symbol",
+      "fixture": "workflow",
+      "split": "held-out",
+      "profile": "all",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "runTask",
+          "symbolKind": "function"
+        }
+      ],
+      "exhaustive": false,
+      "irrelevant": [
+        {
+          "kind": "symbol",
+          "path": "queue.ts",
+          "name": "submitWorkflow",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "queue.ts",
+          "name": "queueTask",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "retry.ts",
+          "name": "retryWorkflowStep",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "TaskPolicy",
+          "symbolKind": "interface"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "allow",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "StrictTaskPolicy",
+          "symbolKind": "class"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "executeTask",
+          "symbolKind": "function"
+        }
+      ]
+    },
+    {
+      "id": "workflow-implementation",
+      "query": "TaskPolicy implementation",
+      "queryClass": "implementation-discovery",
+      "fixture": "workflow",
+      "split": "held-out",
+      "profile": "all",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "StrictTaskPolicy",
+          "symbolKind": "class"
+        }
+      ],
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "TaskPolicy",
+          "symbolKind": "interface"
+        },
+        {
+          "kind": "symbol",
+          "path": "queue.ts",
+          "name": "submitWorkflow",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "allow",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "executeTask",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "runTaskWithPolicy",
+          "symbolKind": "function"
+        }
+      ],
+      "scipPair": {
+        "seed": {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "StrictTaskPolicy",
+          "symbolKind": "class"
+        },
+        "target": {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "TaskPolicy",
+          "symbolKind": "interface"
+        },
+        "relation": "implements"
+      },
+      "exhaustive": false,
+      "irrelevant": [
+        {
+          "kind": "symbol",
+          "path": "queue.ts",
+          "name": "queueTask",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "retry.ts",
+          "name": "retryWorkflowStep",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "runTask",
+          "symbolKind": "function"
+        }
+      ]
+    },
+    {
+      "id": "workflow-caller",
+      "query": "executeTask callers",
+      "queryClass": "caller",
+      "fixture": "workflow",
+      "split": "held-out",
+      "profile": "all",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "runTaskWithPolicy",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "queue.ts",
+          "name": "submitWorkflow",
+          "symbolKind": "function"
+        }
+      ],
+      "exhaustive": false,
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "TaskPolicy",
+          "symbolKind": "interface"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "allow",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "StrictTaskPolicy",
+          "symbolKind": "class"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "executeTask",
+          "symbolKind": "function"
+        }
+      ],
+      "irrelevant": [
+        {
+          "kind": "symbol",
+          "path": "queue.ts",
+          "name": "queueTask",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "retry.ts",
+          "name": "retryWorkflowStep",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "runTask",
+          "symbolKind": "function"
+        }
+      ]
+    },
+    {
+      "id": "workflow-callee",
+      "query": "runTaskWithPolicy dependency",
+      "queryClass": "callee",
+      "fixture": "workflow",
+      "split": "held-out",
+      "profile": "all",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "executeTask",
+          "symbolKind": "function"
+        }
+      ],
+      "exhaustive": false,
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "queue.ts",
+          "name": "submitWorkflow",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "TaskPolicy",
+          "symbolKind": "interface"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "allow",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "StrictTaskPolicy",
+          "symbolKind": "class"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "runTaskWithPolicy",
+          "symbolKind": "function"
+        }
+      ],
+      "irrelevant": [
+        {
+          "kind": "symbol",
+          "path": "queue.ts",
+          "name": "queueTask",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "retry.ts",
+          "name": "retryWorkflowStep",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "runTask",
+          "symbolKind": "function"
+        }
+      ]
+    },
+    {
+      "id": "workflow-cross-file",
+      "query": "queue submission dispatches validated task",
+      "queryClass": "cross-file",
+      "fixture": "workflow",
+      "split": "held-out",
+      "profile": "all",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "queue.ts",
+          "name": "submitWorkflow",
+          "symbolKind": "function"
+        }
+      ],
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "executeTask",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "TaskPolicy",
+          "symbolKind": "interface"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "allow",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "StrictTaskPolicy",
+          "symbolKind": "class"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "runTaskWithPolicy",
+          "symbolKind": "function"
+        }
+      ],
+      "exhaustive": false,
+      "irrelevant": [
+        {
+          "kind": "symbol",
+          "path": "queue.ts",
+          "name": "queueTask",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "retry.ts",
+          "name": "retryWorkflowStep",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "runTask",
+          "symbolKind": "function"
+        }
+      ]
+    },
+    {
+      "id": "workflow-natural-language",
+      "query": "where is a failed workflow step retried",
+      "queryClass": "natural-language",
+      "fixture": "workflow",
+      "split": "held-out",
+      "profile": "all",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "retry.ts",
+          "name": "retryWorkflowStep",
+          "symbolKind": "function"
+        }
+      ],
+      "exhaustive": false,
+      "irrelevant": [
+        {
+          "kind": "symbol",
+          "path": "queue.ts",
+          "name": "submitWorkflow",
+          "symbolKind": "function"
+        }
+      ]
+    },
+    {
+      "id": "workflow-lexical-only",
+      "query": "StrictTaskPolicy allow",
+      "queryClass": "lexical-only",
+      "fixture": "workflow",
+      "split": "held-out",
+      "profile": "all",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "allow",
+          "symbolKind": "method"
+        }
+      ],
+      "exhaustive": false,
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "queue.ts",
+          "name": "submitWorkflow",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "TaskPolicy",
+          "symbolKind": "interface"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "StrictTaskPolicy",
+          "symbolKind": "class"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "executeTask",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "runTaskWithPolicy",
+          "symbolKind": "function"
+        }
+      ],
+      "irrelevant": [
+        {
+          "kind": "symbol",
+          "path": "queue.ts",
+          "name": "queueTask",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "retry.ts",
+          "name": "retryWorkflowStep",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "runTask",
+          "symbolKind": "function"
+        }
+      ]
+    },
+    {
+      "id": "workflow-graph-dependent",
+      "query": "submitWorkflow queue",
+      "queryClass": "graph-dependent",
+      "fixture": "workflow",
+      "split": "held-out",
+      "profile": "all",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "queue.ts",
+          "name": "submitWorkflow",
+          "symbolKind": "function"
+        }
+      ],
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "executeTask",
+          "symbolKind": "function"
+        }
+      ],
+      "exhaustive": false,
+      "irrelevant": [
+        {
+          "kind": "symbol",
+          "path": "queue.ts",
+          "name": "queueTask",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "retry.ts",
+          "name": "retryWorkflowStep",
+          "symbolKind": "function"
+        }
+      ]
+    },
+    {
+      "id": "workflow-semantic-mixed",
+      "query": "complete a work unit only after policy validation",
+      "queryClass": "semantic-paraphrase",
+      "fixture": "workflow",
+      "split": "held-out",
+      "profile": "enabled",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "executeTask",
+          "symbolKind": "function"
+        }
+      ],
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "TaskPolicy",
+          "symbolKind": "interface"
+        },
+        {
+          "kind": "symbol",
+          "path": "queue.ts",
+          "name": "submitWorkflow",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "StrictTaskPolicy",
+          "symbolKind": "class"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "allow",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "runTaskWithPolicy",
+          "symbolKind": "function"
+        }
+      ],
+      "semanticStyle": "mixed",
+      "semanticVectors": {
+        "queryVector": [
+          1,
+          0
+        ],
+        "candidates": [
+          {
+            "selector": {
+              "kind": "symbol",
+              "path": "task.ts",
+              "name": "executeTask",
+              "symbolKind": "function"
+            },
+            "vector": [
+              0.98,
+              0.05
+            ]
+          },
+          {
+            "selector": {
+              "kind": "symbol",
+              "path": "queue.ts",
+              "name": "submitWorkflow",
+              "symbolKind": "function"
+            },
+            "vector": [
+              0,
+              1
+            ]
+          },
+          {
+            "selector": {
+              "kind": "symbol",
+              "path": "task.ts",
+              "name": "StrictTaskPolicy",
+              "symbolKind": "class"
+            },
+            "vector": [
+              0,
+              1
+            ]
+          }
+        ]
+      },
+      "exhaustive": false,
+      "irrelevant": [
+        {
+          "kind": "symbol",
+          "path": "retry.ts",
+          "name": "retryWorkflowStep",
+          "symbolKind": "function"
+        }
+      ]
+    },
+    {
+      "id": "workflow-scip-cross-file",
+      "query": "submitWorkflow calls executeTask",
+      "queryClass": "scip-improved-cross-file",
+      "fixture": "workflow",
+      "split": "held-out",
+      "profile": "all",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "executeTask",
+          "symbolKind": "function"
+        }
+      ],
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "queue.ts",
+          "name": "submitWorkflow",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "TaskPolicy",
+          "symbolKind": "interface"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "allow",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "StrictTaskPolicy",
+          "symbolKind": "class"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "runTaskWithPolicy",
+          "symbolKind": "function"
+        }
+      ],
+      "scipPair": {
+        "seed": {
+          "kind": "symbol",
+          "path": "queue.ts",
+          "name": "submitWorkflow",
+          "symbolKind": "function"
+        },
+        "target": {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "executeTask",
+          "symbolKind": "function"
+        },
+        "relation": "calls"
+      },
+      "exhaustive": false,
+      "irrelevant": [
+        {
+          "kind": "symbol",
+          "path": "queue.ts",
+          "name": "queueTask",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "retry.ts",
+          "name": "retryWorkflowStep",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "runTask",
+          "symbolKind": "function"
+        }
+      ]
+    },
+    {
+      "id": "workflow-ambiguous-run-task",
+      "query": "exact runTask symbol, not its longer variants",
+      "queryClass": "ambiguous",
+      "fixture": "workflow",
+      "split": "held-out",
+      "profile": "all",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "runTask",
+          "symbolKind": "function"
+        }
+      ],
+      "forbidden": [
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "runTaskWithPolicy",
+          "symbolKind": "function"
+        }
+      ],
+      "ambiguous": true,
+      "expectation": "unique-promotion",
+      "exhaustive": false,
+      "irrelevant": [
+        {
+          "kind": "symbol",
+          "path": "queue.ts",
+          "name": "submitWorkflow",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "queue.ts",
+          "name": "queueTask",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "retry.ts",
+          "name": "retryWorkflowStep",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "TaskPolicy",
+          "symbolKind": "interface"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "allow",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "StrictTaskPolicy",
+          "symbolKind": "class"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "executeTask",
+          "symbolKind": "function"
+        }
+      ]
+    },
+    {
+      "id": "workflow-semantic-unavailable",
+      "query": "complete a task through its validation policy",
+      "queryClass": "semantic-unavailable",
+      "fixture": "workflow",
+      "split": "held-out",
+      "profile": "unavailable",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "executeTask",
+          "symbolKind": "function"
+        }
+      ],
+      "semanticVectors": {
+        "queryVector": [
+          1,
+          0
+        ],
+        "candidates": [
+          {
+            "selector": {
+              "kind": "symbol",
+              "path": "task.ts",
+              "name": "executeTask",
+              "symbolKind": "function"
+            },
+            "vector": [
+              0.98,
+              0.05
+            ]
+          },
+          {
+            "selector": {
+              "kind": "symbol",
+              "path": "queue.ts",
+              "name": "submitWorkflow",
+              "symbolKind": "function"
+            },
+            "vector": [
+              0,
+              1
+            ]
+          }
+        ]
+      },
+      "exhaustive": false,
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "queue.ts",
+          "name": "submitWorkflow",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "TaskPolicy",
+          "symbolKind": "interface"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "allow",
+          "symbolKind": "method"
+        },
+        {
+          "kind": "symbol",
+          "path": "task.ts",
+          "name": "StrictTaskPolicy",
+          "symbolKind": "class"
+        }
+      ],
+      "irrelevant": [
+        {
+          "kind": "symbol",
+          "path": "queue.ts",
+          "name": "queueTask",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "retry.ts",
+          "name": "retryWorkflowStep",
+          "symbolKind": "function"
+        }
+      ]
+    },
+    {
+      "id": "dispatch-caller",
+      "query": "searchStore callers in the request path",
+      "queryClass": "caller",
+      "fixture": "dispatch",
+      "split": "development",
+      "profile": "all",
+      "relevant": [
+        {
+          "kind": "symbol",
+          "path": "router.js",
+          "name": "routeSearch",
+          "symbolKind": "function"
+        }
+      ],
+      "supporting": [
+        {
+          "kind": "symbol",
+          "path": "router.js",
+          "name": "createSearchHandler",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "router.js",
+          "name": "function_expression@257",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "search-store.js",
+          "name": "searchStore",
+          "symbolKind": "function"
+        }
+      ],
+      "exhaustive": false,
+      "irrelevant": [
+        {
+          "kind": "symbol",
+          "path": "search-store.js",
+          "name": "buildStore",
+          "symbolKind": "function"
+        },
+        {
+          "kind": "symbol",
+          "path": "search-store.js",
+          "name": "arrow_function@154",
+          "symbolKind": "function"
+        }
+      ]
+    }
+  ]
+}

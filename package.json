@@ -18,7 +18,9 @@
     "test": "node --import tsx/esm --test test/*.test.ts",
     "test:mcp:inspector": "node --import tsx/esm --test test/phase15e-mcp-inspector.test.ts",
     "eval:context": "node --import tsx/esm --input-type=module -e \"import { runContextEval } from './eval/context/run.ts'; const result = await runContextEval({ cwd: process.cwd(), reportPath: 'artifacts/context-eval-report.json' }); process.exit(result.exitCode);\"",
-    "eval:context:update-baseline": "node --import tsx/esm --input-type=module -e \"import { updateContextBaseline } from './eval/context/update-baseline.ts'; const result = await updateContextBaseline({ cwd: process.cwd(), write: process.argv.includes('--write') }); process.stdout.write(result.diff);\" --"
+    "eval:context:update-baseline": "node --import tsx/esm --input-type=module -e \"import { updateContextBaseline } from './eval/context/update-baseline.ts'; const result = await updateContextBaseline({ cwd: process.cwd(), write: process.argv.includes('--write') }); process.stdout.write(result.diff);\" --",
+    "eval:retrieval": "node --import tsx/esm eval/retrieval/cli.ts",
+    "eval:retrieval:promote-baseline": "node --import tsx/esm eval/retrieval/cli.ts promote --confirm-reviewed"
   },
   "keywords": [
     "code intelligence",

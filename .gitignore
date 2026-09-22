@@ -84,4 +84,6 @@ blob-report/
 *.pid.lock
 *.seed
 artifacts/context-eval-report.json
+artifacts/retrieval-eval-candidate.json
+artifacts/retrieval-eval-candidate.md
 artifacts/phase15d-preflight-baseline.json
