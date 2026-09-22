@@ -207,6 +207,9 @@ importers:
 
   .:
     dependencies:
+      '@bufbuild/protobuf':
+        specifier: 2.11.0
+        version: 2.11.0
       '@driftlog/tree-sitter-dart':
         specifier: 1.0.4
         version: 1.0.4(node-addon-api@7.1.1)(tree-sitter@0.25.1)
@@ -219,6 +222,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: 1.30.0
         version: 1.30.0(zod@4.5.4)
+      '@scip-code/scip':
+        specifier: 0.10.0
+        version: 0.10.0
       chalk:
         specifier: ^6.0.0
         version: 6.0.0
@@ -428,6 +434,9 @@ packages:
   '@babel/types@8.0.4':
     resolution: {integrity: sha512-eY+Yn3dCqTGmyiq2QRU66lA5FL8lqqqvecHt0fF3uHONIa7ToYsaCiWV8lOKqAs0Rb2SjixiKFROngnulPtt2g==}
     engines: {node: ^22.18.0 || >=24.11.0}
+
+  '@bufbuild/protobuf@2.11.0':
+    resolution: {integrity: sha512-sBXGT13cpmPR5BMgHE6UEEfEaShh5Ror6rfN3yEK5si7QVrtZg8LEPQb0VVhiLRUslD2yLnXtnRzG035J/mZXQ==}
 
   '@driftlog/tree-sitter-dart@1.0.4':
     resolution: {integrity: sha512-QaTUyrcXZtiOtdvfcJWH41mCQi82Ri5QLYXFsaK34gpny6ZdhCCiW+sSMMxgIe62eFtrchGfEY/nBJkm7eC+Ew==}
@@ -1146,6 +1155,9 @@ packages:
 
   '@rolldown/pluginutils@1.0.1':
     resolution: {integrity: sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==}
+
+  '@scip-code/scip@0.10.0':
+    resolution: {integrity: sha512-tAQfyCv/Kap1XS3Xw/30JVxUfhmWCvfuIa7SOVOiY7xuUQhCa5A7SfevKVWzzB+6wxVo0rC+jUYSjwSP1YnvKw==}
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
@@ -2911,6 +2923,8 @@ snapshots:
       '@babel/helper-string-parser': 8.0.0
       '@babel/helper-validator-identifier': 8.0.4
 
+  '@bufbuild/protobuf@2.11.0': {}
+
   '@driftlog/tree-sitter-dart@1.0.4(node-addon-api@7.1.1)(tree-sitter@0.25.1)':
     dependencies:
       node-addon-api: 7.1.1
@@ -3472,6 +3486,10 @@ snapshots:
     optional: true
 
   '@rolldown/pluginutils@1.0.1': {}
+
+  '@scip-code/scip@0.10.0':
+    dependencies:
+      '@bufbuild/protobuf': 2.11.0
 
   '@standard-schema/spec@1.1.0': {}
 
