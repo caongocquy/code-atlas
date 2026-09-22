@@ -8,6 +8,7 @@ import type {
   ResolverTraceEvent,
 } from "./types.js";
 import type { TypeEnvironment } from "./type-environment.js";
+import type { ScipBindingEvidence } from "./scip-evidence.js";
 
 export type GenerationResolverContext = {
   generationId: string;
@@ -19,6 +20,7 @@ export type GenerationResolverContext = {
   memo: ResolverMemo;
   diagnostics: ResolverTraceCollector;
   resolutionVersion: string;
+  scipEvidenceBySite?: ReadonlyMap<string, readonly ScipBindingEvidence[]>;
 };
 
 export function createGenerationResolverContext(

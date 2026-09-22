@@ -234,6 +234,7 @@ export type LanguageSemanticAdapter = {
 };
 
 export type ResolutionStrategyId =
+  | "scip"
   | "lexical-local"
   | "imports-exports"
   | "explicit-type"
