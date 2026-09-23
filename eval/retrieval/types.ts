@@ -1,7 +1,7 @@
 import { canonicalIdentity, type AmbiguityExpectation, type RetrievalSelector } from "./metrics.js";
 
 export const RETRIEVAL_DATASET_VERSION = "retrieval-eval-v2" as const;
-export const RETRIEVAL_REPORT_SCHEMA_VERSION = 3 as const;
+export const RETRIEVAL_REPORT_SCHEMA_VERSION = 4 as const;
 
 export type QueryClass = "exact-symbol" | "implementation-discovery" | "caller" | "callee" | "cross-file" | "ambiguous" | "natural-language" | "lexical-only" | "semantic-paraphrase" | "graph-dependent" | "scip-improved-cross-file" | "semantic-disabled" | "semantic-unavailable";
 export type SemanticProfile = "all" | "enabled" | "disabled" | "unavailable";

@@ -66,11 +66,39 @@ test("forbidden top result is counted as ambiguity false promotion", () => {
     exhaustive: false,
     ambiguous: true,
   });
-  assert.equal(promoted.ambiguityFalsePromotion, 1);
+  assert.equal(promoted.ambiguityFalsePromotion, 0, "array order without fused relevance cannot prove a promotion");
+  const scoredPromoted = evaluateRanking([
+    { ...symbol("src/orders.ts", "findById", 1), effectiveRelevance: 1 / 61 },
+    { ...symbol("src/users.ts", "findById", 1), effectiveRelevance: 1 / 62 },
+  ], {
+    relevant: [selector("src/users.ts", "findById")],
+    forbidden: [selector("src/orders.ts", "findById")],
+    exhaustive: false,
+    ambiguous: true,
+  });
+  assert.equal(scoredPromoted.ambiguityFalsePromotion, 1);
+  const tied = [
+    { ...symbol("src/orders.ts", "findById", 1), effectiveRelevance: 1 / 61 },
+    { ...symbol("src/users.ts", "findById", 1), effectiveRelevance: 1 / 61 },
+  ];
+  const tiedForward = evaluateRanking(tied, {
+    relevant: [selector("src/users.ts", "findById")],
+    forbidden: [selector("src/orders.ts", "findById")],
+    exhaustive: false,
+    ambiguous: true,
+  });
+  const tiedReversed = evaluateRanking([...tied].reverse(), {
+    relevant: [selector("src/users.ts", "findById")],
+    forbidden: [selector("src/orders.ts", "findById")],
+    exhaustive: false,
+    ambiguous: true,
+  });
+  assert.equal(tiedForward.ambiguityFalsePromotion, 0);
+  assert.equal(tiedReversed.ambiguityFalsePromotion, tiedForward.ambiguityFalsePromotion);
   assert.equal(promoted.judgedNoiseRate, 1);
   assert.equal(promoted.unjudgedCount, 0);
   const ordinary = evaluateRanking([symbol("src/users.ts", "findById", 1)], { relevant: [selector("src/users.ts", "findById")], exhaustive: false });
-  assert.equal(aggregateRankingMetrics([ordinary, promoted]).ambiguityFalsePromotion, 1);
+  assert.equal(aggregateRankingMetrics([ordinary, scoredPromoted]).ambiguityFalsePromotion, 1);
   assert.equal(aggregateRankingMetrics([ordinary, promoted]).ambiguityCaseCount, 1);
 });
 

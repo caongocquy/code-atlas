@@ -19,6 +19,7 @@ import type { InspectorChunk } from "../../src/core/retrieval/retrieval-inspecto
 import type { EmbeddingProvider } from "../../src/core/semantic/embedding-provider.js";
 import type { VectorPoint, VectorSearchResult, VectorStore } from "../../src/core/semantic/vector-store.js";
 import type { SearchResult } from "../../src/core/retrieval/code-search.service.js";
+import type { LexicalSearchResult } from "../../src/core/lexical/lexical-search.service.js";
 import { aggregateRankingMetrics, canonicalIdentity, evaluateRanking, matchesSelector, type AmbiguityExpectation, type RankedCandidate, type RetrievalIdentity, type RetrievalJudgments, type RetrievalSelector, type RankingMetrics } from "./metrics.js";
 import { RETRIEVAL_REPORT_SCHEMA_VERSION, validateRetrievalDataset, type FrozenSemanticCase, type RetrievalDataset, type RetrievalEvalCase, type ScipGraphPair, type SemanticProfile, type SemanticStyle } from "./types.js";
 
@@ -26,7 +27,8 @@ const PROFILE_NAMES = ["enabled", "disabled", "unavailable"] as const;
 const EVAL_RRF_K = 60;
 type ProfileName = (typeof PROFILE_NAMES)[number];
 type EvaluationStage = "graphLookup" | "lexical" | "semantic" | "hybrid" | "hybridGraphExpansion" | "taskContext";
-type Measurement = { ordered: string[]; candidates: RankedCandidate[]; metrics: RankingMetrics; sources: Record<string, number> };
+type EffectiveRankedCandidate = RankedCandidate & { effectiveRelevance?: number };
+type Measurement = { ordered: string[]; candidates: EffectiveRankedCandidate[]; metrics: RankingMetrics; sources: Record<string, number> };
 export type RetrievalEvalOptions = { repoRoot: string; outputDirectory?: string; datasetPath?: string };
 
 export type RetrievalEvalReport = {
@@ -46,7 +48,7 @@ export type RetrievalEvalReport = {
     stages: Record<Exclude<EvaluationStage, "graphLookup" | "taskContext">, Measurement>;
     profiles: Record<ProfileName, { semanticState: string; vector: Measurement; lexical: Measurement; hybrid: Measurement; hybridGraphExpansion: Measurement; graphExpansion: { added: number; relations: Record<string, number> } }>;
     taskContext: { subjects: Measurement; coverage: { relevant: number; supporting: number }; admittedRelevantItems: number; missedRelevantItems: number; admittedSupportingItems: number; missedSupportingItems: number; budget: { maxItems: number; maxEstimatedTokens: number; selectedItems: number; estimatedTokens: number; omittedItems: number; budgetExceeded: boolean }; budgetEfficiency: number };
-    ambiguity?: { expectation: AmbiguityExpectation; outcome: "no-result" | "no-promotion-observed" | "false-promotion" | "unique-target-promoted" | "incorrect-promotion" | "unjudged"; topIdentity: string | null };
+    ambiguity?: { expectation: AmbiguityExpectation; outcome: "no-result" | "no-promotion-observed" | "false-promotion" | "unique-target-promoted" | "incorrect-promotion" | "top-tie" | "unjudged"; topIdentity: string | null };
     semanticStyle?: SemanticStyle;
   }>;
   aggregates: { byStage: Record<string, Record<string, number | null>>; bySplit: Record<string, Record<string, Record<string, number | null>>>; byQueryClass: Record<string, Record<string, number | null>>; byFixtureFamily: Record<string, Record<string, number | null>> };
@@ -110,19 +112,49 @@ function retrievalResultKey(result: SearchResult): string {
   return [result.repoId ?? "", result.file ?? "", result.symbolType ?? "", result.symbolName ?? "", result.startLine ?? ""].join(":");
 }
 
-function normalizeFusionTies<T extends SearchResult & { fusionScore?: number; vectorRank?: number; lexicalRank?: number }>(results: readonly T[], vectorRanks: ReadonlyMap<string, number>, lexicalRanks: ReadonlyMap<string, number>): T[] {
+function effectiveLexicalRankData(results: readonly LexicalSearchResult[]): { ranks: Map<string, number>; contributions: Map<string, number[]> } {
+  const firstRankByGroup = new Map<string, number>();
+  const ranks = new Map<string, number>();
+  const contributions = new Map<string, number[]>();
+  results.forEach((result, index) => {
+    const position = index + 1;
+    const group = result.lexicalRankGroup;
+    const rank = group ? firstRankByGroup.get(group) ?? position : position;
+    if (group && !firstRankByGroup.has(group)) firstRankByGroup.set(group, rank);
+    const key = retrievalResultKey(result);
+    ranks.set(key, rank);
+    const rows = contributions.get(key) ?? [];
+    rows.push(rank);
+    contributions.set(key, rows);
+  });
+  return { ranks, contributions };
+}
+
+export function buildEffectiveLexicalRanks(results: readonly LexicalSearchResult[]): Map<string, number> {
+  return effectiveLexicalRankData(results).ranks;
+}
+
+export function normalizeFusionTies<T extends SearchResult & { fusionScore?: number; vectorRank?: number; lexicalRank?: number }>(results: readonly T[], vectorRanks: ReadonlyMap<string, number>, lexicalRanks: ReadonlyMap<string, number>, lexicalResults?: readonly LexicalSearchResult[]): T[] {
+  const lexicalContributions = lexicalResults ? effectiveLexicalRankData(lexicalResults).contributions : undefined;
   return results.map((result) => {
     const key = retrievalResultKey(result);
     const vectorRank = result.vectorRank === undefined ? undefined : vectorRanks.get(key) ?? result.vectorRank;
     const lexicalRank = result.lexicalRank === undefined ? undefined : lexicalRanks.get(key) ?? result.lexicalRank;
+    const lexicalContributionRanks = result.lexicalRank === undefined
+      ? []
+      : lexicalContributions?.get(key) ?? [lexicalRank!];
     const fusionScore = (vectorRank === undefined ? 0 : 1 / (EVAL_RRF_K + vectorRank))
-      + (lexicalRank === undefined ? 0 : 1 / (EVAL_RRF_K + lexicalRank));
+      + lexicalContributionRanks.reduce((sum, rank) => sum + 1 / (EVAL_RRF_K + rank), 0);
     return { ...result, ...(vectorRank === undefined ? {} : { vectorRank }), ...(lexicalRank === undefined ? {} : { lexicalRank }), fusionScore };
   });
 }
 
-function rankedResults(graph: CodeGraph, results: readonly SearchResult[]): RankedCandidate[] {
-  return results.map((result) => ({ identity: identityForResult(graph, result), ...(result.startLine === undefined ? {} : { startLine: result.startLine }) }));
+function rankedResults(graph: CodeGraph, results: readonly (SearchResult & { fusionScore?: number })[]): EffectiveRankedCandidate[] {
+  return results.map((result) => ({
+    identity: identityForResult(graph, result),
+    ...(result.startLine === undefined ? {} : { startLine: result.startLine }),
+    ...(result.fusionScore === undefined ? {} : { effectiveRelevance: result.fusionScore }),
+  }));
 }
 
 function rankedNodes(nodes: readonly GraphNode[]): RankedCandidate[] {
@@ -140,15 +172,36 @@ function judgmentRole(identity: RetrievalIdentity, item: RetrievalEvalCase): "re
   return undefined;
 }
 
-function ambiguityResult(item: RetrievalEvalCase, candidates: readonly RankedCandidate[]): RetrievalEvalReport["cases"][number]["ambiguity"] {
+export function evaluateAmbiguity(item: RetrievalEvalCase, candidates: readonly EffectiveRankedCandidate[]): RetrievalEvalReport["cases"][number]["ambiguity"] {
   if (!item.expectation) return undefined;
-  const first = candidates[0]?.identity;
-  const topIdentity = first ? canonicalIdentity(first) : null;
-  if (!first) return { expectation: item.expectation, outcome: "no-result", topIdentity };
-  const role = judgmentRole(first, item);
+  if (!candidates.length) return { expectation: item.expectation, outcome: "no-result", topIdentity: null };
+
+  const byIdentity = new Map<string, EffectiveRankedCandidate>();
+  for (const candidate of candidates) {
+    if (candidate.effectiveRelevance === undefined) continue;
+    const key = canonicalIdentity(candidate.identity);
+    const prior = byIdentity.get(key);
+    if (!prior || candidate.effectiveRelevance > prior.effectiveRelevance!) byIdentity.set(key, candidate);
+  }
+  if (!byIdentity.size) return { expectation: item.expectation, outcome: "unjudged", topIdentity: null };
+
+  const scored = [...byIdentity.values()];
+  const bestScore = Math.max(...scored.map((candidate) => candidate.effectiveRelevance!));
+  const leaders = scored.filter((candidate) => candidate.effectiveRelevance === bestScore);
+  if (leaders.length !== 1) return { expectation: item.expectation, outcome: "top-tie", topIdentity: null };
+
+  const winner = leaders[0]!;
+  const winnerIdentity = canonicalIdentity(winner.identity);
+  const topIdentity = winnerIdentity;
+  const role = judgmentRole(winner.identity, item);
+  if (!role) return { expectation: item.expectation, outcome: "unjudged", topIdentity };
+  const competingJudged = scored.filter((candidate) => canonicalIdentity(candidate.identity) !== winnerIdentity && judgmentRole(candidate.identity, item) !== undefined);
+  if (competingJudged.some((candidate) => candidate.effectiveRelevance! >= winner.effectiveRelevance!)) {
+    return { expectation: item.expectation, outcome: "top-tie", topIdentity: null };
+  }
   const outcome = item.expectation === "no-promotion"
     ? role === "forbidden" ? "false-promotion" : role ? "no-promotion-observed" : "unjudged"
-    : role === "relevant" ? "unique-target-promoted" : role ? "incorrect-promotion" : "unjudged";
+    : role === "relevant" ? "unique-target-promoted" : role === "forbidden" ? "false-promotion" : "incorrect-promotion";
   return { expectation: item.expectation, outcome, topIdentity };
 }
 
@@ -260,9 +313,9 @@ async function evaluateProfile(item: RetrievalEvalCase, root: string, graph: Cod
   const vectorResults = stableEvaluationResults(graph, inspection.vectorResults, (result) => result.score);
   const lexicalResults = stableEvaluationResults(graph, inspection.lexicalResults, (result) => result.lexicalScore);
   const vectorRanks = new Map(vectorResults.map((result, index) => [retrievalResultKey(result), index + 1]));
-  const lexicalRanks = new Map(lexicalResults.map((result, index) => [retrievalResultKey(result), index + 1]));
-  const fusedResults = stableEvaluationResults(graph, normalizeFusionTies(inspection.fusedResults, vectorRanks, lexicalRanks), (result) => result.fusionScore);
-  const normalizedExpanded = normalizeFusionTies(inspection.withGraph.chunks, vectorRanks, lexicalRanks);
+  const lexicalRanks = buildEffectiveLexicalRanks(lexicalResults);
+  const fusedResults = stableEvaluationResults(graph, normalizeFusionTies(inspection.fusedResults, vectorRanks, lexicalRanks, lexicalResults), (result) => result.fusionScore);
+  const normalizedExpanded = normalizeFusionTies(inspection.withGraph.chunks, vectorRanks, lexicalRanks, lexicalResults);
   const expandedResults = [
     ...stableEvaluationResults(graph, normalizedExpanded.filter((result) => result.source !== "graph"), (result) => result.fusionScore ?? result.score),
     ...normalizedExpanded.filter((result) => result.source === "graph"),
@@ -539,7 +592,7 @@ export async function runRetrievalEval(options: RetrievalEvalOptions): Promise<{
             graphExpansion: profiles[name]!.graphExpansion,
           }])) as RetrievalEvalReport["cases"][number]["profiles"],
           taskContext: { subjects: taskFirst.subjects, coverage: taskFirst.coverage, admittedRelevantItems: taskFirst.admittedRelevantItems, missedRelevantItems: taskFirst.missedRelevantItems, admittedSupportingItems: taskFirst.admittedSupportingItems, missedSupportingItems: taskFirst.missedSupportingItems, budget: taskFirst.budget, budgetEfficiency: taskFirst.budgetEfficiency },
-          ...(item.expectation ? { ambiguity: ambiguityResult(item, profiles.enabled.hybrid.candidates) } : {}),
+          ...(item.expectation ? { ambiguity: evaluateAmbiguity(item, profiles.enabled.hybrid.candidates) } : {}),
           ...(item.semanticStyle ? { semanticStyle: item.semanticStyle } : {}),
         });
       }

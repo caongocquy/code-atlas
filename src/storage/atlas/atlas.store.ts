@@ -59,6 +59,68 @@ import { isSymbolIdentityKey } from "../../core/graph/resolver/identities.js";
 
 export const DEFAULT_ATLAS_DB_PATH = ".codeatlas/atlas.db";
 
+const GENERATED_LEXICAL_RELEVANCE = {
+  exactName: 4,
+  nameCoverage: 2,
+  fileCoverage: 1,
+  contentCoverage: 0.5,
+} as const;
+
+type ExactLexicalTargetRow = {
+  file: string;
+  symbol_name: string | null;
+  qualified_name: string | null;
+  symbol_type: string | null;
+  start_line: number | null;
+  end_line: number | null;
+};
+
+function matchesBareIdentifier(row: ExactLexicalTargetRow, identifier: string): boolean {
+  const normalize = (value: string | null): string => value?.replace(/\$/g, "").toLowerCase() ?? "";
+  return [normalize(row.symbol_name), normalize(row.qualified_name)]
+    .some((value) => value === identifier || value.startsWith(`${identifier} `));
+}
+
+function countLogicalExactTargets(rows: ExactLexicalTargetRow[]): number {
+  const groups = new Map<string, ExactLexicalTargetRow[]>();
+  for (const row of rows) {
+    const key = JSON.stringify([
+      row.file,
+      row.symbol_type,
+      row.symbol_name?.replace(/\$/g, "").toLowerCase() ?? null,
+      row.qualified_name?.replace(/\$/g, "").toLowerCase() ?? null,
+    ]);
+    const group = groups.get(key) ?? [];
+    group.push(row);
+    groups.set(key, group);
+  }
+
+  let count = 0;
+  for (const group of groups.values()) {
+    const ranges = group
+      .filter((row): row is ExactLexicalTargetRow & { start_line: number; end_line: number } =>
+        row.start_line !== null && row.end_line !== null && row.end_line >= row.start_line)
+      .sort((left, right) => left.start_line - right.start_line || left.end_line - right.end_line);
+    if (ranges.length !== group.length) {
+      count += 1;
+      continue;
+    }
+
+    let groupTargets = 0;
+    let currentEnd = Number.NEGATIVE_INFINITY;
+    for (const range of ranges) {
+      if (range.start_line > currentEnd) {
+        groupTargets += 1;
+        currentEnd = range.end_line;
+      } else {
+        currentEnd = Math.max(currentEnd, range.end_line);
+      }
+    }
+    count += groupTargets;
+  }
+  return count;
+}
+
 const MAX_FRAMEWORK_ITEMS = 100_000;
 const MAX_FRAMEWORK_REFS = 32;
 const MAX_FRAMEWORK_STRING_LENGTH = 4_096;
@@ -1566,6 +1628,7 @@ export class AtlasStore {
     matchQuery: string,
     limit: number,
     filePrefix?: string,
+    bareIdentifier?: string,
   ): LexicalSearchRow[] {
     if (limit <= 0 || !matchQuery.trim()) {
       return [];
@@ -1577,20 +1640,76 @@ export class AtlasStore {
       const activeGenerationId = indexState.activeGenerationId;
       const terms = [...new Set(matchQuery.split(/\s+OR\s+|\s+AND\s+|[()]/).map((term) => term.replace(/\*/g, "").trim()).filter(Boolean))];
       const patterns = terms.map((term) => `%${term.replace(/[\\%_]/g, "\\$&")}%`);
+      const normalizedTerms = terms.map((term) => term.toLowerCase());
       const match = terms.length > 0
         ? terms.map(() => "(content LIKE ? OR file LIKE ? OR COALESCE(symbol_name, '') LIKE ? OR COALESCE(qualified_name, '') LIKE ?)").join(" OR ")
         : "0";
+      const exactNameOrder = terms.length > 0
+        ? `CASE WHEN lower(COALESCE(symbol_name, '')) IN (${terms.map(() => "?").join(", ")})
+                 OR lower(COALESCE(qualified_name, '')) IN (${terms.map(() => "?").join(", ")})
+               THEN 1 ELSE 0 END`
+        : "0";
+      const coverageOrder = (columns: string[]): string => terms.length > 0
+        ? `(${terms.map(() => `CASE WHEN ${columns.map((column) => `lower(COALESCE(${column}, '')) LIKE ?`).join(" OR ")} THEN 1 ELSE 0 END`).join(" + ")}) * 1.0 / ${terms.length}`
+        : "0";
+      const nameCoverageOrder = coverageOrder(["symbol_name", "qualified_name"]);
+      const fileCoverageOrder = coverageOrder(["file"]);
+      const contentCoverageOrder = coverageOrder(["content"]);
+      const ambiguousBareIdentifier = bareIdentifier
+        ? countLogicalExactTargets(this.database.prepare(
+          `SELECT file, symbol_name, qualified_name, symbol_type, start_line, end_line
+           FROM generation_lexical_documents
+           WHERE repository_id = ? AND generation_id = ?
+             AND (? IS NULL OR file LIKE ?)
+             AND (
+               lower(replace(COALESCE(symbol_name, ''), '$', '')) = ?
+               OR instr(lower(replace(COALESCE(symbol_name, ''), '$', '')), ? || ' ') = 1
+               OR lower(replace(COALESCE(qualified_name, ''), '$', '')) = ?
+               OR instr(lower(replace(COALESCE(qualified_name, ''), '$', '')), ? || ' ') = 1
+             )`,
+        ).all(
+          repoId,
+          activeGenerationId,
+          filePrefix ?? null,
+          filePrefix ? `${filePrefix}%` : null,
+          bareIdentifier,
+          bareIdentifier,
+          bareIdentifier,
+          bareIdentifier,
+        ) as ExactLexicalTargetRow[]) > 1
+        : false;
+      const orderBy = ambiguousBareIdentifier
+        ? "file ASC, start_line ASC, document_id ASC"
+        : "exact_name_match DESC, name_coverage DESC, file_coverage DESC, content_coverage DESC, file ASC, start_line ASC, document_id ASC";
       const rows = this.database.prepare(
         `SELECT document_id, file, symbol_name, qualified_name, symbol_type,
-                content, start_line, end_line
+                content, start_line, end_line,
+                ${exactNameOrder} AS exact_name_match,
+                (${nameCoverageOrder}) AS name_coverage,
+                (${fileCoverageOrder}) AS file_coverage,
+                (${contentCoverageOrder}) AS content_coverage
          FROM generation_lexical_documents
          WHERE repository_id = ? AND generation_id = ?
            AND (? IS NULL OR file LIKE ?)
            AND (${match})
-         ORDER BY file ASC, start_line ASC, document_id ASC LIMIT ?`,
-      ).all(repoId, activeGenerationId, filePrefix ?? null, filePrefix ? `${filePrefix}%` : null, ...patterns.flatMap((pattern) => [pattern, pattern, pattern, pattern]), limit) as Array<{
+         ORDER BY ${orderBy}
+         LIMIT ?`,
+      ).all(
+        ...normalizedTerms,
+        ...normalizedTerms,
+        ...patterns.flatMap((pattern) => [pattern, pattern]),
+        ...patterns,
+        ...patterns,
+        repoId,
+        activeGenerationId,
+        filePrefix ?? null,
+        filePrefix ? `${filePrefix}%` : null,
+        ...patterns.flatMap((pattern) => [pattern, pattern, pattern, pattern]),
+        limit,
+      ) as Array<{
         document_id: string; file: string; symbol_name: string | null; qualified_name: string | null;
         symbol_type: string | null; content: string; start_line: number | null; end_line: number | null;
+        exact_name_match: number; name_coverage: number; file_coverage: number; content_coverage: number;
       }>;
       return rows.map((row) => ({
         documentId: row.document_id,
@@ -1601,8 +1720,16 @@ export class AtlasStore {
         content: row.content,
         startLine: row.start_line ?? undefined,
         endLine: row.end_line ?? undefined,
-        score: 0,
+        score: ambiguousBareIdentifier ? 0 : -(
+          row.exact_name_match * GENERATED_LEXICAL_RELEVANCE.exactName
+          + row.name_coverage * GENERATED_LEXICAL_RELEVANCE.nameCoverage
+          + row.file_coverage * GENERATED_LEXICAL_RELEVANCE.fileCoverage
+          + row.content_coverage * GENERATED_LEXICAL_RELEVANCE.contentCoverage
+        ),
         snippet: row.content,
+        ...(ambiguousBareIdentifier && bareIdentifier && matchesBareIdentifier(row, bareIdentifier)
+          ? { lexicalRankGroup: `bare-exact:${bareIdentifier}` }
+          : {}),
       }));
     }
 

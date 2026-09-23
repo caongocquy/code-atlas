@@ -6,7 +6,7 @@ export type RetrievalSelector =
   | { kind: "file"; path: string }
   | { kind: "symbol"; path: string; name: string; symbolKind: string; qualifiedName?: string };
 
-export type RankedCandidate = { identity: RetrievalIdentity; startLine?: number };
+export type RankedCandidate = { identity: RetrievalIdentity; startLine?: number; effectiveRelevance?: number };
 export type AmbiguityExpectation = "no-promotion" | "unique-promotion";
 
 export type RetrievalJudgments = {
@@ -100,7 +100,21 @@ export function evaluateRanking(candidates: readonly RankedCandidate[], judgment
   const recall = (k: number): number => relevant.size
     ? new Set(ranked.slice(0, k).filter(({ key }) => relevant.has(key)).map(({ key }) => key)).size / relevant.size
     : 0;
-  const topOne = ranked[0]?.candidate.identity;
+  const scoredByIdentity = new Map<string, RankedCandidate>();
+  for (const { candidate } of ranked) {
+    if (candidate.effectiveRelevance === undefined) continue;
+    const key = canonicalIdentity(candidate.identity);
+    const prior = scoredByIdentity.get(key);
+    if (!prior || candidate.effectiveRelevance > prior.effectiveRelevance!) scoredByIdentity.set(key, candidate);
+  }
+  const topScore = Math.max(...[...scoredByIdentity.values()].map((candidate) => candidate.effectiveRelevance!));
+  const topCandidates = [...scoredByIdentity.values()].filter((candidate) => candidate.effectiveRelevance === topScore);
+  const topCandidate = topCandidates.length === 1 ? topCandidates[0] : undefined;
+  const winningIdentity = topCandidate ? canonicalIdentity(topCandidate.identity) : "";
+  const competingJudged = ranked.filter(({ candidate, judged }) => judged && canonicalIdentity(candidate.identity) !== winningIdentity);
+  const ambiguityFalsePromotion = judgments.ambiguous && topCandidate && matchesAny(topCandidate.identity, judgments.forbidden ?? [])
+    && competingJudged.every(({ candidate }) => candidate.effectiveRelevance !== undefined
+      && candidate.effectiveRelevance < topCandidate.effectiveRelevance!) ? 1 : 0;
   const precisionAt5 = new Set(ranked.slice(0, 5).filter(({ key }) => relevant.has(key)).map(({ key }) => key)).size / 5;
   const judgedCoverageAt = (k: number): number => {
     const pool = ranked.slice(0, k);
@@ -115,7 +129,7 @@ export function evaluateRanking(candidates: readonly RankedCandidate[], judgment
     recallAt5: noTargetMetrics ? null : recall(5),
     recallAt10: noTargetMetrics ? null : recall(10),
     ...(judgments.exhaustive ? { precisionAt5: noTargetMetrics ? null : precisionAt5 } : {}),
-    ambiguityFalsePromotion: judgments.ambiguous && topOne && matchesAny(topOne, judgments.forbidden ?? []) ? 1 : 0,
+    ambiguityFalsePromotion,
     ambiguityCaseCount: judgments.ambiguous ? 1 : 0,
     canonicalDuplicateRate: candidates.length ? canonicalDuplicates / candidates.length : 0,
     chunkDuplicateRate: candidates.length ? chunkDuplicates / candidates.length : 0,
