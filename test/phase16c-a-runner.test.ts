@@ -13,11 +13,21 @@ const repoRoot = process.cwd();
 test("retrieval evaluation is deterministic and measures all required stages and profiles", async () => {
   const outputDirectory = await mkdtemp(path.join(os.tmpdir(), "code-atlas-retrieval-eval-"));
   const repeatedOutputDirectory = await mkdtemp(path.join(os.tmpdir(), "code-atlas-retrieval-eval-repeat-"));
+  const immutablePaths = [
+    "eval/retrieval/dataset.json",
+    "artifacts/retrieval-eval-baseline.json",
+    "artifacts/retrieval-eval-baseline.md",
+  ];
+  const immutableHashes = async (): Promise<string[]> => Promise.all(immutablePaths.map(async (file) =>
+    createHash("sha256").update(await readFile(path.join(repoRoot, file))).digest("hex")));
+  const immutableBefore = await immutableHashes();
   try {
     const result = await runRetrievalEval({ repoRoot, outputDirectory });
     const repeated = await runRetrievalEval({ repoRoot, outputDirectory: repeatedOutputDirectory });
+    const frozenBaseline = JSON.parse(await readFile(path.join(repoRoot, "artifacts/retrieval-eval-baseline.json"), "utf8")) as { hashes: { evaluator: string } };
     const digest = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex");
     assert.equal(digest(repeated.report.cases), digest(result.report.cases), "fresh temporary fixture roots should produce identical measured cases");
+    assert.notEqual(result.report.hashes.evaluator, frozenBaseline.hashes.evaluator, "candidate must identify the corrected evaluator separately from historical baseline semantics");
     assert.equal(result.report.determinism.passed, true);
     assert.equal(result.report.cases.length, 40);
     assert.ok(result.report.cases.every((item) => item.graphLookup && item.stages.lexical && item.taskContext.subjects));
@@ -44,14 +54,15 @@ test("retrieval evaluation is deterministic and measures all required stages and
     assert.deepEqual(result.report.cases.filter((item) => item.ambiguity).map((item) => [item.id, item.ambiguity?.outcome]), [
       ["catalog-ambiguous-load", "no-promotion-observed"],
       ["catalog-context-disambiguation", "incorrect-promotion"],
-      ["pricing-ambiguous", "false-promotion"],
-      ["pricing-path-disambiguation", "incorrect-promotion"],
-      ["workflow-ambiguous-run-task", "incorrect-promotion"],
+      ["pricing-ambiguous", "top-tie"],
+      ["pricing-path-disambiguation", "unique-target-promoted"],
+      ["workflow-ambiguous-run-task", "unique-target-promoted"],
     ]);
     assert.ok(result.report.judgmentQueue.items.every((item) => item.caseId && item.candidate && item.priority));
     assert.ok(result.report.judgmentQueue.items.every((item) => item.priority !== "top5" || item.sources.some((source) => ["hybrid", "semantic-vector", "semantic-lexical"].includes(source.source) && source.rank <= 5)));
     assert.ok(result.report.judgmentQueue.remainingTop5 >= 0 && result.report.judgmentQueue.remainingTop10 >= result.report.judgmentQueue.remainingTop5);
     const machineReport = await readFile(result.jsonPath, "utf8");
+    assert.equal(result.report.schemaVersion, 4);
     assert.match(machineReport, /retrieval-eval-v2/);
     assert.match(machineReport, /"rrfK": 60/);
     assert.match(await readFile(result.markdownPath, "utf8"), /RRF k 60/);
@@ -63,6 +74,7 @@ test("retrieval evaluation is deterministic and measures all required stages and
     assert.match(await readFile(result.markdownPath, "utf8"), /Unresolved judgment queue/);
     assert.match(await readFile(result.markdownPath, "utf8"), /catalog-context-disambiguation/);
     assert.match(await readFile(result.markdownPath, "utf8"), /Determinism: PASS/);
+    assert.deepEqual(await immutableHashes(), immutableBefore, "retrieval evaluation must not modify qrels or frozen baseline artifacts");
   } finally {
     await rm(outputDirectory, { recursive: true, force: true });
     await rm(repeatedOutputDirectory, { recursive: true, force: true });

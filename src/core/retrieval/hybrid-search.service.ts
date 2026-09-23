@@ -145,10 +145,15 @@ export async function inspectHybridSearch(
     });
   });
 
+  const firstRankByLexicalGroup = new Map<string, number>();
   lexicalResults.forEach((result: LexicalSearchResult, index) => {
     const key = createResultKey(result);
-
-    const rank = index + 1;
+    const position = index + 1;
+    const rankGroup = result.lexicalRankGroup;
+    const rank = rankGroup
+      ? firstRankByLexicalGroup.get(rankGroup) ?? position
+      : position;
+    if (rankGroup && !firstRankByLexicalGroup.has(rankGroup)) firstRankByLexicalGroup.set(rankGroup, rank);
 
     const contribution = 1 / (RRF_K + rank);
 

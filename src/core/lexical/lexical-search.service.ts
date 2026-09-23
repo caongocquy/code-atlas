@@ -13,6 +13,7 @@ export type LexicalSearchResult = SearchResult & {
   documentId: string;
   lexicalScore: number;
   snippet: string;
+  lexicalRankGroup?: string;
 };
 
 function identifierParts(value: string): string[] {
@@ -50,6 +51,13 @@ function toMatchQuery(query: string): string {
     .join(" OR ");
 }
 
+function bareIdentifier(query: string): string | undefined {
+  const trimmed = query.trim();
+  if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(trimmed)) return undefined;
+  const normalized = trimmed.replace(/\$/g, "").toLowerCase();
+  return normalized || undefined;
+}
+
 export async function searchLexical(
   query: string,
   limit = 20,
@@ -71,7 +79,7 @@ export async function searchLexical(
   ).id;
 
   try {
-    return store.searchLexical(repoId, matchQuery, limit, filePrefix).map((row) => ({
+    return store.searchLexical(repoId, matchQuery, limit, filePrefix, bareIdentifier(query)).map((row) => ({
       score: row.score,
       repoId,
       file: row.file,
@@ -83,6 +91,7 @@ export async function searchLexical(
       documentId: row.documentId,
       lexicalScore: Math.max(0, -row.score),
       snippet: row.snippet,
+      ...(row.lexicalRankGroup ? { lexicalRankGroup: row.lexicalRankGroup } : {}),
     }));
   } finally {
     store.close();
