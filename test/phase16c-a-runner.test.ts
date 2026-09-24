@@ -53,11 +53,13 @@ test("retrieval evaluation is deterministic and measures all required stages and
     assert.ok(result.report.cases.every((item) => Number.isInteger(item.taskContext.missedRelevantItems) && Number.isInteger(item.taskContext.missedSupportingItems)));
     assert.deepEqual(result.report.cases.filter((item) => item.ambiguity).map((item) => [item.id, item.ambiguity?.outcome]), [
       ["catalog-ambiguous-load", "no-promotion-observed"],
-      ["catalog-context-disambiguation", "incorrect-promotion"],
+      ["catalog-context-disambiguation", "unique-target-promoted"],
       ["pricing-ambiguous", "top-tie"],
       ["pricing-path-disambiguation", "unique-target-promoted"],
       ["workflow-ambiguous-run-task", "unique-target-promoted"],
     ]);
+    const catalogContextDisambiguation = result.report.cases.find((item) => item.id === "catalog-context-disambiguation");
+    assert.equal(catalogContextDisambiguation?.ambiguity?.topIdentity, JSON.stringify(["symbol", "catalog-cache.ts", "method", "load"]));
     assert.ok(result.report.judgmentQueue.items.every((item) => item.caseId && item.candidate && item.priority));
     assert.ok(result.report.judgmentQueue.items.every((item) => item.priority !== "top5" || item.sources.some((source) => ["hybrid", "semantic-vector", "semantic-lexical"].includes(source.source) && source.rank <= 5)));
     assert.ok(result.report.judgmentQueue.remainingTop5 >= 0 && result.report.judgmentQueue.remainingTop10 >= result.report.judgmentQueue.remainingTop5);

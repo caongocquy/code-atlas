@@ -1629,6 +1629,7 @@ export class AtlasStore {
     limit: number,
     filePrefix?: string,
     bareIdentifier?: string,
+    ownerContextNames: readonly string[] = [],
   ): LexicalSearchRow[] {
     if (limit <= 0 || !matchQuery.trim()) {
       return [];
@@ -1652,7 +1653,13 @@ export class AtlasStore {
       const coverageOrder = (columns: string[]): string => terms.length > 0
         ? `(${terms.map(() => `CASE WHEN ${columns.map((column) => `lower(COALESCE(${column}, '')) LIKE ?`).join(" OR ")} THEN 1 ELSE 0 END`).join(" + ")}) * 1.0 / ${terms.length}`
         : "0";
-      const nameCoverageOrder = coverageOrder(["symbol_name", "qualified_name"]);
+      const ownerMatch = ownerContextNames.length > 0
+        ? `lower(substr(COALESCE(qualified_name, ''), 1, instr(COALESCE(qualified_name, ''), '.') - 1)) IN (${ownerContextNames.map(() => "?").join(", ")})`
+        : "0";
+      const nameCoverageOrder = terms.length > 0
+        ? `(${terms.map(() => `CASE WHEN lower(COALESCE(symbol_name, '')) LIKE ?
+              OR (${ownerMatch} AND lower(COALESCE(qualified_name, '')) LIKE ?) THEN 1 ELSE 0 END`).join(" + ")}) * 1.0 / ${terms.length}`
+        : "0";
       const fileCoverageOrder = coverageOrder(["file"]);
       const contentCoverageOrder = coverageOrder(["content"]);
       const ambiguousBareIdentifier = bareIdentifier
@@ -1697,7 +1704,7 @@ export class AtlasStore {
       ).all(
         ...normalizedTerms,
         ...normalizedTerms,
-        ...patterns.flatMap((pattern) => [pattern, pattern]),
+        ...patterns.flatMap((pattern) => [pattern, ...ownerContextNames, pattern]),
         ...patterns,
         ...patterns,
         repoId,
