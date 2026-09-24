@@ -1,6 +1,7 @@
 import path from "node:path";
 
 import { AtlasStore } from "../../storage/atlas/atlas.store.js";
+import type { LexicalSearchRow } from "../../storage/atlas/atlas.types.js";
 import { getRepositoryIdentity } from "../repository/repository-identity.js";
 import type { SearchResult } from "../retrieval/code-search.service.js";
 
@@ -36,6 +37,19 @@ function queryTokens(query: string): string[] {
   );
 }
 
+function ownerContextNames(query: string): string[] {
+  const tokens = queryTokens(query).map((token) => token.toLowerCase());
+  const names = new Set(tokens);
+  for (let start = 0; start < tokens.length; start += 1) {
+    let combined = tokens[start] ?? "";
+    for (let end = start + 1; end < tokens.length; end += 1) {
+      combined += tokens[end];
+      names.add(combined);
+    }
+  }
+  return [...names];
+}
+
 function toMatchQuery(query: string): string {
   return queryTokens(query)
     .map((token) => {
@@ -56,6 +70,35 @@ function bareIdentifier(query: string): string | undefined {
   if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(trimmed)) return undefined;
   const normalized = trimmed.replace(/\$/g, "").toLowerCase();
   return normalized || undefined;
+}
+
+function ownerContextRankGroups(query: string, rows: LexicalSearchRow[]): Map<string, string> {
+  const queryParts = Array.from(new Set(queryTokens(query).flatMap(identifierParts)));
+  const candidates = new Map<string, LexicalSearchRow[]>();
+
+  for (const row of rows) {
+    if (row.symbolType !== "method" || !row.qualifiedName || !row.symbolName) continue;
+    const symbolParts = new Set(identifierParts(row.symbolName));
+    const qualifiedParts = new Set(identifierParts(row.qualifiedName));
+    if (qualifiedParts.size <= symbolParts.size) continue;
+
+    const ownerEvidence = queryParts.filter((part) => !symbolParts.has(part) && qualifiedParts.has(part)).sort();
+    if (ownerEvidence.length === 0) continue;
+
+    // Group only same-name methods with matching owner-query evidence and score; never infer global ties from scores alone.
+    const key = JSON.stringify([row.symbolType, row.symbolName.toLowerCase(), ownerEvidence, row.score]);
+    const group = candidates.get(key) ?? [];
+    group.push(row);
+    candidates.set(key, group);
+  }
+
+  const groups = new Map<string, string>();
+  for (const [key, group] of candidates) {
+    if (group.length < 2) continue;
+    const rankGroup = `owner-context:${key}`;
+    for (const row of group) groups.set(row.documentId, rankGroup);
+  }
+  return groups;
 }
 
 export async function searchLexical(
@@ -79,7 +122,9 @@ export async function searchLexical(
   ).id;
 
   try {
-    return store.searchLexical(repoId, matchQuery, limit, filePrefix, bareIdentifier(query)).map((row) => ({
+    const rows = store.searchLexical(repoId, matchQuery, limit, filePrefix, bareIdentifier(query), ownerContextNames(query));
+    const ownerGroups = ownerContextRankGroups(query, rows);
+    return rows.map((row) => ({
       score: row.score,
       repoId,
       file: row.file,
@@ -91,7 +136,9 @@ export async function searchLexical(
       documentId: row.documentId,
       lexicalScore: Math.max(0, -row.score),
       snippet: row.snippet,
-      ...(row.lexicalRankGroup ? { lexicalRankGroup: row.lexicalRankGroup } : {}),
+      ...((row.lexicalRankGroup ?? ownerGroups.get(row.documentId))
+        ? { lexicalRankGroup: row.lexicalRankGroup ?? ownerGroups.get(row.documentId) }
+        : {}),
     }));
   } finally {
     store.close();

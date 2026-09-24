@@ -65,12 +65,12 @@ function documentId(repoId: string, file: string, chunk: CodeChunk, index: numbe
     .digest("hex");
 }
 
-function toDocuments(repoId: string, file: string, chunks: CodeChunk[]): LexicalDocument[] {
+function toDocuments(repoId: string, file: string, chunks: CodeChunk[], qualifiedNames?: readonly string[]): LexicalDocument[] {
   return chunks.map((chunk, index) => ({
     documentId: documentId(repoId, file, chunk, index),
     file,
     symbolName: searchableIdentifier(chunk.symbolName),
-    qualifiedName: searchableIdentifier(chunk.symbolName),
+    qualifiedName: searchableIdentifier(qualifiedNames?.[index] ?? chunk.symbolName),
     symbolType: chunk.symbolType,
     content: chunk.content,
     startLine: chunk.startLine,
@@ -79,7 +79,31 @@ function toDocuments(repoId: string, file: string, chunks: CodeChunk[]): Lexical
 }
 
 export function toLexicalDocumentsFromFacts(repositoryId: string, unit: IndexedSourceUnit): LexicalDocument[] {
-  return toDocuments(repositoryId, unit.relativePath, codeChunksFromFacts(unit).flatMap(splitLargeSymbol));
+  const scopes = new Map(unit.facts.containmentScopes.map((scope) => [scope.localId, scope]));
+  const entries = codeChunksFromFacts(unit).flatMap((chunk, index) => {
+    const symbol = unit.facts.symbols[index];
+    const symbolScope = symbol?.scopeId ? scopes.get(symbol.scopeId) : undefined;
+    const ownerScope = symbolScope?.kind === "method_definition" && symbolScope.parentId
+      ? scopes.get(symbolScope.parentId)
+      : undefined;
+    const owner = ownerScope?.kind === "class_declaration" && ownerScope.name
+      ? unit.facts.symbols.find((candidate) => candidate.kind === "class"
+        && candidate.scopeId === ownerScope.localId
+        && candidate.name === ownerScope.name)
+      : undefined;
+    const qualifiedName = symbol?.kind === "method" && owner
+      ? `${owner.name}.${symbol.name}`
+      : chunk.symbolName;
+
+    return splitLargeSymbol(chunk).map((part) => ({ part, qualifiedName }));
+  });
+
+  return toDocuments(
+    repositoryId,
+    unit.relativePath,
+    entries.map(({ part }) => part),
+    entries.map(({ qualifiedName }) => qualifiedName),
+  );
 }
 
 async function createUpdates(
@@ -104,7 +128,9 @@ async function createUpdates(
     updates.push({
       file: relativePath,
       fileHash: createFileHash(content),
-      documents: toDocuments(repoId, relativePath, chunks),
+      documents: indexedUnit
+        ? toLexicalDocumentsFromFacts(repoId, indexedUnit)
+        : toDocuments(repoId, relativePath, chunks),
     });
     reporter.setProgress(index + 1, files.length);
   }
