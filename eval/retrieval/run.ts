@@ -36,9 +36,15 @@ const PROFILE_NAMES = ["enabled", "disabled", "unavailable"] as const;
 const EVAL_RRF_K = 60;
 type ProfileName = (typeof PROFILE_NAMES)[number];
 type EvaluationStage = "graphLookup" | "lexical" | "semantic" | "hybrid" | "hybridGraphExpansion" | "taskContext";
-type EffectiveRankedCandidate = RankedCandidate & { effectiveRelevance?: number };
+type EffectiveRankedCandidate = RankedCandidate & {
+  effectiveRelevance?: number;
+  candidatePosition?: number;
+  lexicalScore?: number;
+  lexicalRankGroup?: string;
+  effectiveLexicalRank?: number;
+};
 type Measurement = { ordered: string[]; candidates: EffectiveRankedCandidate[]; metrics: RankingMetrics; sources: Record<string, number> };
-export type RetrievalEvalOptions = { repoRoot: string; outputDirectory?: string; datasetPath?: string };
+export type RetrievalEvalOptions = { repoRoot: string; outputDirectory?: string; datasetPath?: string; productionLexicalEvidence?: boolean };
 
 export type RetrievalEvalReport = {
   schemaVersion: typeof RETRIEVAL_REPORT_SCHEMA_VERSION;
@@ -172,6 +178,18 @@ function rankedResults(graph: CodeGraph, results: readonly (SearchResult & { fus
     identity: identityForResult(graph, result),
     ...(result.startLine === undefined ? {} : { startLine: result.startLine }),
     ...(result.fusionScore === undefined ? {} : { effectiveRelevance: result.fusionScore }),
+  }));
+}
+
+function rankedLexicalResults(graph: CodeGraph, results: readonly LexicalSearchResult[]): EffectiveRankedCandidate[] {
+  const ranks = buildEffectiveLexicalRanks(results);
+  return results.map((result, index) => ({
+    identity: identityForResult(graph, result),
+    ...(result.startLine === undefined ? {} : { startLine: result.startLine }),
+    candidatePosition: index + 1,
+    lexicalScore: result.lexicalScore,
+    ...(result.lexicalRankGroup ? { lexicalRankGroup: result.lexicalRankGroup } : {}),
+    effectiveLexicalRank: ranks.get(retrievalResultKey(result)) ?? index + 1,
   }));
 }
 
@@ -316,7 +334,7 @@ function candidateForSubject(graph: CodeGraph, subject: { kind: string; path: st
   return node ? { identity: identityForNode(node), ...(node.startLine === undefined ? {} : { startLine: node.startLine }) } : undefined;
 }
 
-async function evaluateProfile(item: RetrievalEvalCase, root: string, graph: CodeGraph, repoId: string, profile: ProfileName, providers = frozenProviders(item.semanticVectors, graph, repoId, profile)) {
+async function evaluateProfile(item: RetrievalEvalCase, root: string, graph: CodeGraph, repoId: string, profile: ProfileName, providers = frozenProviders(item.semanticVectors, graph, repoId, profile), productionLexicalEvidence = false) {
   const inspection = await inspectRetrieval(item.query, {
     repoPath: root,
     topK: 20,
@@ -328,7 +346,9 @@ async function evaluateProfile(item: RetrievalEvalCase, root: string, graph: Cod
     ...(providers ? { providers } : {}),
   });
   const vectorResults = stableEvaluationResults(graph, inspection.vectorResults, (result) => result.score);
-  const lexicalResults = stableEvaluationResults(graph, inspection.lexicalResults, (result) => result.lexicalScore);
+  const lexicalResults = productionLexicalEvidence
+    ? inspection.lexicalResults
+    : stableEvaluationResults(graph, inspection.lexicalResults, (result) => result.lexicalScore);
   const vectorRanks = new Map(vectorResults.map((result, index) => [retrievalResultKey(result), index + 1]));
   const lexicalRanks = buildEffectiveLexicalRanks(lexicalResults);
   const fusedResults = stableEvaluationResults(graph, normalizeFusionTies(inspection.fusedResults, vectorRanks, lexicalRanks, lexicalResults), (result) => result.fusionScore);
@@ -339,7 +359,7 @@ async function evaluateProfile(item: RetrievalEvalCase, root: string, graph: Cod
   ];
   const graphOnlyResults = stableEvaluationResults(graph, normalizedExpanded.filter((result) => result.source === "graph"), (result) => result.score);
   const vector = rankedResults(graph, vectorResults);
-  const lexical = rankedResults(graph, lexicalResults);
+  const lexical = productionLexicalEvidence ? rankedLexicalResults(graph, lexicalResults) : rankedResults(graph, lexicalResults);
   const hybrid = rankedResults(graph, fusedResults);
   const expanded = rankedResults(graph, expandedResults);
   return {
@@ -732,8 +752,8 @@ export async function runRetrievalEval(options: RetrievalEvalOptions): Promise<{
         if (stableJson(lookupA) !== stableJson(lookupB)) semanticFallbacksDeterministic = false;
         const runs = await Promise.all(PROFILE_NAMES.map(async (profile) => {
           const [first, second] = await Promise.all([
-            evaluateProfile(item, fixtureRoot, loaded.graph, loaded.repoId, profile, profileProviders[profile]),
-            evaluateProfile(item, fixtureRoot, loaded.graph, loaded.repoId, profile, profileProviders[profile]),
+            evaluateProfile(item, fixtureRoot, loaded.graph, loaded.repoId, profile, profileProviders[profile], options.productionLexicalEvidence === true),
+            evaluateProfile(item, fixtureRoot, loaded.graph, loaded.repoId, profile, profileProviders[profile], options.productionLexicalEvidence === true),
           ]);
           if (stableJson(first) !== stableJson(second)) semanticFallbacksDeterministic = false;
           return [profile, first] as const;
@@ -761,8 +781,8 @@ export async function runRetrievalEval(options: RetrievalEvalOptions): Promise<{
         addContribution("taskContext", "taskContext", taskFirst.subjects.candidates.length);
         if (item.scipPair && scipLoaded && scipRoot) {
           const [enrichedFirst, enrichedSecond] = await Promise.all([
-            evaluateProfile(item, scipRoot, scipLoaded.graph, scipLoaded.repoId, taskProfile),
-            evaluateProfile(item, scipRoot, scipLoaded.graph, scipLoaded.repoId, taskProfile),
+            evaluateProfile(item, scipRoot, scipLoaded.graph, scipLoaded.repoId, taskProfile, undefined, options.productionLexicalEvidence === true),
+            evaluateProfile(item, scipRoot, scipLoaded.graph, scipLoaded.repoId, taskProfile, undefined, options.productionLexicalEvidence === true),
           ]);
           if (stableJson(enrichedFirst) !== stableJson(enrichedSecond)) semanticFallbacksDeterministic = false;
           const enrichedProfile = enrichedFirst;
