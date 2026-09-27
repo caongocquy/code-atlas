@@ -64,7 +64,7 @@ test("retrieval evaluation is deterministic and measures all required stages and
     assert.ok(result.report.judgmentQueue.items.every((item) => item.priority !== "top5" || item.sources.some((source) => ["hybrid", "semantic-vector", "semantic-lexical"].includes(source.source) && source.rank <= 5)));
     assert.ok(result.report.judgmentQueue.remainingTop5 >= 0 && result.report.judgmentQueue.remainingTop10 >= result.report.judgmentQueue.remainingTop5);
     const machineReport = await readFile(result.jsonPath, "utf8");
-    assert.equal(result.report.schemaVersion, 4);
+    assert.equal(result.report.schemaVersion, 5);
     assert.match(machineReport, /retrieval-eval-v2/);
     assert.match(machineReport, /"rrfK": 60/);
     assert.match(await readFile(result.markdownPath, "utf8"), /RRF k 60/);
