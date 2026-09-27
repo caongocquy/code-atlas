@@ -7,19 +7,28 @@ import path from "node:path";
 import { installOfflineGuard } from "../context/offline-guard.js";
 import { indexRepository } from "../../src/core/indexing/index-pipeline.service.js";
 import type { ScipIndexer } from "../../src/core/indexing/scip-indexer.types.js";
+import type { ScipTool } from "../../src/core/indexing/scip-indexer.types.js";
+import type { IndexedSourceUnit } from "../../src/core/indexing/indexing.types.js";
+import { normalizeScipIndex } from "../../src/core/indexing/scip-normalizer.js";
 import { loadIndexedGraphReadOnly } from "../../src/core/graph/indexed-graph.service.js";
 import { resolveGraphEntity } from "../../src/core/graph/query/graph-query-entity-resolver.js";
-import { expandGraphContextDetailed } from "../../src/core/graph/expand.js";
 import type { CodeGraph, GraphNode } from "../../src/core/graph/types.js";
 import { compileTaskContextForRepository } from "../../src/core/context/task-context-repository-compiler.js";
+import { collectTaskContextCandidates, enrichTaskContextCandidates, enrichTaskContextGraph, type TaskContextCollectionDeps } from "../../src/core/context/task-context-candidates.js";
+import { affectedTests } from "../../src/core/change/affected-tests.service.js";
+import { inspectChange } from "../../src/core/change/inspect-change.service.js";
+import { analyzeImpact } from "../../src/core/graph/query/impact.service.js";
+import { searchLexical } from "../../src/core/lexical/lexical-search.service.js";
 import { CURRENT_INDEX_VERSION_DOMAINS } from "../../src/core/repository/index-version.js";
 import { GRAPH_INDEX_VERSION, LEXICAL_INDEX_VERSION, RESOLUTION_VERSION, VECTOR_INDEX_VERSION } from "../../src/config/constants.js";
 import { inspectRetrieval } from "../../src/core/retrieval/retrieval-inspector.service.js";
+import { inspectHybridSearch } from "../../src/core/retrieval/hybrid-search.service.js";
 import type { InspectorChunk } from "../../src/core/retrieval/retrieval-inspector.service.js";
 import type { EmbeddingProvider } from "../../src/core/semantic/embedding-provider.js";
 import type { VectorPoint, VectorSearchResult, VectorStore } from "../../src/core/semantic/vector-store.js";
 import type { SearchResult } from "../../src/core/retrieval/code-search.service.js";
 import type { LexicalSearchResult } from "../../src/core/lexical/lexical-search.service.js";
+import { encodeScipDocument, encodeScipIndex, type ScipFixtureOccurrence } from "./scip-fixture.js";
 import { aggregateRankingMetrics, canonicalIdentity, evaluateRanking, matchesSelector, type AmbiguityExpectation, type RankedCandidate, type RetrievalIdentity, type RetrievalJudgments, type RetrievalSelector, type RankingMetrics } from "./metrics.js";
 import { RETRIEVAL_REPORT_SCHEMA_VERSION, validateRetrievalDataset, type FrozenSemanticCase, type RetrievalDataset, type RetrievalEvalCase, type ScipGraphPair, type SemanticProfile, type SemanticStyle } from "./types.js";
 
@@ -46,8 +55,8 @@ export type RetrievalEvalReport = {
     id: string; queryClass: string; fixture: string; split: string; profile: SemanticProfile;
     graphLookup: { status: string; candidates: Measurement };
     stages: Record<Exclude<EvaluationStage, "graphLookup" | "taskContext">, Measurement>;
-    profiles: Record<ProfileName, { semanticState: string; vector: Measurement; lexical: Measurement; hybrid: Measurement; hybridGraphExpansion: Measurement; graphExpansion: { added: number; relations: Record<string, number> } }>;
-    taskContext: { subjects: Measurement; coverage: { relevant: number; supporting: number }; admittedRelevantItems: number; missedRelevantItems: number; admittedSupportingItems: number; missedSupportingItems: number; budget: { maxItems: number; maxEstimatedTokens: number; selectedItems: number; estimatedTokens: number; omittedItems: number; budgetExceeded: boolean }; budgetEfficiency: number };
+    profiles: Record<ProfileName, { semanticState: string; vector: Measurement; lexical: Measurement; hybrid: Measurement; graphOnly: Measurement; hybridGraphExpansion: Measurement; graphExpansion: { added: number; relations: Record<string, number> } }>;
+    taskContext: { semanticProfile: ProfileName; semanticState: string; reliability: { mayBeIncomplete: boolean; capabilityStates: Record<string, string>; diagnostics: string[] }; subjects: Measurement; coverage: { relevant: number; supporting: number }; admittedRelevantItems: number; missedRelevantItems: number; admittedSupportingItems: number; missedSupportingItems: number; budget: { maxItems: number; maxEstimatedTokens: number; selectedItems: number; estimatedTokens: number; omittedItems: number; budgetExceeded: boolean }; budgetEfficiency: number };
     ambiguity?: { expectation: AmbiguityExpectation; outcome: "no-result" | "no-promotion-observed" | "false-promotion" | "unique-target-promoted" | "incorrect-promotion" | "top-tie" | "unjudged"; topIdentity: string | null };
     semanticStyle?: SemanticStyle;
   }>;
@@ -56,6 +65,15 @@ export type RetrievalEvalReport = {
   semanticComparison: Record<ProfileName, Record<string, number | null>>;
   semanticStyles: Record<SemanticStyle, Record<string, number | null>>;
   scipPairs: Array<{ caseId: string; conditions: Array<{ id: "parser-only" | "scip-enriched"; candidates: Measurement }> }>;
+  scipEnrichedCases: Array<{
+    caseId: string;
+    semanticProfile: ProfileName;
+    scipEvidenceCount: number;
+    graphDelta: { addedEdges: number; acceptedScipEdges: Array<{ from: string; to: string; relation: string; alreadyPresentInParserGraph: boolean }> };
+    parserOnly: { lexical: Measurement; semantic: Measurement; hybrid: Measurement; graphExpansion: Measurement; hybridGraphExpansion: Measurement; ambiguity?: RetrievalEvalReport["cases"][number]["ambiguity"] };
+    scipEnriched: { lexical: Measurement; semantic: Measurement; hybrid: Measurement; graphExpansion: Measurement; hybridGraphExpansion: Measurement; ambiguity?: RetrievalEvalReport["cases"][number]["ambiguity"] };
+    positiveSelectorChanges: Array<{ role: "relevant" | "supporting"; selector: string; parserOnlyRank: number | null; scipEnrichedRank: number | null; change: "newly-reachable" | "reordered" | "lost" }>;
+  }>;
   judgmentQueue: { remainingTop5: number; remainingTop10: number; items: Array<{ caseId: string; fixture: string; split: string; queryClass: string; query: string; candidate: RetrievalIdentity; sources: Array<{ source: string; rank: number }>; appearances: number; priority: "top5" | "recurring" | "top10" | "ambiguity" | "held-out" | "graph-expansion-only" | "task-context" }> };
 };
 
@@ -298,8 +316,7 @@ function candidateForSubject(graph: CodeGraph, subject: { kind: string; path: st
   return node ? { identity: identityForNode(node), ...(node.startLine === undefined ? {} : { startLine: node.startLine }) } : undefined;
 }
 
-async function evaluateProfile(item: RetrievalEvalCase, root: string, graph: CodeGraph, repoId: string, profile: ProfileName) {
-  const providers = frozenProviders(item.semanticVectors, graph, repoId, profile);
+async function evaluateProfile(item: RetrievalEvalCase, root: string, graph: CodeGraph, repoId: string, profile: ProfileName, providers = frozenProviders(item.semanticVectors, graph, repoId, profile)) {
   const inspection = await inspectRetrieval(item.query, {
     repoPath: root,
     topK: 20,
@@ -320,6 +337,7 @@ async function evaluateProfile(item: RetrievalEvalCase, root: string, graph: Cod
     ...stableEvaluationResults(graph, normalizedExpanded.filter((result) => result.source !== "graph"), (result) => result.fusionScore ?? result.score),
     ...normalizedExpanded.filter((result) => result.source === "graph"),
   ];
+  const graphOnlyResults = stableEvaluationResults(graph, normalizedExpanded.filter((result) => result.source === "graph"), (result) => result.score);
   const vector = rankedResults(graph, vectorResults);
   const lexical = rankedResults(graph, lexicalResults);
   const hybrid = rankedResults(graph, fusedResults);
@@ -329,6 +347,7 @@ async function evaluateProfile(item: RetrievalEvalCase, root: string, graph: Cod
     vector: measure(vector, item, sourceLabels(vectorResults)),
     lexical: measure(lexical, item, sourceLabels(lexicalResults)),
     hybrid: measure(hybrid, item, sourceLabels(fusedResults)),
+    graphOnly: measure(rankedResults(graph, graphOnlyResults), item, sourceLabels(graphOnlyResults)),
     hybridGraphExpansion: measure(expanded, item, sourceLabels(expandedResults)),
     graphExpansion: graphExpansionSummary(inspection.withGraph.chunks),
     resultKeys: {
@@ -352,8 +371,39 @@ function taskContextMatches(identity: RetrievalIdentity, selector: RetrievalSele
     && identity.path.replaceAll("\\", "/").replace(/^\.\//, "") === selector.path.replaceAll("\\", "/").replace(/^\.\//, "");
 }
 
-async function evaluateTaskContext(item: RetrievalEvalCase, root: string, graph: CodeGraph) {
-  const plan = await compileTaskContextForRepository(root, { task: item.query, detail: "full", budget: { maxItems: 20, maxEstimatedTokens: 4_000 } });
+function taskContextProfile(profile: SemanticProfile): ProfileName {
+  return profile === "all" ? "enabled" : profile;
+}
+
+async function evaluateTaskContext(item: RetrievalEvalCase, root: string, graph: CodeGraph, repoId: string, loaded: Awaited<ReturnType<typeof loadIndexedGraphReadOnly>>, frozen = frozenProviders(item.semanticVectors, graph, repoId, taskContextProfile(item.profile))) {
+  const semanticProfile = taskContextProfile(item.profile);
+  const providers = frozen ?? { semanticState: "disabled" as const };
+  const semanticState = semanticProfile === "enabled" ? "ready" : semanticProfile;
+  const collectionDeps: TaskContextCollectionDeps = {
+    repositoryPath: root,
+    loadGraph: async () => ({ graph }),
+    getStatus: async () => ({ capabilities: { lexical: { state: "ready" }, semantic: { state: semanticState } } }),
+    lexicalSearch: searchLexical,
+    hybridSearch: (query, limit, repositoryPath) => inspectHybridSearch(query, limit, repositoryPath, providers),
+    inspectChange,
+    analyzeImpact,
+    affectedTests,
+  };
+  const plan = await compileTaskContextForRepository(root, { task: item.query, detail: "full", budget: { maxItems: 20, maxEstimatedTokens: 4_000 } }, {
+    loadGraph: async () => loaded,
+    collect: async (normalized) => {
+      const collected = await collectTaskContextCandidates(normalized, collectionDeps);
+      const enriched = await enrichTaskContextCandidates(collected.candidates, normalized, graph, collectionDeps);
+      return {
+        candidates: enrichTaskContextGraph(enriched.candidates, graph),
+        reliability: {
+          ...collected.reliability,
+          mayBeIncomplete: collected.reliability.mayBeIncomplete || enriched.reliability.mayBeIncomplete,
+          diagnostics: [...collected.reliability.diagnostics, ...enriched.reliability.diagnostics],
+        },
+      };
+    },
+  });
   const candidates = plan.items.flatMap((entry) => {
     const candidate = candidateForSubject(graph, entry.subject);
     return candidate ? [candidate] : [];
@@ -365,6 +415,9 @@ async function evaluateTaskContext(item: RetrievalEvalCase, root: string, graph:
   const relevantCoverage = item.relevant.length ? admittedRelevantItems / item.relevant.length : 0;
   const supportingCoverage = item.supporting?.length ? admittedSupportingItems / item.supporting.length : 0;
   return {
+    semanticProfile,
+    semanticState: plan.reliability.capabilityStates.semantic ?? semanticState,
+    reliability: plan.reliability,
     subjects: measure(candidates, item),
     coverage: { relevant: relevantCoverage, supporting: supportingCoverage },
     admittedRelevantItems,
@@ -373,26 +426,122 @@ async function evaluateTaskContext(item: RetrievalEvalCase, root: string, graph:
     missedSupportingItems: (item.supporting?.length ?? 0) - admittedSupportingItems,
     budget: plan.budget,
     budgetEfficiency: used ? relevantCoverage / used * 1_000 : 0,
-    deterministicIdentity: stableJson({ subjects: candidates.map((candidate) => canonicalIdentity(candidate.identity)), budget: plan.budget }),
+    deterministicIdentity: stableJson({ semanticProfile, semanticState: plan.reliability.capabilityStates.semantic ?? semanticState, reliability: plan.reliability, subjects: candidates.map((candidate) => canonicalIdentity(candidate.identity)), budget: plan.budget }),
   };
 }
 
-function pairedScipExpansion(item: RetrievalEvalCase, graph: CodeGraph): RetrievalEvalReport["scipPairs"][number] | undefined {
-  const pair: ScipGraphPair | undefined = item.scipPair;
-  if (!pair) return undefined;
-  const seed = findNode(graph, pair.seed);
-  const target = findNode(graph, pair.target);
-  if (!seed || !target) throw new Error(`SCIP pair selectors must resolve to fixture graph nodes for ${item.id}`);
-  const parserOnly = expandGraphContextDetailed(graph, [{ file: seed.file, symbolName: seed.name, symbolType: seed.type, startLine: seed.startLine }], { maxDepth: 2, maxNodes: 8 });
-  const enrichedGraph: CodeGraph = { nodes: [...graph.nodes], edges: [...graph.edges, { from: seed.id, to: target.id, type: pair.relation }] };
-  const enriched = expandGraphContextDetailed(enrichedGraph, [{ file: seed.file, symbolName: seed.name, symbolType: seed.type, startLine: seed.startLine }], { maxDepth: 2, maxNodes: 8 });
-  return {
-    caseId: item.id,
-    conditions: [
-      { id: "parser-only", candidates: measure(rankedNodes(parserOnly.nodes), item, parserOnly.details.map((detail) => detail.relation)) },
-      { id: "scip-enriched", candidates: measure(rankedNodes(enriched.nodes), item, enriched.details.map((detail) => detail.relation)) },
-    ],
+function symbolForSelector(units: readonly IndexedSourceUnit[], selector: RetrievalSelector): { unit: IndexedSourceUnit; symbol: IndexedSourceUnit["facts"]["symbols"][number] } | undefined {
+  if (selector.kind !== "symbol") return undefined;
+  const unit = units.find((candidate) => candidate.relativePath === selector.path);
+  const symbol = unit?.facts.symbols.find((candidate) => candidate.kind === selector.symbolKind && candidate.name === selector.name
+    && (selector.qualifiedName === undefined || candidate.declaredQualifiedName === selector.qualifiedName));
+  return unit && symbol ? { unit, symbol } : undefined;
+}
+
+function sourceContains(outer: { startLine: number; endLine: number }, inner: { startLine: number; endLine: number }): boolean {
+  return outer.startLine <= inner.startLine && outer.endLine >= inner.endLine;
+}
+
+function terminalIdentifier(value: string): { name: string; offset: number } | undefined {
+  const withoutTypeArguments = value.trim().replace(/<[^]*>\s*$/, "").replace(/[!?]+\s*$/, "").trimEnd();
+  const match = /[$_\p{ID_Start}](?:[$\p{ID_Continue}]|\u200c|\u200d)*$/u.exec(withoutTypeArguments);
+  return match?.index === undefined ? undefined : { name: match[0], offset: match.index };
+}
+
+function resolveImportPath(sourcePath: string, moduleSpecifier: string): string | undefined {
+  if (!moduleSpecifier.startsWith(".")) return undefined;
+  return path.posix.normalize(path.posix.join(path.posix.dirname(sourcePath), moduleSpecifier));
+}
+
+function importedTargetMatches(unit: IndexedSourceUnit, targetPath: string, targetName: string, localName: string): boolean {
+  return unit.facts.imports.some((item) => item.importedName === targetName && item.localName === localName
+    && resolveImportPath(unit.relativePath, item.moduleSpecifier) === targetPath.replace(/\.(?:tsx?|jsx?)$/, ".js"));
+}
+
+function fixtureScipBytes(pairs: readonly ScipGraphPair[], units: readonly IndexedSourceUnit[]): Buffer {
+  const occurrencesByPath = new Map<string, Map<string, ScipFixtureOccurrence>>();
+  const add = (relativePath: string, occurrence: ScipFixtureOccurrence): void => {
+    const occurrences = occurrencesByPath.get(relativePath) ?? new Map<string, ScipFixtureOccurrence>();
+    occurrences.set(JSON.stringify(occurrence), occurrence);
+    occurrencesByPath.set(relativePath, occurrences);
   };
+  for (const pair of pairs) {
+    const source = symbolForSelector(units, pair.seed);
+    const target = symbolForSelector(units, pair.target);
+    if (!source || !target) continue;
+    const sourceLines = source.unit.source.split("\n");
+    const targetLines = target.unit.source.split("\n");
+    const definitionLine = targetLines[target.symbol.range.startLine - 1];
+    const definitionColumn = definitionLine?.indexOf(target.symbol.name, target.symbol.range.startColumn ?? 0) ?? -1;
+    if (definitionColumn < 0) continue;
+    const symbol = `scip-typescript npm codeatlas-eval 1.0.0 ${target.unit.relativePath}/${target.symbol.declaredQualifiedName ?? target.symbol.name}().`;
+    add(target.unit.relativePath, {
+      singleLineRange: { line: target.symbol.range.startLine - 1, startCharacter: definitionColumn, endCharacter: definitionColumn + target.symbol.name.length },
+      symbol,
+      roles: 1,
+    });
+
+    const importsTarget = (token: string): boolean => source.unit.relativePath === target.unit.relativePath && token === target.symbol.name
+      || importedTargetMatches(source.unit, target.unit.relativePath, target.symbol.name, token);
+    for (const call of source.unit.facts.callSites) {
+      if (call.callerId !== source.symbol.localId && !sourceContains(source.symbol.range, call.range)) continue;
+      const token = terminalIdentifier(call.calleeText);
+      if (!token || !importsTarget(token.name) || call.range.startColumn === undefined) continue;
+      const column = call.range.startColumn + token.offset;
+      add(source.unit.relativePath, { range: [call.range.startLine - 1, column, call.range.startLine - 1, column + token.name.length], symbol, roles: 2 });
+    }
+    for (const reference of source.unit.facts.references) {
+      if (!sourceContains(source.symbol.range, reference.range) || reference.name !== target.symbol.name || reference.range.startColumn === undefined || !importsTarget(reference.name)) continue;
+      add(source.unit.relativePath, {
+        range: [reference.range.startLine - 1, reference.range.startColumn, reference.range.endLine - 1, reference.range.endColumn ?? reference.range.startColumn + reference.name.length],
+        symbol,
+        roles: 2,
+      });
+    }
+  }
+  return encodeScipIndex([...occurrencesByPath.entries()].sort(([left], [right]) => left.localeCompare(right))
+    .map(([relativePath, occurrences]) => encodeScipDocument(relativePath, [...occurrences.values()])));
+}
+
+function fixtureScipIndexer(pairs: readonly ScipGraphPair[]): ScipIndexer {
+  const tool: ScipTool = { executablePath: "frozen-scip-fixture", source: "project-local", version: "fixture-1" };
+  return {
+    discover: async () => ({ status: "ready", tool }),
+    index: async ({ repositoryId, units }) => normalizeScipIndex(fixtureScipBytes(pairs, units), { repositoryId, units }),
+  };
+}
+
+function positiveSelectorChanges(item: RetrievalEvalCase, parserOnly: Measurement, scipEnriched: Measurement): RetrievalEvalReport["scipEnrichedCases"][number]["positiveSelectorChanges"] {
+  const rankOf = (measurement: Measurement, selector: RetrievalSelector): number | null => {
+    const index = measurement.candidates.findIndex((candidate) => matchesSelector(candidate.identity, selector));
+    return index < 0 ? null : index + 1;
+  };
+  const changes: RetrievalEvalReport["scipEnrichedCases"][number]["positiveSelectorChanges"] = [];
+  for (const [role, selectors] of [["relevant", item.relevant], ["supporting", item.supporting ?? []]] as const) {
+    for (const selector of selectors) {
+      const before = rankOf(parserOnly, selector);
+      const after = rankOf(scipEnriched, selector);
+      if (before === after) continue;
+      changes.push({ role, selector: canonicalIdentity(selector), parserOnlyRank: before, scipEnrichedRank: after, change: before === null ? "newly-reachable" : after === null ? "lost" : "reordered" });
+    }
+  }
+  return changes;
+}
+
+function scipGraphDelta(parserOnly: CodeGraph, scipEnriched: CodeGraph): RetrievalEvalReport["scipEnrichedCases"][number]["graphDelta"] {
+  const nodeIdentities = (graph: CodeGraph): Map<string, string> => new Map(graph.nodes.map((node) => [node.id, canonicalIdentity(identityForNode(node))]));
+  const parserNodes = nodeIdentities(parserOnly);
+  const enrichedNodes = nodeIdentities(scipEnriched);
+  const edgeKey = (edge: CodeGraph["edges"][number], nodes: Map<string, string>): string => `${nodes.get(edge.from) ?? edge.from}\0${edge.type}\0${nodes.get(edge.to) ?? edge.to}`;
+  const parserEdges = new Set(parserOnly.edges.map((edge) => edgeKey(edge, parserNodes)));
+  const enrichedEdges = new Set(scipEnriched.edges.map((edge) => edgeKey(edge, enrichedNodes)));
+  const acceptedScipEdges = scipEnriched.edges.flatMap((edge) => edge.resolution?.evidence.some((evidence) => evidence.kind === "scip") ? [{
+    from: enrichedNodes.get(edge.from) ?? edge.from,
+    to: enrichedNodes.get(edge.to) ?? edge.to,
+    relation: edge.type,
+    alreadyPresentInParserGraph: parserEdges.has(edgeKey(edge, enrichedNodes)),
+  }] : []).sort((left, right) => left.from.localeCompare(right.from) || left.relation.localeCompare(right.relation) || left.to.localeCompare(right.to));
+  return { addedEdges: [...enrichedEdges].filter((key) => !parserEdges.has(key)).length, acceptedScipEdges };
 }
 
 function aggregateCases(cases: RetrievalEvalReport["cases"], selector: (item: RetrievalEvalReport["cases"][number]) => string | undefined): Record<string, Record<string, number | null>> {
@@ -491,6 +640,7 @@ function markdownReport(report: RetrievalEvalReport): string {
   const meanTask = (select: (item: RetrievalEvalReport["cases"][number]) => number): number => taskCases.length ? taskCases.reduce((sum, item) => sum + select(item), 0) / taskCases.length : 0;
   const sumTask = (select: (item: RetrievalEvalReport["cases"][number]) => number): number => taskCases.reduce((sum, item) => sum + select(item), 0);
   lines.push("", "## TaskContext coverage and budget efficiency", "", `- TaskContext admitted relevant items: ${sumTask((item) => item.taskContext.admittedRelevantItems)}`,
+    `- TaskContext semantic capability states: ${[...new Set(taskCases.map((item) => `${item.taskContext.semanticProfile}=${item.taskContext.semanticState}`))].sort().join(", ")}`,
     `- TaskContext missed relevant items: ${sumTask((item) => item.taskContext.missedRelevantItems)}`,
     `- TaskContext admitted supporting items: ${sumTask((item) => item.taskContext.admittedSupportingItems)}`,
     `- TaskContext missed supporting items: ${sumTask((item) => item.taskContext.missedSupportingItems)}`,
@@ -502,8 +652,19 @@ function markdownReport(report: RetrievalEvalReport): string {
   for (const item of report.cases) if (item.ambiguity) ambiguityCounts.set(item.ambiguity.outcome, (ambiguityCounts.get(item.ambiguity.outcome) ?? 0) + 1);
   lines.push("", "## Ambiguity outcomes", "", ...[...ambiguityCounts.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([outcome, count]) => `- ${outcome}: ${count}`), "", "| Case | Expectation | Outcome | Top candidate |", "| --- | --- | --- | --- |");
   for (const item of report.cases) if (item.ambiguity) lines.push(`| ${item.id} | ${item.ambiguity.expectation} | ${item.ambiguity.outcome} | ${item.ambiguity.topIdentity ?? "none"} |`);
-  lines.push("", "## SCIP paired expansion", "");
+  lines.push("", "## Frozen legacy SCIP pair measurements", "", "Historical pair diagnostics are copied unchanged from the frozen baseline and are not used as current end-to-end SCIP evidence.");
   for (const pair of report.scipPairs) for (const condition of pair.conditions) lines.push(`- ${pair.caseId} / ${condition.id}: Recall@10 ${fmt(condition.candidates.metrics.recallAt10)}`);
+  lines.push("", "## SCIP-enriched end-to-end retrieval", "", "These comparisons index identical fixture source through the parser-only and production SCIP mapping/resolution paths.", "", "| Case | Semantic profile | Accepted SCIP edges | Stage | Parser-only MRR@5 / Recall@5 / Recall@10 | SCIP-enriched MRR@5 / Recall@5 / Recall@10 |", "| --- | --- | ---: | --- | --- | --- |");
+  for (const item of report.scipEnrichedCases) for (const stage of ["lexical", "semantic", "hybrid", "graphExpansion", "hybridGraphExpansion"] as const) {
+    const before = item.parserOnly[stage].metrics;
+    const after = item.scipEnriched[stage].metrics;
+    lines.push(`| ${item.caseId} | ${item.semanticProfile} | ${item.scipEvidenceCount} | ${stage} | ${fmt(before.mrrAt5)} / ${fmt(before.recallAt5)} / ${fmt(before.recallAt10)} | ${fmt(after.mrrAt5)} / ${fmt(after.recallAt5)} / ${fmt(after.recallAt10)} |`);
+  }
+  for (const item of report.scipEnrichedCases) {
+    lines.push(``, `### ${item.caseId} positive selector changes`);
+    if (!item.positiveSelectorChanges.length) lines.push(`- No relevant/supporting target changed rank or reachability.`);
+    for (const change of item.positiveSelectorChanges) lines.push(`- ${change.role} ${change.selector}: ${change.parserOnlyRank ?? "absent"} → ${change.scipEnrichedRank ?? "absent"} (${change.change})`);
+  }
   lines.push("", "## Unresolved judgment queue", "", `- Remaining hybrid unjudged appearances: @5 ${report.judgmentQueue.remainingTop5}; @10 ${report.judgmentQueue.remainingTop10}`,
     "", "| Priority | Case | Family | Split | Query class | Query | Candidate | Source ranks | Appearances |", "| --- | --- | --- | --- | --- | --- | --- | --- | --- | ---: |");
   for (const item of report.judgmentQueue.items) lines.push(`| ${item.priority} | ${item.caseId} | ${item.fixture} | ${item.split} | ${item.queryClass} | ${item.query} | ${canonicalIdentity(item.candidate)} | ${item.sources.map((source) => `${source.source}#${source.rank}`).join(", ")} | ${item.appearances} |`);
@@ -518,12 +679,15 @@ export async function runRetrievalEval(options: RetrievalEvalOptions): Promise<{
   const datasetPath = path.resolve(options.datasetPath ?? path.join(repoRoot, "eval/retrieval/dataset.json"));
   const datasetBytes = await readFile(datasetPath);
   const dataset = validateRetrievalDataset(JSON.parse(datasetBytes.toString("utf8")) as unknown);
+  const frozenBaseline = JSON.parse(await readFile(path.join(repoRoot, "artifacts/retrieval-eval-baseline.json"), "utf8")) as { scipPairs?: RetrievalEvalReport["scipPairs"] };
+  if (!Array.isArray(frozenBaseline.scipPairs)) throw new Error("Frozen retrieval baseline is missing historical SCIP pair measurements.");
   const outputDirectory = path.resolve(options.outputDirectory ?? path.join(repoRoot, "artifacts"));
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "code-atlas-retrieval-fixtures-"));
   const restoreOfflineGuard = installOfflineGuard();
   const fixtureHashes: Record<string, string> = {};
   const measuredCases: RetrievalEvalReport["cases"] = [];
-  const scipPairs: RetrievalEvalReport["scipPairs"] = [];
+  const scipPairs = frozenBaseline.scipPairs;
+  const scipEnrichedCases: RetrievalEvalReport["scipEnrichedCases"] = [];
   const sourceContribution: { byStage: Record<string, Record<string, number>> } = { byStage: {} };
   const addContribution = (stage: string, source: string, count: number): void => {
     const values = sourceContribution.byStage[stage] ??= {};
@@ -544,16 +708,32 @@ export async function runRetrievalEval(options: RetrievalEvalOptions): Promise<{
       if (!indexed.published) throw new Error(`Could not build parser-only retrieval fixture ${fixture}: ${indexed.failure.message}`);
       const loaded = await loadIndexedGraphReadOnly(fixtureRoot);
       if (loaded.capabilityState !== "ready") throw new Error(`Retrieval fixture graph is not ready: ${fixture}`);
+      const pairedCases = cases.filter((item) => item.scipPair);
+      let scipLoaded: Awaited<ReturnType<typeof loadIndexedGraphReadOnly>> | undefined;
+      let scipRoot: string | undefined;
+      if (pairedCases.length) {
+        scipRoot = path.join(tempRoot, `${fixture}-scip-enriched`);
+        await cp(fixtureSource, scipRoot, { recursive: true });
+        const scipIndexed = await indexRepository(scipRoot, {
+          skipGit: true,
+          includeSemantic: false,
+          scipIndexer: fixtureScipIndexer(pairedCases.flatMap((item) => item.scipPair ? [item.scipPair] : [])),
+        });
+        if (!scipIndexed.published) throw new Error(`Could not build SCIP-enriched retrieval fixture ${fixture}: ${scipIndexed.failure.message}`);
+        scipLoaded = await loadIndexedGraphReadOnly(scipRoot);
+        if (scipLoaded.capabilityState !== "ready") throw new Error(`SCIP-enriched fixture graph is not ready: ${fixture}`);
+      }
 
       for (const item of cases) {
         validateFixtureJudgments(item, loaded.graph);
+        const profileProviders = Object.fromEntries(PROFILE_NAMES.map((profile) => [profile, frozenProviders(item.semanticVectors, loaded.graph, loaded.repoId, profile)])) as Record<ProfileName, ReturnType<typeof frozenProviders>>;
         const lookupA = graphLookup(item, loaded.graph);
         const lookupB = graphLookup(item, loaded.graph);
         if (stableJson(lookupA) !== stableJson(lookupB)) semanticFallbacksDeterministic = false;
         const runs = await Promise.all(PROFILE_NAMES.map(async (profile) => {
           const [first, second] = await Promise.all([
-            evaluateProfile(item, fixtureRoot, loaded.graph, loaded.repoId, profile),
-            evaluateProfile(item, fixtureRoot, loaded.graph, loaded.repoId, profile),
+            evaluateProfile(item, fixtureRoot, loaded.graph, loaded.repoId, profile, profileProviders[profile]),
+            evaluateProfile(item, fixtureRoot, loaded.graph, loaded.repoId, profile, profileProviders[profile]),
           ]);
           if (stableJson(first) !== stableJson(second)) semanticFallbacksDeterministic = false;
           return [profile, first] as const;
@@ -561,9 +741,10 @@ export async function runRetrievalEval(options: RetrievalEvalOptions): Promise<{
         const profiles = Object.fromEntries(runs) as Record<ProfileName, Awaited<ReturnType<typeof evaluateProfile>>>;
         if (stableJson(profiles.enabled.resultKeys.lexical) !== stableJson(profiles.disabled.resultKeys.lexical)
           || stableJson(profiles.unavailable.resultKeys.lexical) !== stableJson(profiles.disabled.resultKeys.lexical)) lexicalParity = false;
+        const taskProfile = taskContextProfile(item.profile);
         const [taskFirst, taskSecond] = await Promise.all([
-          evaluateTaskContext(item, fixtureRoot, loaded.graph),
-          evaluateTaskContext(item, fixtureRoot, loaded.graph),
+          evaluateTaskContext(item, fixtureRoot, loaded.graph, loaded.repoId, loaded, profileProviders[taskProfile]),
+          evaluateTaskContext(item, fixtureRoot, loaded.graph, loaded.repoId, loaded, profileProviders[taskProfile]),
         ]);
         if (taskFirst.deterministicIdentity !== taskSecond.deterministicIdentity) semanticFallbacksDeterministic = false;
         const stages = {
@@ -578,8 +759,39 @@ export async function runRetrievalEval(options: RetrievalEvalOptions): Promise<{
         for (const [source, count] of Object.entries(profiles.enabled.hybrid.sources)) addContribution("hybrid", source, count);
         for (const [source, count] of Object.entries(profiles.enabled.hybridGraphExpansion.sources)) addContribution("hybridGraphExpansion", source, count);
         addContribution("taskContext", "taskContext", taskFirst.subjects.candidates.length);
-        const pair = pairedScipExpansion(item, loaded.graph);
-        if (pair) scipPairs.push(pair);
+        if (item.scipPair && scipLoaded && scipRoot) {
+          const [enrichedFirst, enrichedSecond] = await Promise.all([
+            evaluateProfile(item, scipRoot, scipLoaded.graph, scipLoaded.repoId, taskProfile),
+            evaluateProfile(item, scipRoot, scipLoaded.graph, scipLoaded.repoId, taskProfile),
+          ]);
+          if (stableJson(enrichedFirst) !== stableJson(enrichedSecond)) semanticFallbacksDeterministic = false;
+          const enrichedProfile = enrichedFirst;
+          const baselineProfile = profiles[taskProfile]!;
+          const acceptedScipEvidence = scipLoaded.graph.edges.filter((edge) => edge.resolution?.evidence.some((evidence) => evidence.kind === "scip")).length;
+          scipEnrichedCases.push({
+            caseId: item.id,
+            semanticProfile: taskProfile,
+            scipEvidenceCount: acceptedScipEvidence,
+            graphDelta: scipGraphDelta(loaded.graph, scipLoaded.graph),
+            parserOnly: {
+              lexical: baselineProfile.lexical,
+              semantic: baselineProfile.vector,
+              hybrid: baselineProfile.hybrid,
+              graphExpansion: baselineProfile.graphOnly,
+              hybridGraphExpansion: baselineProfile.hybridGraphExpansion,
+              ...(item.expectation ? { ambiguity: evaluateAmbiguity(item, baselineProfile.hybrid.candidates) } : {}),
+            },
+            scipEnriched: {
+              lexical: enrichedProfile.lexical,
+              semantic: enrichedProfile.vector,
+              hybrid: enrichedProfile.hybrid,
+              graphExpansion: enrichedProfile.graphOnly,
+              hybridGraphExpansion: enrichedProfile.hybridGraphExpansion,
+              ...(item.expectation ? { ambiguity: evaluateAmbiguity(item, enrichedProfile.hybrid.candidates) } : {}),
+            },
+            positiveSelectorChanges: positiveSelectorChanges(item, baselineProfile.hybridGraphExpansion, enrichedProfile.hybridGraphExpansion),
+          });
+        }
         measuredCases.push({
           id: item.id, queryClass: item.queryClass, fixture: item.fixture, split: item.split, profile: item.profile,
           graphLookup: lookupA, stages,
@@ -588,10 +800,11 @@ export async function runRetrievalEval(options: RetrievalEvalOptions): Promise<{
             vector: profiles[name]!.vector,
             lexical: profiles[name]!.lexical,
             hybrid: profiles[name]!.hybrid,
+            graphOnly: profiles[name]!.graphOnly,
             hybridGraphExpansion: profiles[name]!.hybridGraphExpansion,
             graphExpansion: profiles[name]!.graphExpansion,
           }])) as RetrievalEvalReport["cases"][number]["profiles"],
-          taskContext: { subjects: taskFirst.subjects, coverage: taskFirst.coverage, admittedRelevantItems: taskFirst.admittedRelevantItems, missedRelevantItems: taskFirst.missedRelevantItems, admittedSupportingItems: taskFirst.admittedSupportingItems, missedSupportingItems: taskFirst.missedSupportingItems, budget: taskFirst.budget, budgetEfficiency: taskFirst.budgetEfficiency },
+          taskContext: { semanticProfile: taskFirst.semanticProfile, semanticState: taskFirst.semanticState, reliability: taskFirst.reliability, subjects: taskFirst.subjects, coverage: taskFirst.coverage, admittedRelevantItems: taskFirst.admittedRelevantItems, missedRelevantItems: taskFirst.missedRelevantItems, admittedSupportingItems: taskFirst.admittedSupportingItems, missedSupportingItems: taskFirst.missedSupportingItems, budget: taskFirst.budget, budgetEfficiency: taskFirst.budgetEfficiency },
           ...(item.expectation ? { ambiguity: evaluateAmbiguity(item, profiles.enabled.hybrid.candidates) } : {}),
           ...(item.semanticStyle ? { semanticStyle: item.semanticStyle } : {}),
         });
@@ -621,7 +834,7 @@ export async function runRetrievalEval(options: RetrievalEvalOptions): Promise<{
     semanticFixture: { provider: "frozen-fixture-cosine-v1", vectorStore: "frozen-fixture-vector-store-v1", identity: dataset.semanticVectorFixtureId },
     options: { topK: 20, rerankTopK: 5, rrfK: EVAL_RRF_K, graphEnabled: true, graphDepth: 2, graphMaxNodes: 8, tokenBudget: 4_000, taskContextMaxItems: 20, taskContextMaxEstimatedTokens: 4_000 },
     tokenCounter: { retrieval: "frozen-fixture-whitespace-count-v1 (same whitespace rule as retrieval fallback)", taskContext: "task-context-estimated-token-v1" },
-    determinism: { passed: repeatPassed, repeats: 2, comparedFields: ["canonical source order with unchanged RRF k=60 fusion for tied candidates", "canonical TaskContext admitted-subject inventory", "admission and budget metrics", "report aggregates"] },
+    determinism: { passed: repeatPassed, repeats: 2, comparedFields: ["canonical source order with unchanged RRF k=60 fusion for tied candidates", "canonical TaskContext capability state and admitted-subject inventory", "admission and budget metrics", "SCIP-resolved graph provenance and end-to-end rankings", "report aggregates"] },
     semanticFallbacks: { deterministic: semanticFallbacksDeterministic, lexicalResultsMatchAcrossProfiles: lexicalParity },
     cases: measuredCases,
     aggregates: { byStage, bySplit, byQueryClass: aggregateCases(measuredCases, (item) => item.queryClass), byFixtureFamily: aggregateCases(measuredCases, (item) => item.fixture) },
@@ -629,6 +842,7 @@ export async function runRetrievalEval(options: RetrievalEvalOptions): Promise<{
     semanticComparison,
     semanticStyles,
     scipPairs,
+    scipEnrichedCases,
     judgmentQueue: buildJudgmentQueue(dataset, measuredCases, scipPairs),
   };
   await mkdir(outputDirectory, { recursive: true });
