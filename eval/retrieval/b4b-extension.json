@@ -1,0 +1,102 @@
+{
+  "extensionId": "phase16c-b4b-development-evidence-v1",
+  "semanticVectorFixtureId": "frozen-fixture-cosine-v1",
+  "cases": [
+    {
+      "id": "b4b-notification-cross-file-caller",
+      "query": "Which operation hands the weekly bulletin to recipients after they qualify?",
+      "queryClass": "caller",
+      "fixture": "b4b-notifications",
+      "split": "development",
+      "profile": "enabled",
+      "relevant": [{ "kind": "symbol", "path": "delivery.ts", "name": "deliverDigest", "symbolKind": "function" }],
+      "supporting": [{ "kind": "symbol", "path": "subscribers.ts", "name": "findEligibleSubscribers", "symbolKind": "function" }],
+      "irrelevant": [{ "kind": "symbol", "path": "delivery.ts", "name": "renderDigest", "symbolKind": "function" }, { "kind": "symbol", "path": "delivery.ts", "name": "retryDigestDelivery", "symbolKind": "function" }],
+      "exhaustive": false
+    },
+    {
+      "id": "b4b-inventory-cross-file-callee",
+      "query": "Which summary renderer is invoked to describe available warehouse stock?",
+      "queryClass": "callee",
+      "fixture": "b4b-inventory",
+      "split": "development",
+      "profile": "enabled",
+      "relevant": [{ "kind": "symbol", "path": "availability.ts", "name": "renderStockSummary", "symbolKind": "function" }],
+      "supporting": [{ "kind": "symbol", "path": "availability.ts", "name": "checkStockLevels", "symbolKind": "function" }],
+      "irrelevant": [{ "kind": "symbol", "path": "orders.ts", "name": "describeAvailability", "symbolKind": "function" }, { "kind": "symbol", "path": "availability.ts", "name": "refreshWarehouseSummary", "symbolKind": "function" }],
+      "exhaustive": false
+    },
+    {
+      "id": "b4b-billing-validate-then-dispatch",
+      "query": "Which invoice workflow validates submitted fields before sending the invoice?",
+      "queryClass": "cross-file",
+      "fixture": "b4b-billing",
+      "split": "development",
+      "profile": "enabled",
+      "relevant": [{ "kind": "symbol", "path": "submission.ts", "name": "submitInvoice", "symbolKind": "function" }],
+      "supporting": [{ "kind": "symbol", "path": "validation.ts", "name": "validateInvoiceFields", "symbolKind": "function" }, { "kind": "symbol", "path": "validation.ts", "name": "dispatchInvoice", "symbolKind": "function" }],
+      "irrelevant": [{ "kind": "symbol", "path": "submission.ts", "name": "previewInvoice", "symbolKind": "function" }, { "kind": "symbol", "path": "submission.ts", "name": "resubmitInvoice", "symbolKind": "function" }],
+      "exhaustive": false
+    },
+    {
+      "id": "b4b-media-wrapper-dispatcher",
+      "query": "Which router chooses the image or audio operation for an incoming media job?",
+      "queryClass": "implementation-discovery",
+      "fixture": "b4b-media",
+      "split": "development",
+      "profile": "enabled",
+      "relevant": [{ "kind": "symbol", "path": "router.ts", "name": "routeMediaJob", "symbolKind": "function" }],
+      "supporting": [{ "kind": "symbol", "path": "processing.ts", "name": "createThumbnail", "symbolKind": "function" }, { "kind": "symbol", "path": "processing.ts", "name": "createWaveform", "symbolKind": "function" }],
+      "irrelevant": [{ "kind": "symbol", "path": "processing.ts", "name": "transcodeAsset", "symbolKind": "function" }, { "kind": "symbol", "path": "router.ts", "name": "transcodeForArchive", "symbolKind": "function" }],
+      "exhaustive": false
+    },
+    {
+      "id": "b4b-notification-context-selects-caller",
+      "query": "Which caller sends a digest immediately after a new subscriber opts in?",
+      "queryClass": "caller",
+      "fixture": "b4b-notifications",
+      "split": "development",
+      "profile": "enabled",
+      "relevant": [{ "kind": "symbol", "path": "delivery.ts", "name": "deliverDigest", "symbolKind": "function" }],
+      "supporting": [{ "kind": "symbol", "path": "subscribers.ts", "name": "findEligibleSubscribers", "symbolKind": "function" }],
+      "irrelevant": [{ "kind": "symbol", "path": "delivery.ts", "name": "retryDigestDelivery", "symbolKind": "function" }, { "kind": "symbol", "path": "delivery.ts", "name": "previewDigest", "symbolKind": "function" }],
+      "exhaustive": false
+    },
+    {
+      "id": "b4b-inventory-same-file-caller-control",
+      "query": "Which warehouse summary refreshes after stock levels are counted?",
+      "queryClass": "caller",
+      "fixture": "b4b-inventory",
+      "split": "development",
+      "profile": "enabled",
+      "relevant": [{ "kind": "symbol", "path": "availability.ts", "name": "refreshWarehouseSummary", "symbolKind": "function" }],
+      "supporting": [{ "kind": "symbol", "path": "availability.ts", "name": "checkStockLevels", "symbolKind": "function" }],
+      "irrelevant": [{ "kind": "symbol", "path": "availability.ts", "name": "renderStockSummary", "symbolKind": "function" }, { "kind": "symbol", "path": "orders.ts", "name": "placeBackorder", "symbolKind": "function" }],
+      "exhaustive": false
+    },
+    {
+      "id": "b4b-billing-exact-symbol-control",
+      "query": "dispatchInvoice",
+      "queryClass": "exact-symbol",
+      "fixture": "b4b-billing",
+      "split": "development",
+      "profile": "enabled",
+      "relevant": [{ "kind": "symbol", "path": "validation.ts", "name": "dispatchInvoice", "symbolKind": "function" }],
+      "supporting": [{ "kind": "symbol", "path": "submission.ts", "name": "submitInvoice", "symbolKind": "function" }],
+      "irrelevant": [{ "kind": "symbol", "path": "submission.ts", "name": "resubmitInvoice", "symbolKind": "function" }],
+      "exhaustive": false
+    },
+    {
+      "id": "b4b-media-natural-language-relation",
+      "query": "What makes a transformed rendition visible in the client catalog when media processing finishes?",
+      "queryClass": "natural-language",
+      "fixture": "b4b-media",
+      "split": "development",
+      "profile": "enabled",
+      "relevant": [{ "kind": "symbol", "path": "router.ts", "name": "makePreviewAvailable", "symbolKind": "function" }],
+      "supporting": [{ "kind": "symbol", "path": "processing.ts", "name": "publishPreview", "symbolKind": "function" }, { "kind": "symbol", "path": "processing.ts", "name": "transcodeAsset", "symbolKind": "function" }],
+      "irrelevant": [{ "kind": "symbol", "path": "router.ts", "name": "routeMediaJob", "symbolKind": "function" }, { "kind": "symbol", "path": "processing.ts", "name": "createThumbnail", "symbolKind": "function" }],
+      "exhaustive": false
+    }
+  ]
+}

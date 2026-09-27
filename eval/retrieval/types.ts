@@ -15,6 +15,7 @@ export type RetrievalEvalCase = {
   semanticVectors?: FrozenSemanticCase; scipPair?: ScipGraphPair;
 };
 export type RetrievalDataset = { datasetVersion: typeof RETRIEVAL_DATASET_VERSION; semanticVectorFixtureId: string; cases: RetrievalEvalCase[] };
+export type RetrievalExtension = { extensionId: string; semanticVectorFixtureId: string; cases: RetrievalEvalCase[] };
 
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function validVector(value: unknown): value is number[] { return Array.isArray(value) && value.length > 0 && value.length <= 256 && value.every((item) => typeof item === "number" && Number.isFinite(item)); }
@@ -105,4 +106,26 @@ export function validateRetrievalDataset(value: unknown): RetrievalDataset {
   if (cases.filter((item) => item.semanticStyle).length < 4) throw new TypeError("Retrieval dataset needs four frozen semantic styles");
   if (cases.filter((item) => item.scipPair).length < 3) throw new TypeError("Retrieval dataset needs at least three fixed SCIP pairs");
   return { datasetVersion: RETRIEVAL_DATASET_VERSION, semanticVectorFixtureId: value.semanticVectorFixtureId, cases };
+}
+
+export function validateRetrievalExtension(value: unknown): RetrievalExtension {
+  if (!isRecord(value) || typeof value.extensionId !== "string" || !value.extensionId || typeof value.semanticVectorFixtureId !== "string" || !value.semanticVectorFixtureId || !Array.isArray(value.cases)) {
+    throw new TypeError("Invalid retrieval extension header");
+  }
+  const cases = value.cases.map(validateCase);
+  const ids = new Set<string>();
+  const queries = new Set<string>();
+  const fixtureSplits = new Map<string, string>();
+  for (const item of cases) {
+    if (ids.has(item.id)) throw new TypeError(`Duplicate retrieval extension case id: ${item.id}`);
+    ids.add(item.id);
+    const queryKey = `${item.fixture}\0${item.profile}\0${item.query.trim().toLowerCase().replace(/\s+/g, " ")}`;
+    if (queries.has(queryKey)) throw new TypeError(`Duplicate retrieval extension query in fixture/profile: ${item.fixture}/${item.profile}/${item.query}`);
+    queries.add(queryKey);
+    const priorSplit = fixtureSplits.get(item.fixture);
+    if (priorSplit && priorSplit !== item.split) throw new TypeError(`Extension fixture ${item.fixture} crosses dataset splits`);
+    fixtureSplits.set(item.fixture, item.split);
+  }
+  if (!cases.length || cases.some((item) => item.split !== "development")) throw new TypeError("Retrieval extension must contain development cases only");
+  return { extensionId: value.extensionId, semanticVectorFixtureId: value.semanticVectorFixtureId, cases };
 }
