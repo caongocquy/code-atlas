@@ -60,27 +60,40 @@ test("compact affected_tests bounds nested evidence and reports omissions", () =
   assert.deepEqual(projectAffectedTestsResponse(result, "full"), result);
 });
 
-test("compact retrieval inspection deduplicates stage chunks and uses bounded output", () => {
-  const chunk = (key: string, file: string) => ({ key, source: "lexical", file, content: `${key} content`, score: 1 });
+test("compact retrieval inspection preserves stages and bounds each stage independently", () => {
+  const chunk = (key: string) => ({ key, source: "lexical", file: `${key}.ts`, content: `${key} content`, score: 1 });
+  const shared = chunk("shared");
   const inspection = {
     query: "AuthService",
     repoId: "repo",
     options: {},
-    vectorResults: [chunk("same", "a.ts"), chunk("vector", "v.ts")],
-    lexicalResults: [chunk("same", "a.ts"), chunk("lexical", "l.ts")],
-    fusedResults: [chunk("same", "a.ts"), chunk("fused", "f.ts")],
-    rerankedResults: [],
-    graphExpansion: { details: [] },
-    retrievalOnly: { chunks: [chunk("same", "a.ts")], dropped: [], tokens: 1, budget: 10, rendered: "same" },
-    withGraph: { chunks: [chunk("same", "a.ts")], dropped: [], tokens: 1, budget: 10, rendered: "same" },
-    finalContext: { chunks: [chunk("same", "a.ts")], dropped: [], tokens: 1, budget: 10, rendered: "same" },
+    vectorResults: [shared, chunk("vector-z"), chunk("vector-a"), chunk("vector-z")],
+    lexicalResults: [shared, chunk("lexical-z")],
+    fusedResults: [shared, chunk("fused-z"), chunk("fused-a")],
+    rerankedResults: [shared, chunk("reranked-z")],
+    graphExpansion: { details: [{ node: shared, relation: "calls", depth: 1, seedNode: "seed", path: ["seed", "shared"] }] },
+    retrievalOnly: { chunks: [shared], dropped: [], tokens: 1, budget: 10, rendered: "shared" },
+    withGraph: { chunks: [shared], dropped: [], tokens: 1, budget: 10, rendered: "shared" },
+    finalContext: { chunks: [shared], dropped: [], tokens: 1, budget: 10, rendered: "shared" },
     metrics: {},
     capabilities: {},
   };
-  const compact = projectRetrievalInspectionResponse(inspection as never, "compact", 2);
-  assert.equal(compact.vectorResults.length, 2);
-  assert.equal(compact.lexicalResults.some((item) => item.key === "same"), false);
+  const compact = projectRetrievalInspectionResponse(inspection as never, undefined, 2);
+  assert.deepEqual(compact.vectorResults.map((item) => item.key), ["shared", "vector-z"]);
+  assert.deepEqual(compact.lexicalResults.map((item) => item.key), ["shared", "lexical-z"]);
+  assert.deepEqual(compact.fusedResults.map((item) => item.key), ["shared", "fused-z"]);
+  assert.deepEqual(compact.rerankedResults.map((item) => item.key), ["shared", "reranked-z"]);
+  assert.deepEqual(compact.omitted, { duplicateChunks: 4, vectorResults: 1, fusedResults: 1 });
+  assert.equal((compact.graphExpansion as { details: Array<{ node: { key: string } }> }).details[0].node.key, "shared");
+  assert.deepEqual((compact.retrievalOnly as { chunks: unknown[] }).chunks, []);
+  assert.deepEqual((compact.withGraph as { chunks: unknown[] }).chunks, []);
+  assert.deepEqual((compact.finalContext as { chunks: unknown[] }).chunks, []);
   assert.equal(compact.truncated, true);
-  assert.equal((compact.omitted as { duplicateChunks: number }).duplicateChunks >= 1, true);
-  assert.deepEqual(JSON.stringify(projectRetrievalInspectionResponse(inspection as never, "full")), JSON.stringify(inspection));
+  assert.equal(compact.detailsAvailable, true);
+  const full = projectRetrievalInspectionResponse(inspection as never, "full");
+  for (const stage of ["vectorResults", "lexicalResults", "fusedResults", "rerankedResults"] as const) {
+    const fullKeys = (full[stage] as Array<{ key: string }>).map((item) => item.key).filter((key, index, keys) => keys.indexOf(key) === index);
+    assert.deepEqual((compact[stage] as Array<{ key: string }>).map((item) => item.key), fullKeys.slice(0, 2));
+  }
+  assert.deepEqual(JSON.stringify(full), JSON.stringify(inspection));
 });

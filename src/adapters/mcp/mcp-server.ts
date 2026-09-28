@@ -390,6 +390,18 @@ export function projectRetrievalInspectionResponse(inspection: RetrievalInspecti
   const omitted: Record<string, number> = {};
   const seen = new Set<string>();
   const stage = (name: string, items: InspectorChunk[]) => {
+    const stageSeen = new Set<string>();
+    const unique = items.filter((item) => {
+      if (stageSeen.has(item.key)) { omitted.duplicateChunks = (omitted.duplicateChunks ?? 0) + 1; return false; }
+      stageSeen.add(item.key);
+      seen.add(item.key);
+      return true;
+    });
+    const boundedItems = unique.slice(0, limit);
+    omitted[name] = (omitted[name] ?? 0) + Math.max(0, unique.length - boundedItems.length);
+    return boundedItems.map(compactChunk);
+  };
+  const contextStage = (name: string, items: InspectorChunk[]) => {
     const unique = items.filter((item) => {
       if (seen.has(item.key)) { omitted.duplicateChunks = (omitted.duplicateChunks ?? 0) + 1; return false; }
       seen.add(item.key);
@@ -400,8 +412,8 @@ export function projectRetrievalInspectionResponse(inspection: RetrievalInspecti
     return boundedItems.items.map(compactChunk);
   };
   const compactContext = (context: RetrievalInspection["retrievalOnly"]) => ({
-    chunks: stage("contextChunks", context.chunks),
-    dropped: stage("dropped", context.dropped),
+    chunks: contextStage("contextChunks", context.chunks),
+    dropped: contextStage("dropped", context.dropped),
     tokens: context.tokens,
     budget: context.budget,
     rendered: bounded(context.rendered, 20_000),
