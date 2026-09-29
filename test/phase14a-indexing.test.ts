@@ -349,7 +349,7 @@ test("unavailable semantic indexing remains non-mandatory", async () => {
   }
 });
 
-test("a temporary semantic preparation failure retains the active semantic generation", async () => {
+test("a semantic preparation failure publishes graph and lexical updates and marks semantic state as error", async () => {
   const repoPath = await mkdtemp(path.join(tmpdir(), "code-atlas-phase14a-semantic-failure-"));
   const fixtures = semanticFixtures();
 
@@ -367,19 +367,25 @@ test("a temporary semantic preparation failure retains the active semantic gener
     const semanticRowsBefore = store.countSemanticVectors(repository.id);
     store.close();
 
+    await writeFile(path.join(repoPath, "source.ts"), "export function source() { return false; }\n");
     fixtures.embeddingProvider.fail = true;
     const failed = await syncRepository(repoPath, {
       skipGit: true,
       includeSemantic: true,
       semanticProviders: fixtures,
     });
-    assert.equal(failed.kind, "failed");
-    assert.equal(failed.published, false);
+    assert.equal(failed.kind, "published");
+    assert.notEqual(failed.generationId, activeBefore);
 
     const after = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
     try {
-      assert.equal(after.getActiveGenerationId(repository.id), activeBefore);
+      assert.equal(after.getActiveGenerationId(repository.id), failed.generationId);
       assert.equal(after.countSemanticVectors(repository.id), semanticRowsBefore);
+      const manifest = after.getGenerationManifest(repository.id);
+      assert.equal(manifest?.files.some((file) => file.relativePath === "source.ts"), true);
+      const semanticState = after.getFileCapabilityStates(repository.id, "semantic").get("source.ts");
+      assert.equal(semanticState?.state, "error");
+      assert.match(semanticState?.lastError ?? "", /embedding/i);
     } finally {
       after.close();
     }

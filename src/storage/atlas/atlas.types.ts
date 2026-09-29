@@ -78,6 +78,7 @@ export type LexicalFileUpdate = {
 export type LexicalSearchRow = LexicalDocument & {
   score: number;
   snippet: string;
+  lexicalRankGroup?: string;
 };
 
 export type GraphFileState = {

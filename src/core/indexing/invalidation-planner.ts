@@ -48,6 +48,8 @@ const REPOSITORY_RESOLUTION_REASONS = new Set<InvalidationReasonCode>([
   "module_config_changed",
   "export_ambiguous",
   "dependency_provenance_incomplete",
+  "scip_fingerprint_changed",
+  "scip_status_changed",
   "facts_version_changed",
   "resolution_version_changed",
 ]);
@@ -71,6 +73,8 @@ export function toResolutionScopeReason(reason: InvalidationReasonCode): Resolut
     case "module_config_changed": return "module_config";
     case "export_ambiguous": return "export_ambiguity";
     case "dependency_provenance_incomplete": return "incomplete_provenance";
+    case "scip_fingerprint_changed":
+    case "scip_status_changed": return "resolution_version";
     case "facts_version_changed": return "facts_change";
     default: return assertNever(reason);
   }
@@ -99,7 +103,10 @@ function resolutionInvalidated(
   previousVersions: IndexVersionDomains | undefined,
 ): boolean {
   return previousVersions !== undefined
-    && versions.resolutionVersion !== previousVersions.resolutionVersion;
+    && (versions.resolutionVersion !== previousVersions.resolutionVersion
+      || ((versions.scipStatus === "ready" || previousVersions.scipStatus === "ready")
+        && versions.scipFingerprint !== previousVersions.scipFingerprint)
+      || (previousVersions.scipStatus !== undefined && versions.scipStatus !== previousVersions.scipStatus));
 }
 
 function derivedInvalidated(
@@ -189,6 +196,11 @@ export function planInvalidation(input: InvalidationInput): InvalidationPlan {
   if (parsePaths.length > 0 && !factsChanged) reasons.push("source_changed");
   if (importersInvalidated.length > 0) reasons.push("direct_importer");
   if (resolutionChanged) reasons.push("resolution_version_changed");
+  if (input.previousVersions !== undefined
+    && (input.versions.scipStatus === "ready" || input.previousVersions.scipStatus === "ready")
+    && input.versions.scipFingerprint !== input.previousVersions.scipFingerprint) reasons.push("scip_fingerprint_changed");
+  if (input.previousVersions?.scipStatus !== undefined
+    && input.versions.scipStatus !== input.previousVersions.scipStatus) reasons.push("scip_status_changed");
   reasons.push(...topologyReasons);
   if (renamedPaths.size > 0) reasons.push("path_renamed");
   if (removedPaths.length > renamedPaths.size) reasons.push("path_moved");

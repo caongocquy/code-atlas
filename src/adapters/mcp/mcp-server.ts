@@ -1,14 +1,17 @@
 import path from "node:path";
+import fs from "node:fs/promises";
+import { createRequire } from "node:module";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
-import { getRepositoryStatus } from "../../core/repository/repository-status.service.js";
+import { getRepositoryStatus, getRepositoryStatusReadOnly } from "../../core/repository/repository-status.service.js";
 import { canonicalRepositoryPath } from "../../core/repository/repository-identity.js";
 import { loadIndexedGraphReadOnly, type IndexedGraph } from "../../core/graph/indexed-graph.service.js";
 import { searchLexical } from "../../core/lexical/lexical-search.service.js";
+import { inspectHybridSearch } from "../../core/retrieval/hybrid-search.service.js";
 import {
   indexRepository,
   syncRepository,
@@ -40,6 +43,15 @@ import { inspectChange } from "../../core/change/inspect-change.service.js";
 import type { InspectChangeInput } from "../../core/change/change.types.js";
 import { affectedTests } from "../../core/change/affected-tests.service.js";
 import type { DefaultProviderSet } from "../../infrastructure/provider-defaults.js";
+import { createConfiguredProviders, closeConfiguredProviders } from "../../infrastructure/semantic/repository-providers.js";
+import {
+  cleanSemanticIndex,
+  disableSemanticProvider,
+  getSemanticStatus,
+  setupSemanticProvider,
+  testSemanticProvider,
+  upgradeSemanticProvider,
+} from "../../infrastructure/semantic/semantic-lifecycle.service.js";
 import { explainIncomplete } from "../../core/diagnostics/explain-incomplete.service.js";
 import { graphDelta } from "../../core/change/graph-delta.service.js";
 import type { GraphDeltaInput } from "../../core/change/graph-delta.types.js";
@@ -48,6 +60,11 @@ import type { ArchitectureDriftInput } from "../../core/architecture/architectur
 import { changeGate } from "../../core/gate/change-gate.service.js";
 import type { ChangeGateInput } from "../../core/gate/change-gate.types.js";
 import { readContextAware } from "../../core/context/context-aware-read.service.js";
+import { CONTEXT_AWARE_SOURCE_PROJECTION } from "../../core/context/context-delivery-preparation.js";
+import { compileTaskContextForRepository, TaskContextRepositoryCompilerError } from "../../core/context/task-context-repository-compiler.js";
+import { closeTaskContext, refreshTaskContext, startTaskContext } from "../../core/context/task-context-lifecycle.service.js";
+import { TaskContextLifecycleDomainError } from "../../core/context/task-context-lifecycle.types.js";
+import { SemanticProviderError } from "../../core/semantic/semantic-provider-error.js";
 
 const MAX_LIMIT = 1_000;
 const MAX_CANDIDATES = 20;
@@ -55,18 +72,77 @@ const MAX_COMMUNITIES = 10_000;
 const MAX_TEXT = 2_000;
 const DEFAULT_LIMIT = 20;
 const DEFAULT_DETAIL_LIMIT = 20;
+const packageJson = createRequire(import.meta.url)("../../../package.json") as { version: string };
 
-const repoInput = z.string().min(1).optional();
+const repoInput = z.string().min(1).describe("Local repository path; defaults to the server working directory.").optional();
 const limitInput = z.number().int().min(1).max(MAX_LIMIT).optional();
 const queryInput = z.string().min(1);
 const commonInput = {
   repoPath: repoInput,
   limit: limitInput,
-  detail: z.enum(["compact", "full"]).optional().default("compact"),
+  detail: z.enum(["compact", "full"]).describe("compact returns bounded output; full returns all available details.").optional().default("compact"),
 };
 
 type JsonObject = Record<string, unknown>;
 export type McpDetail = "compact" | "full";
+
+type McpToolAnnotations = {
+  readOnlyHint: boolean;
+  destructiveHint: boolean;
+  idempotentHint: boolean;
+  openWorldHint: boolean;
+};
+
+const readOnlyAnnotations: McpToolAnnotations = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+};
+
+const localWriteAnnotations: McpToolAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: false,
+};
+
+const toolAnnotations: Record<string, McpToolAnnotations> = {
+  repository_status: localWriteAnnotations,
+  search_code: localWriteAnnotations,
+  get_symbol: readOnlyAnnotations,
+  context_read: localWriteAnnotations,
+  compile_task_context: localWriteAnnotations,
+  start_task_context: localWriteAnnotations,
+  refresh_task_context: localWriteAnnotations,
+  close_task_context: { ...localWriteAnnotations, idempotentHint: true },
+  find_callers: readOnlyAnnotations,
+  find_callees: readOnlyAnnotations,
+  find_imports: readOnlyAnnotations,
+  find_imported_by: readOnlyAnnotations,
+  impact: readOnlyAnnotations,
+  inspect_change: readOnlyAnnotations,
+  affected_tests: readOnlyAnnotations,
+  explain_incomplete: readOnlyAnnotations,
+  graph_delta: readOnlyAnnotations,
+  architecture_drift: readOnlyAnnotations,
+  change_gate: readOnlyAnnotations,
+  trace: readOnlyAnnotations,
+  inspect_retrieval: localWriteAnnotations,
+  list_communities: readOnlyAnnotations,
+  get_community: readOnlyAnnotations,
+  important_symbols: readOnlyAnnotations,
+  architectural_bridges: readOnlyAnnotations,
+  find_cycles: readOnlyAnnotations,
+  index_repository: localWriteAnnotations,
+  sync_repository: localWriteAnnotations,
+  semantic_setup: { ...localWriteAnnotations, openWorldHint: true },
+  semantic_status: readOnlyAnnotations,
+  semantic_test: { ...readOnlyAnnotations, openWorldHint: true },
+  semantic_upgrade: { ...localWriteAnnotations, openWorldHint: true },
+  semantic_disable: localWriteAnnotations,
+  semantic_clean: localWriteAnnotations,
+};
 
 class McpToolError extends Error {
   constructor(
@@ -83,7 +159,11 @@ function resolveRepo(repoPath?: string): string {
 }
 
 function errorResult(error: unknown): CallToolResult {
-  const failure = error instanceof McpToolError
+  const failure = error instanceof TaskContextLifecycleDomainError
+    ? { code: error.operationError.code, message: error.operationError.message, details: error.operationError }
+    : error instanceof SemanticProviderError
+    ? { code: error.code, message: error.message, ...(error.env ? { env: error.env } : {}) }
+    : error instanceof McpToolError
     ? { code: error.code, message: error.message, ...(error.details ? { details: error.details } : {}) }
     : { code: "internal_error", message: error instanceof Error ? error.message : String(error) };
   const value = { error: failure };
@@ -111,7 +191,7 @@ function registerJsonTool(
   schema: z.ZodType,
   handler: (args: JsonObject) => Promise<unknown>,
 ): void {
-  server.registerTool(name, { description, inputSchema: schema }, async (args) => {
+  server.registerTool(name, { description, inputSchema: schema, annotations: toolAnnotations[name] }, async (args) => {
     try {
       return jsonResult(await handler(args as JsonObject));
     } catch (error) {
@@ -310,6 +390,18 @@ export function projectRetrievalInspectionResponse(inspection: RetrievalInspecti
   const omitted: Record<string, number> = {};
   const seen = new Set<string>();
   const stage = (name: string, items: InspectorChunk[]) => {
+    const stageSeen = new Set<string>();
+    const unique = items.filter((item) => {
+      if (stageSeen.has(item.key)) { omitted.duplicateChunks = (omitted.duplicateChunks ?? 0) + 1; return false; }
+      stageSeen.add(item.key);
+      seen.add(item.key);
+      return true;
+    });
+    const boundedItems = unique.slice(0, limit);
+    omitted[name] = (omitted[name] ?? 0) + Math.max(0, unique.length - boundedItems.length);
+    return boundedItems.map(compactChunk);
+  };
+  const contextStage = (name: string, items: InspectorChunk[]) => {
     const unique = items.filter((item) => {
       if (seen.has(item.key)) { omitted.duplicateChunks = (omitted.duplicateChunks ?? 0) + 1; return false; }
       seen.add(item.key);
@@ -320,8 +412,8 @@ export function projectRetrievalInspectionResponse(inspection: RetrievalInspecti
     return boundedItems.items.map(compactChunk);
   };
   const compactContext = (context: RetrievalInspection["retrievalOnly"]) => ({
-    chunks: stage("contextChunks", context.chunks),
-    dropped: stage("dropped", context.dropped),
+    chunks: contextStage("contextChunks", context.chunks),
+    dropped: contextStage("dropped", context.dropped),
     tokens: context.tokens,
     budget: context.budget,
     rendered: bounded(context.rendered, 20_000),
@@ -429,28 +521,29 @@ async function withWriteLock<T>(repoPath: string, callback: () => Promise<T>): P
   }
 }
 
-async function optionalProviders(repoPath: string, enabled: boolean): Promise<DefaultProviderSet | undefined> {
+async function optionalProviders(repoPath: string, enabled: boolean, readOnly = true): Promise<DefaultProviderSet | undefined> {
   if (!enabled) return undefined;
-  const { createDefaultProviders } = await import("../../infrastructure/provider-defaults.js");
-  return createDefaultProviders(repoPath);
+  if (readOnly) {
+    try { await fs.access(path.join(repoPath, ".codeatlas", "atlas.db")); }
+    catch { return undefined; }
+  }
+  return createConfiguredProviders(repoPath, { readOnly });
 }
 
 async function closeProviders(providers: DefaultProviderSet | undefined): Promise<void> {
-  if (providers && "close" in providers.vectorStore && typeof providers.vectorStore.close === "function") {
-    providers.vectorStore.close();
-  }
+  closeConfiguredProviders(providers);
 }
 
 export function createMcpServer(): McpServer {
   const server = new McpServer({
     name: "code-atlas",
-    version: process.env.npm_package_version ?? "1.0.0",
+    version: packageJson.version,
   });
 
-  registerJsonTool(server, "repository_status", "Return repository identity and capability status.", z.object({
+  registerJsonTool(server, "repository_status", "Check repository index and capability readiness when availability or freshness is unknown.", z.object({
     repoPath: repoInput,
-    detail: z.enum(["compact", "full"]).optional().default("compact"),
-    includeOptionalCapabilities: z.boolean().optional().default(false),
+    detail: z.enum(["compact", "full"]).describe("compact returns bounded output; full returns all available details.").optional().default("compact"),
+    includeOptionalCapabilities: z.boolean().describe("Initialize only currently configured local optional capabilities before reporting status.").optional().default(false),
   }).strict(), async (args) => {
     const repoPath = resolveRepo(args.repoPath as string | undefined);
     const providers = await optionalProviders(repoPath, args.includeOptionalCapabilities === true);
@@ -466,17 +559,17 @@ export function createMcpServer(): McpServer {
     }
   });
 
-  registerJsonTool(server, "search_code", "Search indexed code using lexical FTS5 or optional semantic fusion.", z.object({
+  registerJsonTool(server, "search_code", "Find matching code in the indexed repository; use get_symbol when the symbol is already known.", z.object({
     ...commonInput,
     query: queryInput,
-    mode: z.enum(["lexical", "hybrid"]).optional().default("lexical"),
+    mode: z.enum(["lexical", "hybrid"]).describe("lexical uses FTS5; hybrid combines semantic and lexical results when the configured provider and index are compatible, and otherwise returns lexical-only results for semantic states such as not_configured or stale.").optional().default("lexical"),
     filePrefix: z.string().min(1).optional(),
   }).strict(), async (args) => {
     const repoPath = resolveRepo(args.repoPath as string | undefined);
-    const status = await lexicalStatus(repoPath);
     const limit = (args.limit as number | undefined) ?? DEFAULT_LIMIT;
     const query = args.query as string;
     if (args.mode !== "hybrid") {
+      const status = await lexicalStatus(repoPath);
       const results = await searchLexical(query, limit + 1, repoPath, args.filePrefix as string | undefined);
       return {
         mode: "lexical",
@@ -491,10 +584,15 @@ export function createMcpServer(): McpServer {
 
     const providers = await optionalProviders(repoPath, true);
     try {
+      const status = await getRepositoryStatusReadOnly(repoPath, providers ? {
+        embeddingProvider: providers.embeddingProvider,
+        vectorStore: providers.vectorStore,
+      } : {});
       const { inspectHybridSearch } = await import("../../core/retrieval/hybrid-search.service.js");
       const stages = await inspectHybridSearch(query, limit, repoPath, {
-        embeddingProvider: providers!.embeddingProvider,
-        vectorStore: providers!.vectorStore,
+        embeddingProvider: providers?.embeddingProvider,
+        vectorStore: providers?.vectorStore,
+        semanticState: status.capabilities.semantic.state,
       });
       return {
         mode: "hybrid",
@@ -512,7 +610,7 @@ export function createMcpServer(): McpServer {
     }
   });
 
-  registerJsonTool(server, "get_symbol", "Resolve a symbol or file in the indexed graph.", z.object({
+  registerJsonTool(server, "get_symbol", "Retrieve one known symbol or file from the indexed graph.", z.object({
     ...commonInput,
     query: queryInput,
   }).strict(), async (args) => withGraph(resolveRepo(args.repoPath as string | undefined), async (context) => {
@@ -528,23 +626,68 @@ export function createMcpServer(): McpServer {
     };
   }));
 
-  registerJsonTool(server, "context_read", "Opt-in context-aware read for one repository-relative file.", z.object({
+  registerJsonTool(server, "context_read", "Safely read and deliver a selected file while recording the context delivery.", z.object({
     repoPath: repoInput,
     file: z.string().min(1),
-    sessionId: z.string().min(1),
-    contextGeneration: z.string().min(1),
+    sessionId: z.string().min(1).describe("Lifecycle session identifier for the exact context state."),
+    contextGeneration: z.string().min(1).describe("Published context generation to read from the lifecycle state."),
   }).strict(), async (args) => readContextAware(resolveRepo(args.repoPath as string | undefined), {
     sessionId: args.sessionId as string,
     contextGeneration: args.contextGeneration as string,
     subject: { kind: "file", path: args.file as string },
-    projection: "source-v1",
+    projection: CONTEXT_AWARE_SOURCE_PROJECTION,
   }));
 
+  registerJsonTool(server, "compile_task_context", "Assemble bounded task evidence; use search_code for matching-code lookup and context_read to deliver a selected file.", z.object({
+    task: z.string().min(1),
+    repoPath: repoInput,
+    anchors: z.array(z.union([
+      z.object({ kind: z.literal("file"), path: z.string().min(1) }).strict(),
+      z.object({ kind: z.literal("symbol"), path: z.string().min(1).optional(), name: z.string().min(1) }).strict(),
+    ])).describe("Known file or symbol anchors that seed task evidence.").optional(),
+    changedPaths: z.array(z.string().min(1)).describe("Known changed paths to include as task evidence.").optional(),
+    budget: z.object({ maxItems: z.number().int().positive().optional(), maxEstimatedTokens: z.number().int().positive().optional() }).strict().optional(),
+    detail: z.enum(["compact", "full"]).describe("compact returns bounded output; full returns all available details.").optional(),
+  }).strict(), async (args) => {
+    const repoPath = resolveRepo(args.repoPath as string | undefined);
+    try {
+      return await compileTaskContextForRepository(repoPath, {
+      task: args.task as string,
+      repoPath,
+      anchors: args.anchors as never,
+      changedPaths: args.changedPaths as string[] | undefined,
+      budget: args.budget as { maxItems?: number; maxEstimatedTokens?: number } | undefined,
+      detail: args.detail as "compact" | "full" | undefined,
+      });
+    } catch (error) {
+      if (error instanceof TaskContextRepositoryCompilerError && error.code === "index_required") throw new McpToolError("index_required", error.message, { repositoryPath: repoPath, next: "Call index_repository or sync_repository first." });
+      throw error;
+    }
+  });
+
+  const lifecycleAnchor = z.union([
+    z.object({ kind: z.literal("file"), path: z.string().min(1) }).strict(),
+    z.object({ kind: z.literal("symbol"), path: z.string().min(1).optional(), name: z.string().min(1) }).strict(),
+  ]);
+  registerJsonTool(server, "start_task_context", "Create a durable task context lifecycle and publish initial evidence for a task.", z.object({
+    repoPath: repoInput,
+    task: z.string().min(1),
+    anchors: z.array(lifecycleAnchor).describe("Known file or symbol anchors that seed the lifecycle evidence.").optional(),
+    budget: z.object({ maxItems: z.number().int().positive().optional(), maxEstimatedTokens: z.number().int().positive().optional() }).strict().optional(),
+    ttlSeconds: z.number().int().positive().optional(),
+    detail: z.enum(["compact", "full"]).describe("compact returns bounded output; full returns all available details.").optional(),
+  }).strict(), async (args) => {
+    try { return await startTaskContext({ task: args.task as string, anchors: args.anchors as never, budget: args.budget as never, ttlSeconds: args.ttlSeconds as number | undefined, detail: args.detail as "compact" | "full" | undefined }, { repositoryPath: resolveRepo(args.repoPath as string | undefined) }); }
+    catch (error) { if (error instanceof TaskContextLifecycleDomainError && error.operationError.code === "compiler_validation_failed" && error.operationError.message === "Repository graph is not indexed.") throw new McpToolError("index_required", error.operationError.message, { repositoryPath: resolveRepo(args.repoPath as string | undefined), next: "Call index_repository or sync_repository first." }); throw error; }
+  });
+  registerJsonTool(server, "refresh_task_context", "Refresh a known task context lifecycle and publish a new generation.", z.object({ repoPath: repoInput, taskContextId: z.string().min(1).describe("Task context lifecycle identifier to refresh."), budget: z.object({ maxItems: z.number().int().positive().optional(), maxEstimatedTokens: z.number().int().positive().optional() }).strict().optional(), detail: z.enum(["compact", "full"]).describe("compact returns bounded output; full returns all available details.").optional() }).strict(), async (args) => refreshTaskContext({ taskContextId: args.taskContextId as string, budget: args.budget as never, detail: args.detail as "compact" | "full" | undefined }, { repositoryPath: resolveRepo(args.repoPath as string | undefined) }));
+  registerJsonTool(server, "close_task_context", "Close a known task context lifecycle; repeated close requests have no further effect.", z.object({ repoPath: repoInput, taskContextId: z.string().min(1).describe("Task context lifecycle identifier to close.") }).strict(), async (args) => closeTaskContext({ taskContextId: args.taskContextId as string }, { repositoryPath: resolveRepo(args.repoPath as string | undefined) }));
+
   const relationTools = [
-    ["find_callers", findCallers, "Find callers of a resolved symbol."],
-    ["find_callees", findCallees, "Find callees of a resolved symbol."],
-    ["find_imports", findImports, "Find files imported by a symbol or file."],
-    ["find_imported_by", findImportedBy, "Find files that import a symbol or file."],
+    ["find_callers", findCallers, "Find symbols that call into a known target; use impact for the wider structural blast radius."],
+    ["find_callees", findCallees, "Find symbols called from a known source; use impact for the wider structural blast radius."],
+    ["find_imports", findImports, "Find files a target imports from; use find_imported_by for the reverse import direction."],
+    ["find_imported_by", findImportedBy, "Find files whose imports reference the target; use find_imports for the reverse direction."],
   ] as const;
   for (const [name, relation, description] of relationTools) {
     registerJsonTool(server, name, description, z.object({
@@ -558,10 +701,10 @@ export function createMcpServer(): McpServer {
     }));
   }
 
-  registerJsonTool(server, "impact", "Analyze the bounded callers, importers, and inheritance blast radius.", z.object({
+  registerJsonTool(server, "impact", "Analyze a structural blast radius across callers, importers, and inheritance; use a find_* tool for one single relation.", z.object({
     ...commonInput,
     query: queryInput,
-    maxDepth: z.number().int().min(0).max(10).optional(),
+    maxDepth: z.number().int().min(0).max(10).describe("Bound structural traversal depth for the blast-radius analysis.").optional(),
   }).strict(), async (args) => withGraph(resolveRepo(args.repoPath as string | undefined), async (context) => ({
     ...analyzeImpact(context.graph, args.query as string, {
       maxDepth: args.maxDepth as number | undefined,
@@ -574,11 +717,11 @@ export function createMcpServer(): McpServer {
 
   const changeSourceShape = {
     repoPath: repoInput,
-    detail: z.enum(["compact", "full"]).optional().default("compact"),
-    mode: z.enum(["working", "staged", "commit", "range"]).optional().default("working"),
-    commit: z.string().min(1).optional(),
-    base: z.string().min(1).optional(),
-    head: z.string().min(1).optional(),
+    detail: z.enum(["compact", "full"]).describe("compact returns bounded output; full returns all available details.").optional().default("compact"),
+    mode: z.enum(["working", "staged", "commit", "range"]).describe("working and staged inspect local snapshots; commit requires commit; range requires base and head.").optional().default("working"),
+    commit: z.string().min(1).describe("Commit revision required when mode is commit.").optional(),
+    base: z.string().min(1).describe("Base revision required when mode is range.").optional(),
+    head: z.string().min(1).describe("Head revision required when mode is range.").optional(),
   };
   function validateChangeSource(value: { mode?: string; commit?: string; base?: string; head?: string }, context: { addIssue(issue: { code: "custom"; path: string[]; message: string }): void }): void {
     const mode = value.mode ?? "working";
@@ -590,7 +733,7 @@ export function createMcpServer(): McpServer {
   }
   const inspectChangeSchema = z.object({
     ...changeSourceShape,
-    maxDepth: z.number().int().min(0).max(10).optional(),
+    maxDepth: z.number().int().min(0).max(10).describe("Bound structural traversal depth while mapping changed-symbol impact.").optional(),
   }).strict().superRefine(validateChangeSource);
   registerJsonTool(server, "inspect_change", "Inspect Git changes and map changed symbols to their structural blast radius.", inspectChangeSchema, async (args) => {
     const detail = args.detail as McpDetail | undefined;
@@ -620,13 +763,13 @@ export function createMcpServer(): McpServer {
 
   const explainIncompleteSchema = z.object({
     repoPath: repoInput,
-    detail: z.enum(["compact", "full"]).optional().default("compact"),
-    scope: z.enum(["repository", "change", "tests"]).optional().default("repository"),
-    mode: z.enum(["working", "staged", "commit", "range"]).optional(),
-    commit: z.string().min(1).optional(),
-    base: z.string().min(1).optional(),
-    head: z.string().min(1).optional(),
-    maxDepth: z.number().int().min(0).max(10).optional(),
+    detail: z.enum(["compact", "full"]).describe("compact returns bounded output; full returns all available details.").optional().default("compact"),
+    scope: z.enum(["repository", "change", "tests"]).describe("Explain repository-wide evidence, one change, or affected tests; change-source fields apply only to change or tests scope.").optional().default("repository"),
+    mode: z.enum(["working", "staged", "commit", "range"]).describe("Choose working-tree or staged changes, one commit, or a revision range; commit requires commit, and range requires base and head.").optional(),
+    commit: z.string().min(1).describe("Commit revision required for commit mode; valid only with change or tests scope.").optional(),
+    base: z.string().min(1).describe("Base revision required for range mode; range mode also requires head and is valid only with change or tests scope.").optional(),
+    head: z.string().min(1).describe("Head revision required for range mode; range mode also requires base and is valid only with change or tests scope.").optional(),
+    maxDepth: z.number().int().min(0).max(10).describe("Bound change or test traversal when the selected scope uses a change source.").optional(),
   }).strict().superRefine((value, context) => {
     const mode = value.mode ?? "working";
     const has = (name: "commit" | "base" | "head") => value[name] !== undefined;
@@ -698,12 +841,12 @@ export function createMcpServer(): McpServer {
     return projectMcpResponse(result as unknown as JsonObject, args.detail as McpDetail | undefined);
   });
 
-  registerJsonTool(server, "trace", "Return a bounded, directed or explanatory graph path.", z.object({
+  registerJsonTool(server, "trace", "Follow a graph path between two known endpoints; use impact to inspect a broader blast radius.", z.object({
     ...commonInput,
     from: queryInput,
     to: queryInput,
-    maxDepth: z.number().int().min(0).max(32).optional(),
-    mode: z.enum(["directed", "explanatory"]).optional(),
+    maxDepth: z.number().int().min(0).max(32).describe("Bound graph path traversal depth.").optional(),
+    mode: z.enum(["directed", "explanatory"]).describe("directed follows edge direction; explanatory may traverse inverse edges to explain a relation.").optional(),
   }).strict(), async (args) => withGraph(resolveRepo(args.repoPath as string | undefined), async (context) => ({
     ...traceGraph(context.graph, args.from as string, args.to as string, {
       maxDepth: args.maxDepth as number | undefined,
@@ -714,13 +857,13 @@ export function createMcpServer(): McpServer {
     ...(context.framework?.reliability ? { reliability: context.framework.reliability } : {}),
   })));
 
-  registerJsonTool(server, "inspect_retrieval", "Inspect lexical, optional semantic, rerank, graph, and context stages.", z.object({
+  registerJsonTool(server, "inspect_retrieval", "Diagnose retrieval stages and ranking; use search_code for default matching-code retrieval.", z.object({
     ...commonInput,
     query: queryInput,
-    includeSemantic: z.boolean().optional().default(false),
-    includeReranker: z.boolean().optional().default(false),
-    graphEnabled: z.boolean().optional(),
-    tokenBudget: z.number().int().min(100).max(20_000).optional(),
+    includeSemantic: z.boolean().describe("Request semantic-stage diagnostics; the embedding provider loads from repository configuration when available. With no embedding provider configured, semantic retrieval is not_configured.").optional().default(false),
+    includeReranker: z.boolean().describe("Request reranker-stage diagnostics; this MCP server has no reranker provider wired, so reranking is unavailable.").optional().default(false),
+    graphEnabled: z.boolean().describe("Enable or disable graph expansion during retrieval inspection.").optional(),
+    tokenBudget: z.number().int().min(100).max(20_000).describe("Cap the estimated context tokens returned by inspection.").optional(),
   }).strict(), async (args) => {
     const repoPath = resolveRepo(args.repoPath as string | undefined);
     const providers = await optionalProviders(repoPath, args.includeSemantic === true || args.includeReranker === true);
@@ -742,7 +885,7 @@ export function createMcpServer(): McpServer {
     }
   });
 
-  registerJsonTool(server, "list_communities", "List deterministic graph communities and coupling metadata.", z.object({
+  registerJsonTool(server, "list_communities", "Discover graph communities and coupling metadata; use get_community to expand one known community.", z.object({
     ...commonInput,
   }).strict(), async (args) => withGraph(resolveRepo(args.repoPath as string | undefined), async (context) => {
     const result = detectCommunities(context.graph, {
@@ -762,7 +905,7 @@ export function createMcpServer(): McpServer {
     };
   }));
 
-  registerJsonTool(server, "get_community", "Return one graph community by stable identifier.", z.object({
+  registerJsonTool(server, "get_community", "Expand one known graph community by stable identifier; use list_communities to discover identifiers.", z.object({
     repoPath: repoInput,
     id: queryInput,
   }).strict(), async (args) => withGraph(resolveRepo(args.repoPath as string | undefined), async (context) => {
@@ -772,14 +915,14 @@ export function createMcpServer(): McpServer {
     return { community, mayBeIncomplete: result.mayBeIncomplete };
   }));
 
-  registerJsonTool(server, "important_symbols", "Rank structurally important symbols with noise suppression signals.", z.object({
+  registerJsonTool(server, "important_symbols", "Rank structurally important symbols; use get_symbol to retrieve one known symbol.", z.object({
     ...commonInput,
   }).strict(), async (args) => withGraph(resolveRepo(args.repoPath as string | undefined), async (context) => calculateImportance(context.graph, {
     limit: (args.limit as number | undefined) ?? DEFAULT_LIMIT,
     coverage: { mayBeIncomplete: context.mayBeIncomplete },
   })));
 
-  registerJsonTool(server, "architectural_bridges", "Find sparse cross-community architectural bridges.", z.object({
+  registerJsonTool(server, "architectural_bridges", "Find sparse links between graph communities; use list_communities to discover the groups.", z.object({
     ...commonInput,
   }).strict(), async (args) => withGraph(resolveRepo(args.repoPath as string | undefined), async (context) => {
     const communities = detectCommunities(context.graph, { maxResults: MAX_COMMUNITIES, includeSingletons: true, coverage: { mayBeIncomplete: context.mayBeIncomplete } });
@@ -789,7 +932,7 @@ export function createMcpServer(): McpServer {
     });
   }));
 
-  registerJsonTool(server, "find_cycles", "Find bounded structural call, import, and inheritance cycles.", z.object({
+  registerJsonTool(server, "find_cycles", "Report bounded structural call, import, and inheritance cycles.", z.object({
     ...commonInput,
   }).strict(), async (args) => withGraph(resolveRepo(args.repoPath as string | undefined), async (context) => detectStructuralCycles(context.graph, {
     maxResults: (args.limit as number | undefined) ?? DEFAULT_LIMIT,
@@ -797,19 +940,20 @@ export function createMcpServer(): McpServer {
   })));
 
   for (const [name, operation] of [["index_repository", indexRepository], ["sync_repository", syncRepository]] as const) {
-    registerJsonTool(server, name, `Run the shared ${name === "index_repository" ? "full index" : "incremental sync"} pipeline.`, z.object({
+    registerJsonTool(server, name, `${name === "index_repository" ? "Build" : "Synchronize"} the local generated index state; this does not modify source files or Git data.`, z.object({
       repoPath: repoInput,
-      skipGit: z.boolean().optional().default(false),
-      includeSemantic: z.boolean().optional().default(false),
+      skipGit: z.boolean().describe("Skip read-only Git candidate discovery during indexing.").optional().default(false),
+      includeSemantic: z.boolean().describe("Request semantic indexing; when omitted, semantic runs if an enabled provider is configured. With no embedding provider wired, semantic is not-configured only when no active semantic capability exists; an active semantic capability must fail closed while graph and lexical publication continue.").optional(),
     }).strict(), async (args) => {
       const repoPath = resolveRepo(args.repoPath as string | undefined);
       return withWriteLock(repoPath, async () => {
-        const providers = await optionalProviders(repoPath, args.includeSemantic === true);
+        const providers = await optionalProviders(repoPath, true, false);
+        const includeSemantic = args.includeSemantic === true || (args.includeSemantic === undefined && providers?.embeddingProvider !== undefined);
         try {
           const outcome = await operation(repoPath, {
             skipGit: args.skipGit === true,
-            includeSemantic: args.includeSemantic === true,
-            semanticProviders: providers?.embeddingProvider ? {
+            includeSemantic,
+            semanticProviders: includeSemantic && providers?.embeddingProvider ? {
               embeddingProvider: providers.embeddingProvider,
               vectorStore: providers.vectorStore,
             } : undefined,
@@ -827,6 +971,23 @@ export function createMcpServer(): McpServer {
       });
     });
   }
+
+  const semanticProviderInput = z.discriminatedUnion("type", [
+    z.object({ type: z.literal("builtin-local"), model: z.string().min(1).optional(), revision: z.string().min(1).optional(), dimensions: z.number().int().positive().optional() }).strict(),
+    z.object({ type: z.literal("openai-compatible"), baseUrl: z.string().min(1), model: z.string().min(1), apiKeyEnv: z.string().min(1).optional(), dimensions: z.number().int().positive().optional() }).strict(),
+  ]);
+  registerJsonTool(server, "semantic_setup", "Configure and probe a semantic provider without indexing. API keys are read from the named process environment variable.", z.object({ repoPath: repoInput, provider: semanticProviderInput }).strict(), async (args) =>
+    setupSemanticProvider(resolveRepo(args.repoPath as string | undefined), args.provider));
+  registerJsonTool(server, "semantic_status", "Inspect semantic provider and index readiness without network requests or runtime loading.", z.object({ repoPath: repoInput }).strict(), async (args) =>
+    getSemanticStatus(resolveRepo(args.repoPath as string | undefined)));
+  registerJsonTool(server, "semantic_test", "Actively probe the configured semantic provider without changing config or index state.", z.object({ repoPath: repoInput }).strict(), async (args) =>
+    testSemanticProvider(resolveRepo(args.repoPath as string | undefined)));
+  registerJsonTool(server, "semantic_upgrade", "Provision and probe the latest built-in local model revision, or report that an OpenAI-compatible provider is externally managed.", z.object({ repoPath: repoInput }).strict(), async (args) =>
+    upgradeSemanticProvider(resolveRepo(args.repoPath as string | undefined)));
+  registerJsonTool(server, "semantic_disable", "Disable semantic retrieval while retaining provider configuration and vectors.", z.object({ repoPath: repoInput }).strict(), async (args) =>
+    disableSemanticProvider(resolveRepo(args.repoPath as string | undefined)));
+  registerJsonTool(server, "semantic_clean", "Remove only semantic vectors and metadata for this repository.", z.object({ repoPath: repoInput }).strict(), async (args) =>
+    cleanSemanticIndex(resolveRepo(args.repoPath as string | undefined)));
 
   return server;
 }

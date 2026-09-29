@@ -7,6 +7,7 @@ import { canonicalRepositoryPath } from "../repository/repository-identity.js";
 import {
   extractImports,
   isRelativeImport,
+  resolveLanguageImportCandidates,
   resolveImportCandidates,
 } from "./imports.js";
 import { createGraphNodeId } from "./node-id.js";
@@ -344,8 +345,8 @@ export function assembleFactsGraph(
     if (!from) continue;
     const imports = [...unit.facts.imports].sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right)));
     for (const item of imports) {
-      if (!isRelativeImport(item.moduleSpecifier)) continue;
-      const targetFile = resolveImportCandidates(unit.relativePath, item.moduleSpecifier).find((candidate) => files.has(candidate));
+      if (!isRelativeImport(item.moduleSpecifier) && !["python", "kotlin", "rust"].includes(unit.facts.language)) continue;
+      const targetFile = resolveLanguageImportCandidates(unit.relativePath, item.moduleSpecifier, unit.facts.language).find((candidate) => files.has(candidate));
       const to = targetFile ? fileIds.get(targetFile) : undefined;
       if (to) graph.edges.push({ from, to, type: "imports" });
     }

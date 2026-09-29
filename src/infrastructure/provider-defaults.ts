@@ -15,13 +15,14 @@ export type DefaultProviderSet = {
   rerankerProvider?: RerankerProvider;
 };
 
-export function createDefaultProviders(repoPath: string): DefaultProviderSet {
+export function createDefaultProviders(repoPath: string, options: { readOnly?: boolean } = {}): DefaultProviderSet {
   const absoluteRepoPath = canonicalRepositoryPath(path.resolve(repoPath));
 
   return {
     vectorStore: new SqliteVectorStore(
       path.join(absoluteRepoPath, ".codeatlas", "atlas.db"),
       getRepositoryIdentity(absoluteRepoPath).id,
+      options,
     ),
   };
 }

@@ -5,6 +5,9 @@ import { createInlineProgressRunner } from "./cli-progress-reporter.js";
 import { formatIndexFailure, formatIndexResult, formatRepositoryStatus } from "./cli-output.js";
 import { getRepositoryStatusReadOnly } from "../../core/repository/repository-status.service.js";
 import { indexRepository, syncRepository, type IndexPipelineResult } from "../../core/indexing/index-pipeline.service.js";
+import { createConfiguredProviders, closeConfiguredProviders } from "../../infrastructure/semantic/repository-providers.js";
+import { readRepositoryConfig } from "../../infrastructure/semantic/semantic-config.store.js";
+import type { DefaultProviderSet } from "../../infrastructure/provider-defaults.js";
 
 export async function runIndexingCommand(
   operation: "index" | "sync" | "status",
@@ -35,13 +38,22 @@ export async function runIndexingCommand(
     else reporter.failure(`! ${operation === "index" ? "Index" : "Sync"} cancelled`);
   };
   process.once("SIGINT", onSigint);
+  let providers: DefaultProviderSet | undefined;
 
   try {
+    const config = await readRepositoryConfig(targetPath);
+    const includeSemantic = config.semantic?.enabled === true;
+    if (includeSemantic) providers = await createConfiguredProviders(targetPath);
     const result = await reporter.run(
       operation === "index" ? "Indexing repository" : "Syncing repository",
       (progressReporter) => index(targetPath, {
         progress: createInlineProgressRunner(progressReporter),
         skipGit: args.includes("--skip-git"),
+        includeSemantic,
+        semanticProviders: includeSemantic && providers?.embeddingProvider ? {
+          embeddingProvider: providers.embeddingProvider,
+          vectorStore: providers.vectorStore,
+        } : undefined,
       }),
     );
     if (result.kind === "failed") {
@@ -64,6 +76,7 @@ export async function runIndexingCommand(
       if (process.env.DEBUG) process.stderr.write(`${error instanceof Error ? error.stack ?? "" : ""}\n`);
     }
   } finally {
+    closeConfiguredProviders(providers);
     process.off("SIGINT", onSigint);
   }
 }

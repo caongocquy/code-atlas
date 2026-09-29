@@ -71,9 +71,26 @@ async function main(): Promise<void> {
       await runIndexingCommand("status", args);
       return;
     }
+    case "semantic": {
+      const { runSemanticCommand } = await import("./adapters/cli/semantic.command.js");
+      await runSemanticCommand(args);
+      return;
+    }
     case "context-read": {
       const { runContextReadCommand } = await import("./adapters/cli/context-read.command.js");
       await runContextReadCommand(args);
+      return;
+    }
+    case "context-compile": {
+      const { runContextCompileCommand } = await import("./adapters/cli/context-compile.command.js");
+      await runContextCompileCommand(args);
+      return;
+    }
+    case "context-start":
+    case "context-refresh":
+    case "context-close": {
+      const { runContextLifecycleCommand } = await import("./adapters/cli/context-lifecycle.command.js");
+      await runContextLifecycleCommand(command.slice("context-".length) as "start" | "refresh" | "close", args);
       return;
     }
     case "inspect-change": {
@@ -104,6 +121,11 @@ async function main(): Promise<void> {
     case "gate": {
       const { runGateCommand } = await import("./adapters/cli/gate.command.js");
       await runGateCommand(args);
+      return;
+    }
+    case "upgrade": {
+      const { runUpgradeCommand } = await import("./adapters/cli/upgrade.command.js");
+      await runUpgradeCommand(args, packageJson.version);
       return;
     }
     case "help":

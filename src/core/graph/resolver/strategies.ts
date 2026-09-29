@@ -9,6 +9,7 @@ import type {
   TypeRef,
 } from "./types.js";
 import type { LookupResult } from "./type-environment.js";
+import { scipBindingKey } from "./scip-evidence.js";
 
 export const ORDERED_STRATEGIES: readonly ResolutionStrategyId[] = [
   "lexical-local", "imports-exports", "explicit-type", "constructor", "assignment", "parameter",
@@ -16,6 +17,7 @@ export const ORDERED_STRATEGIES: readonly ResolutionStrategyId[] = [
 ];
 
 const requiredCapability: Readonly<Record<ResolutionStrategyId, SemanticCapability>> = {
+  scip: "directCall",
   "lexical-local": "localBinding",
   "imports-exports": "moduleImport",
   "explicit-type": "declaredType",
@@ -202,6 +204,10 @@ function resolveInheritance(input: ResolverInput, site: ResolutionSiteIdentity, 
 }
 
 function candidates(input: ResolverInput, site: ResolutionSiteIdentity, strategy: ResolutionStrategyId): readonly ResolutionCandidate[] {
+  if (strategy === "scip") {
+    return (input.context.scipEvidenceBySite?.get(scipBindingKey(site.sourceUnit, site.localId)) ?? [])
+      .map((binding) => ({ target: binding.target, strategy, confidence: "exact", evidenceIds: [binding.evidenceId] }));
+  }
   if (!capabilityAvailable(input, site, strategy)) return [];
   const memoized = cached(input, site, strategy);
   if (memoized) return memoized;

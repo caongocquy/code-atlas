@@ -2,6 +2,7 @@ import path from "node:path";
 
 import { readContextAware, type ContextAwareReadRequest } from "../../core/context/context-aware-read.service.js";
 import type { ContextAwareReadResult } from "../../core/context/context.types.js";
+import { CONTEXT_AWARE_SOURCE_PROJECTION } from "../../core/context/context-delivery-preparation.js";
 import { createCliCommandReporter } from "./cli-command-reporter.js";
 
 function valueAfter(args: string[], flag: string): string | undefined {
@@ -16,7 +17,7 @@ export function parseContextReadArgs(args: string[]): { repoPath: string; json: 
   if (!file) throw new Error("--file requires a repository-relative path.");
   if (!sessionId) throw new Error("--session is required.");
   if (!contextGeneration) throw new Error("--context-generation is required.");
-  return { repoPath: path.resolve(args.find((arg, index) => !arg.startsWith("--") && !["--file", "--session", "--context-generation"].includes(args[index - 1] ?? "")) ?? "."), json: args.includes("--json"), request: { sessionId, contextGeneration, subject: { kind: "file", path: file }, projection: "source-v1" } };
+  return { repoPath: path.resolve(args.find((arg, index) => !arg.startsWith("--") && !["--file", "--session", "--context-generation"].includes(args[index - 1] ?? "")) ?? "."), json: args.includes("--json"), request: { sessionId, contextGeneration, subject: { kind: "file", path: file }, projection: CONTEXT_AWARE_SOURCE_PROJECTION } };
 }
 
 export function formatContextRead(result: ContextAwareReadResult): string {

@@ -1,5 +1,6 @@
 allowBuilds:
   '@driftlog/tree-sitter-dart': true
+  '@modelcontextprotocol/inspector': true
   esbuild: true
   onnxruntime-node: true
   protobufjs: true

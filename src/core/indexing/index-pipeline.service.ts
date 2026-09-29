@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { parse as parseJsonc, type ParseError } from "jsonc-parser";
 
 import { GRAPH_INDEX_VERSION, LEXICAL_INDEX_VERSION, VECTOR_INDEX_VERSION } from "../../config/constants.js";
@@ -46,6 +47,17 @@ import { analyzeFramework, builtinFrameworkAdapters, detectFrameworks, expandFra
 import { planFrameworkInvalidation } from "../framework/framework-invalidation.js";
 import type { FrameworkAnalysisContext, FrameworkConfigFact, FrameworkConfigValue } from "../framework/framework.types.js";
 import { frameworkMaterializationContributions } from "../reliability/reliability-incremental.js";
+import { semanticGenerationIdentity } from "../semantic/provider-identity.js";
+import type { ScipBindingEvidence } from "../graph/resolver/scip-evidence.js";
+import { scipBindingKey } from "../graph/resolver/scip-evidence.js";
+import {
+  computeScipFingerprint,
+  SCIP_PROTOCOL_VERSION,
+  SCIP_RESOLUTION_VERSION,
+  SCIP_SCHEMA_VERSION,
+} from "./scip-fingerprint.js";
+import type { ScipIndexer, ScipIndexerStatus } from "./scip-indexer.types.js";
+import { localScipIndexer } from "../../infrastructure/scip/local-scip-indexer.js";
 
 const RESOLVER_BUDGETS = {
   candidateExpansions: 1000,
@@ -91,6 +103,7 @@ export function buildPipelineResolverContext(input: {
   adapters: readonly LanguageSemanticAdapter[];
   resolutionVersion: string;
   relativePaths?: readonly string[];
+  scipEvidenceBySite?: ReadonlyMap<string, readonly ScipBindingEvidence[]>;
 }): GenerationResolverContext {
   const budget = createBudgetLedger(RESOLVER_BUDGETS);
   const memo = createResolverMemo();
@@ -103,6 +116,7 @@ export function buildPipelineResolverContext(input: {
     budget,
     memo,
     resolutionVersion: input.resolutionVersion,
+    scipEvidenceBySite: input.scipEvidenceBySite,
   });
   const evidence = normalizeFacts(input.facts.map((facts, index) => ({
     facts,
@@ -223,6 +237,7 @@ function addResolutionProvenance(
   resolutions: ReadonlyMap<string, FactsGraphResolutionFile>,
   repoId: string,
   resolutionVersion: string,
+  scipEvidenceById: ReadonlyMap<string, ScipBindingEvidence> = new Map(),
 ): void {
   const byIdentity = new Map(buildCandidateSymbolBindings(repoId, units, graph).map(({ identity, graphNodeId }) => [symbolIdentityKey(identity), graphNodeId] as const));
   for (const unit of units) {
@@ -240,7 +255,11 @@ function addResolutionProvenance(
         edge = { from: sourceId, to: targetId, type: decision.edgeKind };
         graph.edges.push(edge);
       }
-      const evidence = decision.evidenceIds.map((evidenceId) => ({ kind: "resolver", sourceUnit: unit.relativePath, startLine: sourceLine(unit, decision.site.localId), endLine: sourceLine(unit, decision.site.localId), evidenceId }));
+      const evidence = decision.evidenceIds.map((evidenceId) => {
+        const scip = scipEvidenceById.get(evidenceId);
+        const line = scip?.range.startLine ?? sourceLine(unit, decision.site.localId);
+        return { kind: scip ? "scip" : "resolver", sourceUnit: scip?.sourceUnit.relativePath ?? unit.relativePath, startLine: line, endLine: scip?.range.endLine ?? line, evidenceId };
+      });
       Object.assign(edge, withProvenance(edge, { strategy: decision.strategy, confidence: decision.confidence, evidence, resolutionVersion, sourceLogicalIdentity: symbolIdentityKey(sourceIdentity), targetLogicalIdentity: symbolIdentityKey(decision.target) }));
     }
   }
@@ -313,6 +332,57 @@ function failure(error: unknown, activeGenerationId?: string): IndexFailure {
       ? "cache_write_failure"
       : "infrastructure_failure";
   return { kind, message: error instanceof Error ? error.message : String(error), ...(activeGenerationId ? { activeGenerationId } : {}) };
+}
+
+const isScipConfig = (file: string): boolean => {
+  const name = path.posix.basename(file);
+  return name === "package.json" || /^(?:tsconfig|jsconfig).*\.json$/i.test(name);
+};
+const SCIP_LOCKFILE_NAMES = ["pnpm-lock.yaml", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "bun.lock", "bun.lockb"] as const;
+
+async function readScipLockfileHashes(repoPath: string): Promise<Map<string, string>> {
+  const hashes = new Map<string, string>();
+  for (const name of SCIP_LOCKFILE_NAMES) {
+    try {
+      hashes.set(name, createHash("sha256").update(await fs.readFile(path.join(repoPath, name))).digest("hex"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      // A missing lockfile is represented by its absence in the fingerprint.
+    }
+  }
+  return hashes;
+}
+
+async function scipInputsMatch(
+  repoPath: string,
+  units: readonly IndexedSourceUnit[],
+  configHashes: ReadonlyMap<string, string>,
+  lockfileHashes: ReadonlyMap<string, string>,
+): Promise<boolean> {
+  try {
+    for (const unit of units) {
+      if (unit.facts.language !== "typescript" && unit.facts.language !== "tsx" && unit.facts.language !== "javascript") continue;
+      if (createFileHash(await fs.readFile(path.join(repoPath, unit.relativePath), "utf8")) !== unit.facts.contentHash) return false;
+    }
+    for (const [file, hash] of configHashes) {
+      if (createFileHash(await fs.readFile(path.join(repoPath, file), "utf8")) !== hash) return false;
+    }
+    const currentLockfiles = await readScipLockfileHashes(repoPath);
+    return JSON.stringify([...currentLockfiles]) === JSON.stringify([...lockfileHashes]);
+  } catch {
+    return false;
+  }
+}
+
+function groupScipEvidence(evidence: readonly ScipBindingEvidence[]): ReadonlyMap<string, readonly ScipBindingEvidence[]> {
+  const grouped = new Map<string, ScipBindingEvidence[]>();
+  for (const binding of evidence) {
+    const key = scipBindingKey(binding.sourceUnit, binding.siteLocalId);
+    const values = grouped.get(key) ?? [];
+    values.push(binding);
+    grouped.set(key, values);
+  }
+  return new Map([...grouped].map(([key, values]) => [key, values.sort((left, right) => JSON.stringify(left.target).localeCompare(JSON.stringify(right.target)))]));
 }
 
 function semanticResult(
@@ -474,10 +544,77 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
     if (previousGraph.edges.some((edge) =>
       (edge.type === "calls" || edge.type === "references" || edge.type === "extends" || edge.type === "implements") && edge.resolution === undefined,
     )) unsafeTopologyReasons.add("dependency_provenance_incomplete");
-    const plan = planInvalidation({ repositoryFiles: [...currentFiles.keys()], currentFiles, previousBindings, directImporters, unsafeTopologyReasons, versions: CURRENT_INDEX_VERSION_DOMAINS, previousVersions: previousManifest?.versions });
+
+    const scipConfigHashes = new Map([...changes.fileHashes].filter(([file]) => isScipConfig(file)));
+    let scipLockfileHashes = new Map<string, string>();
+    let scipInputsReadable = true;
+    try {
+      scipLockfileHashes = await readScipLockfileHashes(repoPath);
+    } catch {
+      scipInputsReadable = false;
+    }
+    const scipSourceHashes = new Map(units
+      .filter((unit) => unit.facts.language === "typescript" || unit.facts.language === "tsx" || unit.facts.language === "javascript")
+      .map((unit) => [unit.relativePath, unit.facts.contentHash] as const));
+    const scipRelevant = scipSourceHashes.size > 0;
+    let discovery: Awaited<ReturnType<ScipIndexer["discover"]>> = { status: "unavailable" };
+    if (scipRelevant) {
+      try {
+        discovery = await (options.scipIndexer ?? localScipIndexer).discover(repoPath);
+      } catch (error) {
+        discovery = { status: "failed", diagnostic: error instanceof Error ? error.message : String(error) };
+      }
+    }
+    const scipStatusBeforeRun: ScipIndexerStatus = scipInputsReadable ? discovery.status : "failed";
+    const scipFingerprint = computeScipFingerprint({
+      repositoryId: repoId,
+      sourceHashes: scipSourceHashes,
+      configHashes: scipConfigHashes,
+      lockfileHashes: scipLockfileHashes,
+      toolVersion: discovery.tool?.version ?? null,
+      scipSchemaVersion: SCIP_SCHEMA_VERSION,
+      scipProtocolVersion: SCIP_PROTOCOL_VERSION,
+      scipResolutionVersion: SCIP_RESOLUTION_VERSION,
+      resolutionVersion: CURRENT_INDEX_VERSION_DOMAINS.resolutionVersion,
+    });
+    const preliminaryVersions = {
+      ...CURRENT_INDEX_VERSION_DOMAINS,
+      scipFingerprint,
+      scipStatus: scipStatusBeforeRun,
+    };
+    const makeInvalidationPlan = (versions: typeof preliminaryVersions) => planInvalidation({
+      repositoryFiles: [...currentFiles.keys()], currentFiles, previousBindings, directImporters, unsafeTopologyReasons,
+      versions, previousVersions: previousManifest?.versions,
+    });
+    const preliminaryPlan = makeInvalidationPlan(preliminaryVersions);
+    let scipStatus: ScipIndexerStatus = scipStatusBeforeRun;
+    let scipEvidence: readonly ScipBindingEvidence[] = [];
+    const shouldRunScip = scipInputsReadable && discovery.status === "ready" && discovery.tool !== undefined && scipRelevant && (
+      previousManifest === undefined
+      || previousManifest.versions.scipFingerprint !== scipFingerprint
+      || previousManifest.versions.scipStatus === "failed"
+      || preliminaryPlan.fullGraphResolution
+      || preliminaryPlan.resolvePaths.length > 0
+    );
+    if (shouldRunScip && discovery.tool) {
+      options.progress?.update?.("Enriching TypeScript/JavaScript bindings with SCIP");
+      try {
+        scipEvidence = await (options.scipIndexer ?? localScipIndexer).index({ projectRoot: repoPath, repositoryId: repoId, tool: discovery.tool, units });
+        if (!await scipInputsMatch(repoPath, units, scipConfigHashes, scipLockfileHashes)) {
+          scipEvidence = [];
+          scipStatus = "failed";
+        }
+      } catch {
+        scipEvidence = [];
+        scipStatus = "failed";
+      }
+    }
+    if (scipStatus !== "ready") options.progress?.update?.("SCIP enrichment unavailable; continuing with parser-based resolution");
+    const versions = { ...preliminaryVersions, scipStatus };
+    const plan = makeInvalidationPlan(versions);
     recordIndexWork(counters, "importersInvalidated", plan.importersInvalidated.length);
 
-    const generation = createCandidateGeneration(repoId, activeGenerationId, { ...CURRENT_INDEX_VERSION_DOMAINS, reliabilityVersion: RELIABILITY_VERSION }, bindings);
+    const generation = createCandidateGeneration(repoId, activeGenerationId, { ...versions, reliabilityVersion: RELIABILITY_VERSION }, bindings);
     store.beginCandidateGeneration(generation);
     store.writeCandidateManifest(generation.manifest);
     const scope = createResolutionScope(plan);
@@ -487,8 +624,9 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       repositoryIdentity: getRepositoryIdentity(repoPath),
       facts: candidateInput.allUnits.map((unit) => unit.facts),
       adapters: semanticAdapters,
-      resolutionVersion: CURRENT_INDEX_VERSION_DOMAINS.resolutionVersion,
+      resolutionVersion: versions.resolutionVersion,
       relativePaths: candidateInput.allUnits.map((unit) => unit.relativePath),
+      scipEvidenceBySite: groupScipEvidence(scipEvidence),
     });
     const graphCompatible = !requiresRepositoryResolution(plan)
       && plan.parsePaths.length === 0
@@ -507,7 +645,8 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       graph.graph.edges = graph.graph.edges.filter((edge) => edge.type !== "calls" && edge.type !== "references" && edge.type !== "extends" && edge.type !== "implements");
       rebindUnchangedSemanticEdges(graph.graph, previousGraph, candidateInput.allUnits, repoId, resolverContext.resolutionVersion, new Set());
     } else {
-      addResolutionProvenance(graph.graph, candidateInput.allUnits, graph.resolutionByFile, repoId, resolverContext.resolutionVersion);
+      const scipEvidenceById = new Map(scipEvidence.map((item) => [item.evidenceId, item] as const));
+      addResolutionProvenance(graph.graph, candidateInput.allUnits, graph.resolutionByFile, repoId, resolverContext.resolutionVersion, scipEvidenceById);
       if (previousManifest !== undefined) rebindUnchangedSemanticEdges(graph.graph, previousGraph, candidateInput.allUnits, repoId, resolverContext.resolutionVersion, new Set(candidateInput.scope.paths));
     }
     const persistedResolution = new Map(
@@ -521,7 +660,7 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
     );
     recordIndexWork(counters, "filesResolved", persistedResolution.size);
     if (plan.fullGraphResolution && !graphCompatible) recordIndexWork(counters, "fullResolutionFallbacks");
-    const reuseResolutionPaths = plan.reasons.includes("resolution_version_changed") ? [] : plan.reusePaths;
+    const reuseResolutionPaths = plan.reasons.some((reason) => reason === "resolution_version_changed" || reason === "scip_fingerprint_changed" || reason === "scip_status_changed") ? [] : plan.reusePaths;
     store.writeCandidateGraph(generation.id, graph.graph, changes.fileHashes, graphCompatible ? undefined : persistedResolution, reuseResolutionPaths);
     options.progress?.update?.("Resolving framework relationships");
     const frameworkFacts = candidateInput.allUnits.map((unit) => ({ relativePath: unit.relativePath, facts: unit.facts }));
@@ -566,26 +705,40 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
     store.writeCandidateLexicalDocuments(generation.id, lexical);
     const semanticStartedAt = performance.now();
     let semantic: SemanticIndexResult | undefined;
+    const previousSemanticStates = store.getFileCapabilityStates(repoId, "semantic");
     const activeSemanticEnabled = store.hasActiveSemanticCapability(repoId);
     let semanticPreserved = false;
+    let semanticFailure: string | undefined;
     if (options.includeSemantic) {
       const providers = options.semanticProviders;
       if (!providers) {
-        if (activeSemanticEnabled) throw new Error("Semantic provider is not configured while an active semantic capability exists");
-        semantic = semanticResult(repoPath, repoId, "not-configured", semanticStartedAt);
+        if (activeSemanticEnabled) {
+          semanticFailure = "Semantic provider is not configured while an active semantic capability exists.";
+          store.copyActiveSemanticVectorsToCandidate(generation.id);
+          semanticPreserved = true;
+          semantic = semanticResult(repoPath, repoId, "unavailable", semanticStartedAt, undefined, semanticFailure);
+        } else semantic = semanticResult(repoPath, repoId, "not-configured", semanticStartedAt);
       } else {
         try {
           const available = await providers.embeddingProvider.isAvailable() && await providers.vectorStore.isAvailable();
           if (!available) {
-            if (activeSemanticEnabled) throw new Error("Semantic provider is unavailable while an active semantic capability exists");
-            semantic = semanticResult(repoPath, repoId, "unavailable", semanticStartedAt);
+            if (activeSemanticEnabled) {
+              semanticFailure = "Semantic provider is unavailable while an active semantic capability exists.";
+              store.copyActiveSemanticVectorsToCandidate(generation.id);
+              semanticPreserved = true;
+              semantic = semanticResult(repoPath, repoId, "unavailable", semanticStartedAt, undefined, semanticFailure);
+            } else semantic = semanticResult(repoPath, repoId, "unavailable", semanticStartedAt);
           } else {
             semanticCandidate = await prepareSemanticCandidateFromFacts(repoId, generation.id, units, providers.embeddingProvider, providers.vectorStore);
             semantic = semanticResult(repoPath, repoId, "indexed", semanticStartedAt, semanticCandidate);
           }
         } catch (error) {
-          if (activeSemanticEnabled) throw error;
-          semantic = semanticResult(repoPath, repoId, "unavailable", semanticStartedAt, undefined, error instanceof Error ? error.message : String(error));
+          semanticFailure = error instanceof Error ? error.message : String(error);
+          if (activeSemanticEnabled) {
+            store.copyActiveSemanticVectorsToCandidate(generation.id);
+            semanticPreserved = true;
+          }
+          semantic = semanticResult(repoPath, repoId, "unavailable", semanticStartedAt, undefined, semanticFailure);
         }
       }
     } else if (activeSemanticEnabled) {
@@ -593,7 +746,6 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       semanticPreserved = true;
     }
     if (semanticCandidate) store.writeCandidateSemanticVectors(generation.id, semanticCandidate.points);
-    const previousSemanticStates = semanticPreserved ? store.getFileCapabilityStates(repoId, "semantic") : undefined;
     const configFileStates = [...changes.fileHashes.entries()]
       .filter(([file]) => isModuleConfigPath(file))
       .map(([file, fileHash]) => ({
@@ -609,8 +761,29 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       return [
         { file: unit.relativePath, capability: "graph" as const, input: { fileHash: unit.facts.contentHash, version: GRAPH_INDEX_VERSION, state: "ready" as const, generation: generation.id, itemCount: graphCount } },
         { file: unit.relativePath, capability: "lexical" as const, input: { fileHash: unit.facts.contentHash, version: LEXICAL_INDEX_VERSION, state: "ready" as const, generation: generation.id, itemCount: lexicalCount } },
-        ...(semanticCandidate ? [{ file: unit.relativePath, capability: "semantic" as const, input: { fileHash: unit.facts.contentHash, version: VECTOR_INDEX_VERSION, state: "ready" as const, generation: generation.id, providerIdentity: semanticCandidate.providerIdentity, itemCount: semanticCount } }] : []),
-        ...(preservedSemantic ? [{ file: unit.relativePath, capability: "semantic" as const, input: { fileHash: preservedSemantic.fileHash, version: preservedSemantic.version, state: preservedSemantic.state, generation: generation.id, providerIdentity: preservedSemantic.providerIdentity, itemCount: preservedSemantic.itemCount, lastError: preservedSemantic.lastError } }] : []),
+        ...(semanticCandidate ? [{ file: unit.relativePath, capability: "semantic" as const, input: {
+          fileHash: unit.facts.contentHash,
+          version: VECTOR_INDEX_VERSION,
+          state: "ready" as const,
+          generation: semanticGenerationIdentity(
+            unit.facts.contentHash,
+            semanticCandidate.providerIdentity,
+            options.semanticProviders!.vectorStore.id,
+            previousSemanticStates.get(unit.relativePath)?.providerIdentity,
+            previousSemanticStates.has(unit.relativePath),
+          ),
+          providerIdentity: semanticCandidate.providerIdentity,
+          itemCount: semanticCount,
+        } }] : []),
+        ...(preservedSemantic ? [{ file: unit.relativePath, capability: "semantic" as const, input: {
+          fileHash: preservedSemantic.fileHash,
+          version: preservedSemantic.version,
+          state: semanticFailure ? "error" as const : preservedSemantic.state,
+          generation: preservedSemantic.generation,
+          providerIdentity: preservedSemantic.providerIdentity,
+          itemCount: preservedSemantic.itemCount,
+          lastError: semanticFailure ?? preservedSemantic.lastError,
+        } }] : []),
       ];
     })];
     const deletedFiles = [...new Set([

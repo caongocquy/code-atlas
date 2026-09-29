@@ -6,6 +6,7 @@ import type { CodeChunk } from "../graph/parsers/types.js";
 import type { CodeGraph } from "../graph/types.js";
 import type { InvalidationPlan } from "./invalidation-planner.js";
 import type { IndexWorkCounters } from "./index-work-counters.js";
+import type { ScipIndexer } from "./scip-indexer.types.js";
 
 export type InvalidationReasonCode =
   | "source_changed"
@@ -17,6 +18,8 @@ export type InvalidationReasonCode =
   | "module_config_changed"
   | "export_ambiguous"
   | "dependency_provenance_incomplete"
+  | "scip_fingerprint_changed"
+  | "scip_status_changed"
   | "facts_version_changed";
 
 export type ResolutionScopeReason =
@@ -98,6 +101,7 @@ export type IndexPipelineOptions = {
     embeddingProvider: EmbeddingProvider;
     vectorStore: VectorStore;
   };
+  scipIndexer?: ScipIndexer;
 };
 
 export type IndexFailure = {

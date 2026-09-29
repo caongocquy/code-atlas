@@ -17,7 +17,11 @@ export type CliCommandReporter = {
 };
 
 export type CliCommand =
+  | "context-compile"
   | "context-read"
+  | "context-start"
+  | "context-refresh"
+  | "context-close"
   | "affected-tests"
   | "architecture-drift"
   | "connect"
@@ -31,10 +35,15 @@ export type CliCommand =
   | "inspect-change"
   | "integrations"
   | "status"
+  | "semantic"
   | "sync";
 
 const commandSubtitles: Record<CliCommand, string> = {
+  "context-compile": "Task context compilation",
   "context-read": "Context-aware read",
+  "context-start": "Task context lifecycle",
+  "context-refresh": "Task context lifecycle",
+  "context-close": "Task context lifecycle",
   "affected-tests": "Affected tests",
   "architecture-drift": "Architecture analysis",
   connect: "Agent integrations",
@@ -48,6 +57,7 @@ const commandSubtitles: Record<CliCommand, string> = {
   "inspect-change": "Change intelligence",
   integrations: "Agent integrations",
   status: "Repository status",
+  semantic: "Semantic provider lifecycle",
   sync: "Repository indexing",
 };
 

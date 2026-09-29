@@ -70,6 +70,73 @@ code-atlas disconnect codex
 code-atlas disconnect --all
 ```
 
+## Task context compiler
+
+CodeAtlas separates context selection from context delivery. The current stack
+works as follows:
+
+- **Context-aware delivery (Phase15A):** decides how much source/context to
+  deliver for an explicit file or symbol request. `context_read` remains the
+  explicit delivery surface.
+- **Task context compilation (Phase15B):** decides which files and symbols are
+  worth reading. It produces a bounded, deterministic, evidence-backed plan;
+  it does not return source bodies directly.
+- **Durable task context (Phase15C):** gives a task context an explicit
+  `taskContextId` and durable start, refresh, and close lifecycle. The
+  lifecycle keeps its session and context-generation identities and reports
+  delivery metrics such as full, unchanged, delta, and rehydrated results when
+  those modes apply.
+
+Compile a bounded task-context plan with the CLI:
+
+```bash
+code-atlas context-compile --task "Fix repository status handling"
+code-atlas context-compile --task "Fix repository status handling" --json
+```
+
+The same capability is available through the MCP `compile_task_context` tool.
+The durable lifecycle is available through the CLI commands
+`context-start`, `context-refresh`, and `context-close`, and through the MCP
+tools `start_task_context`, `refresh_task_context`, and `close_task_context`.
+Each lifecycle is isolated by repository and workspace identity. Use
+`--ttl <seconds>` on `context-start` to set expiry; stale concurrent refreshes
+are rejected.
+The compiled plan returns file/symbol references and evidence metadata, not
+source bodies; `context_read` remains the explicit delivery step.
+
+## Internal context evaluation gate
+
+Phase15D is an internal contributor and release-verification gate for the
+Phase15A/B/C context behavior. It is not a new runtime intelligence feature
+and is not a public `code-atlas eval` command.
+
+Run the deterministic, offline evaluator with:
+
+```bash
+pnpm run eval:context
+```
+
+It uses reviewed synthetic fixtures covering the 12 production languages in
+the language registry and frozen real-world snapshots. The gate checks
+selection and delivery correctness, exact reconstruction, deterministic
+selection/ranking, authority and explicit incomplete-evidence diagnostics,
+durable lifecycle behavior, and reviewed quality-regression policy. It emits
+human-readable output and a machine-readable report under the transient
+`artifacts/` directory. It uses no LLM judge, network access, or runtime
+corpus download.
+
+Correctness and determinism failures are hard failures. Incomplete evidence
+must remain explicit rather than being treated as authoritative negative
+evidence. Versioned golden baselines provide catastrophic per-case regression
+protection and aggregate quality limits; performance observations are
+non-blocking and are not semantic equality criteria.
+
+Synthetic fixtures provide controlled cross-language coverage. Frozen snapshots
+provide realistic repository cases with tracked provenance and license-notice
+metadata. The evaluator protects corpus truth from accidental mutation; these
+snapshots are evaluation inputs, not third-party source shipped as runtime
+content.
+
 ## Why CodeAtlas
 
 ### Understand before editing
@@ -121,6 +188,51 @@ dependency walk and `affected-tests` to find structural test evidence and gaps.
 | Repository status | Readiness, freshness, counts, and recovery hints |
 | Git hooks | Optional post-commit and post-checkout refresh |
 | MCP | The same local intelligence for coding-agent workflows |
+
+## Optional semantic retrieval
+
+Graph and lexical indexing remain the default. To add semantic retrieval with
+the built-in local embedding model:
+
+```bash
+code-atlas semantic setup --provider builtin-local
+code-atlas semantic test
+code-atlas semantic status
+```
+
+An OpenAI-compatible embedding endpoint can also be configured without storing
+the API key in repository configuration:
+
+```bash
+code-atlas semantic setup --provider openai-compatible \
+  --base-url https://embedding.example/v1 \
+  --model your-embedding-model \
+  --api-key-env OPENAI_API_KEY
+```
+
+The lifecycle also provides `semantic upgrade`, `semantic disable`, and
+`semantic clean`. Disable turns off semantic retrieval while retaining its
+configuration and vectors; clean removes only the repository's semantic index.
+Semantic providers are optional: disabled, unavailable, stale, or failed
+semantic retrieval falls back to lexical search, and semantic failures do not
+prevent graph or lexical indexing from being published.
+
+MCP `search_code` supports `mode: "hybrid"` to combine lexical and semantic
+results. `inspect_retrieval` with `includeSemantic: true` exposes vector,
+lexical, fused, and optional reranked stages. Compact and full details preserve
+the same stage order; a candidate appearing in multiple stages remains visible
+in each stage.
+
+During TypeScript/JavaScript indexing, CodeAtlas uses `scip-typescript` for
+additive cross-file binding evidence when its CLI is already available in the
+project or on `PATH`. It does not install the tool or invoke `npx`; if the tool
+is unavailable or fails, parser-based graph and lexical indexing continues.
+Parser facts remain the syntax baseline, while SCIP improves target binding
+where its evidence is unambiguous.
+
+Lexical relevance now uses owner-qualified names when parser facts identify a
+class or member owner. Bare identifier queries remain ambiguity-safe, and
+deterministic ordering is not treated as relevance evidence.
 
 ## Agent integrations
 
@@ -202,6 +314,7 @@ start the persisted stdio launcher.
 | Refresh changes | `sync_repository` | After source changes |
 | Search code | `search_code` | Find relevant files, symbols, or text |
 | Inspect a symbol | `get_symbol` | Read a symbol and its source context |
+| Task context | `context_read`, `compile_task_context`, `start_task_context`, `refresh_task_context`, `close_task_context` | Compile bounded evidence, deliver a selected file, and manage its lifecycle |
 | Find callers | `find_callers` | Assess who depends on a symbol |
 | Find callees | `find_callees` | Follow what a symbol invokes |
 | Find imports | `find_imports` | Inspect module dependencies |
@@ -215,6 +328,15 @@ start the persisted stdio launcher.
 | Evaluate change policy | `change_gate` | Evaluate a Git change against deterministic repository policy |
 | Trace a path | `trace` | Follow a bounded relationship path |
 | Inspect retrieval | `inspect_retrieval` | Understand search and context stages |
+
+MCP `tools/list` publishes a description and input schema for each tool. The
+descriptions guide tool choice: use `search_code` for matching-code lookup,
+`get_symbol` when the symbol is known, `compile_task_context` to assemble bounded
+task evidence, and `context_read` to deliver a selected file. Schemas
+include field guidance and constraints. Each tool also publishes the standard
+`readOnlyHint`, `destructiveHint`, `idempotentHint`, and `openWorldHint`
+annotations. These are hints for MCP clients, not access controls. Current tool
+handlers work with local repositories and state and make no network calls.
 
 ## Trustworthy evidence
 
@@ -345,7 +467,28 @@ Run `code-atlas --help` for the live command surface.
 | Change Gate | `gate` |
 | Integrations | `connect`, `disconnect`, `integrations`, `integration ...` |
 | Hooks | `hook install`, `hook uninstall`, `hook status` |
+| Task context | `context-compile`, `context-start`, `context-refresh`, `context-close` |
 | Runtime | `mcp`, `serve` |
+| Semantic retrieval | `semantic setup`, `status`, `test`, `upgrade`, `disable`, `clean` |
+| Updates | `upgrade` |
+
+## CLI self-upgrade
+
+Updates are opt-in. Ordinary commands do not check the registry.
+`code-atlas upgrade --check` performs a read-only version check; add `--json` for
+stable fields: `currentVersion`, `latestVersion`, `updateAvailable`, `manager`,
+`upgraded`, and `verifiedVersion`. `manager` is `null` when no unique supported
+global install is found. `code-atlas upgrade` installs an available update, and
+successful `code-atlas upgrade --json` runs return the same fields.
+
+Automatic updates are supported only for an unambiguous global npm or pnpm
+installation on POSIX. CodeAtlas installs the exact registry version and runs the
+installed CLI to verify it. Local, linked, Homebrew, wrapper-based, or ambiguous
+installations fail closed without an automatic install; POSIX check-only mode can
+still check the npm registry. On Windows, both automatic updates and registry
+checks fail closed without invoking package manager shims; `upgrade --check`
+directs contributors to run `npm view @showdar2112/code-atlas@latest version`
+manually.
 
 Common workflows:
 
@@ -409,7 +552,32 @@ pnpm build
 pnpm test
 pnpm lint
 pnpm run ui:typecheck
+pnpm run eval:context
 ```
+
+Focused Phase15E checks:
+
+```bash
+node --import tsx/esm --test \
+  test/phase15e-mcp-metadata.test.ts \
+  test/phase15e-upgrade-check.test.ts \
+  test/phase15e-upgrade-install.test.ts
+pnpm run test:mcp:inspector
+```
+
+The Inspector check launches the actual stdio server and verifies protocol
+initialization, `tools/list`, and tool calls. MCP Inspector is pinned to 2.7.0.
+Its verifier skips on Node versions below 22.19; CodeAtlas itself still supports
+Node.js 22 and newer. The full contributor test suite is `pnpm test` above.
+
+The evaluation baseline is updated only as an explicit reviewed maintenance
+operation, after correctness and determinism are verified:
+
+```bash
+pnpm run eval:context:update-baseline -- --write
+```
+
+The normal `pnpm run eval:context` command never writes the golden baseline.
 
 The npm package is `@showdar2112/code-atlas`; it installs the `code-atlas`
 command. The package can also be installed globally with pnpm:
@@ -425,7 +593,6 @@ Deferred work includes:
 - VS Code / GitHub Copilot integration
 - richer visual exploration
 - further change-intelligence workflows
-- optional semantic-provider integrations
 
 These are independent of the lightweight graph and lexical core.
 

@@ -1,0 +1,16 @@
+{
+  "policyVersion": "context-eval-policy-v1",
+  "aggregate": {
+    "maxEstimatedTokensIncreasePct": 10,
+    "maxReturnedBytesIncreasePct": 10,
+    "maxSelectedItemsIncreasePct": 10,
+    "maxRequiredHitRateDecreasePp": 0,
+    "maxSupportingHitRateDecreasePp": 5
+  },
+  "catastrophic": {
+    "maxEstimatedTokensMultiplier": 2,
+    "maxReturnedBytesMultiplier": 2,
+    "selectedItemsFormula": "baselineSelectedItems + max(3, baselineSelectedItems)",
+    "requiredTargetsMayDisappear": false
+  }
+}

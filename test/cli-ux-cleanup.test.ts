@@ -162,11 +162,13 @@ test("index and init summaries name real file counts", () => {
   assert.match(initOutput, /Lexical\s+✓ ready/);
 });
 
-test("root help is grouped and integration subcommands stay out of it", () => {
+test("root help is grouped and subcommands stay out of it", () => {
   const help = formatRootHelp();
   for (const heading of ["Repository", "Change Intelligence", "Agents", "Runtime", "Other"]) assert.match(help, new RegExp(heading));
   assert.match(help, /integration\s+Install or inspect agent integrations/);
   assert.doesNotMatch(help, /integration list\|status\|install\|uninstall/);
+  assert.match(help, /semantic <setup\|status\|test\|upgrade\|disable\|clean> Manage optional semantic search/);
+  assert.match(formatCommandHelp("semantic"), /setup\|status\|test\|upgrade\|disable\|clean/);
   assert.match(formatCommandHelp("status"), /Usage: code-atlas status \[path\]/);
   assert.match(formatCommandHelp("status"), /--json/);
 });
@@ -175,7 +177,7 @@ test("every top-level command exposes command-specific help", () => {
   for (const command of [
     "init", "index", "sync", "status", "inspect-change", "affected-tests",
     "explain-incomplete", "graph-delta", "architecture-drift", "gate", "connect",
-    "disconnect", "integrations", "integration", "hook", "mcp", "serve",
+    "disconnect", "integrations", "integration", "hook", "mcp", "serve", "semantic",
   ]) {
     assert.match(formatCommandHelp(command), new RegExp(`Usage: code-atlas ${command}`));
   }

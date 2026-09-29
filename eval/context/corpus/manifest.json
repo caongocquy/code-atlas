@@ -1,0 +1,1231 @@
+{
+  "corpusVersion": "context-eval-v1",
+  "cases": [
+    {
+      "caseId": "typescript-exact-target",
+      "kind": "synthetic",
+      "language": "typescript",
+      "syntheticClass": "exact-target",
+      "workspaceRef": "synthetic/typescript/exact-target",
+      "task": "Find the exact target in the typescript fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.ts"
+        }
+      ],
+      "changedPaths": [],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.ts"
+          }
+        ],
+        "supportingSubjects": [],
+        "forbiddenRequiredSubjects": []
+      }
+    },
+    {
+    "caseId": "typescript-relationship-change",
+      "kind": "synthetic",
+      "language": "typescript",
+      "syntheticClass": "relationship/change",
+      "workspaceRef": "synthetic/typescript/relationship-change",
+    "task": "Trace the caller and supporting relationship change in the typescript fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.ts"
+        }
+      ],
+      "changedPaths": [
+        "main.ts"
+      ],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.ts"
+          }
+        ],
+      "supportingSubjects": [
+        {
+          "kind": "file",
+          "path": "related.ts"
+        }
+      ],
+        "forbiddenRequiredSubjects": []
+      }
+    },
+    {
+    "caseId": "typescript-incomplete-ambiguity",
+      "kind": "synthetic",
+      "language": "typescript",
+      "syntheticClass": "incomplete/ambiguity",
+      "workspaceRef": "synthetic/typescript/incomplete-ambiguity",
+    "task": "Preserve uncertainty for the ambiguous and incomplete typescript fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.ts"
+        }
+      ],
+      "changedPaths": [],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.ts"
+          }
+        ],
+        "supportingSubjects": [],
+      "forbiddenRequiredSubjects": [
+        {
+          "kind": "file",
+          "path": "alternate.ts"
+        }
+      ]
+      }
+    },
+    {
+      "caseId": "tsx-exact-target",
+      "kind": "synthetic",
+      "language": "tsx",
+      "syntheticClass": "exact-target",
+      "workspaceRef": "synthetic/tsx/exact-target",
+      "task": "Find the exact target in the tsx fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.tsx"
+        }
+      ],
+      "changedPaths": [],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.tsx"
+          }
+        ],
+        "supportingSubjects": [],
+        "forbiddenRequiredSubjects": []
+      }
+    },
+    {
+    "caseId": "tsx-relationship-change",
+      "kind": "synthetic",
+      "language": "tsx",
+      "syntheticClass": "relationship/change",
+      "workspaceRef": "synthetic/tsx/relationship-change",
+    "task": "Trace the caller and supporting relationship change in the tsx fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.tsx"
+        }
+      ],
+      "changedPaths": [
+        "main.tsx"
+      ],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.tsx"
+          }
+        ],
+      "supportingSubjects": [
+        {
+          "kind": "file",
+          "path": "related.tsx"
+        }
+      ],
+        "forbiddenRequiredSubjects": []
+      }
+    },
+    {
+    "caseId": "tsx-incomplete-ambiguity",
+      "kind": "synthetic",
+      "language": "tsx",
+      "syntheticClass": "incomplete/ambiguity",
+      "workspaceRef": "synthetic/tsx/incomplete-ambiguity",
+    "task": "Preserve uncertainty for the ambiguous and incomplete tsx fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.tsx"
+        }
+      ],
+      "changedPaths": [],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.tsx"
+          }
+        ],
+        "supportingSubjects": [],
+      "forbiddenRequiredSubjects": [
+        {
+          "kind": "file",
+          "path": "alternate.tsx"
+        }
+      ]
+      }
+    },
+    {
+      "caseId": "javascript-exact-target",
+      "kind": "synthetic",
+      "language": "javascript",
+      "syntheticClass": "exact-target",
+      "workspaceRef": "synthetic/javascript/exact-target",
+      "task": "Find the exact target in the javascript fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.js"
+        }
+      ],
+      "changedPaths": [],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.js"
+          }
+        ],
+        "supportingSubjects": [],
+        "forbiddenRequiredSubjects": []
+      }
+    },
+    {
+    "caseId": "javascript-relationship-change",
+      "kind": "synthetic",
+      "language": "javascript",
+      "syntheticClass": "relationship/change",
+      "workspaceRef": "synthetic/javascript/relationship-change",
+    "task": "Trace the caller and supporting relationship change in the javascript fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.js"
+        }
+      ],
+      "changedPaths": [
+        "main.js"
+      ],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.js"
+          }
+        ],
+      "supportingSubjects": [
+        {
+          "kind": "file",
+          "path": "related.js"
+        }
+      ],
+        "forbiddenRequiredSubjects": []
+      }
+    },
+    {
+    "caseId": "javascript-incomplete-ambiguity",
+      "kind": "synthetic",
+      "language": "javascript",
+      "syntheticClass": "incomplete/ambiguity",
+      "workspaceRef": "synthetic/javascript/incomplete-ambiguity",
+    "task": "Preserve uncertainty for the ambiguous and incomplete javascript fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.js"
+        }
+      ],
+      "changedPaths": [],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.js"
+          }
+        ],
+        "supportingSubjects": [],
+      "forbiddenRequiredSubjects": [
+        {
+          "kind": "file",
+          "path": "alternate.js"
+        }
+      ]
+      }
+    },
+    {
+      "caseId": "python-exact-target",
+      "kind": "synthetic",
+      "language": "python",
+      "syntheticClass": "exact-target",
+      "workspaceRef": "synthetic/python/exact-target",
+      "task": "Find the exact target in the python fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.py"
+        }
+      ],
+      "changedPaths": [],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.py"
+          }
+        ],
+        "supportingSubjects": [],
+        "forbiddenRequiredSubjects": []
+      }
+    },
+    {
+    "caseId": "python-relationship-change",
+      "kind": "synthetic",
+      "language": "python",
+      "syntheticClass": "relationship/change",
+      "workspaceRef": "synthetic/python/relationship-change",
+    "task": "Trace the caller and supporting relationship change in the python fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.py"
+        }
+      ],
+      "changedPaths": [
+        "main.py"
+      ],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.py"
+          }
+        ],
+      "supportingSubjects": [
+        {
+          "kind": "file",
+          "path": "related.py"
+        }
+      ],
+        "forbiddenRequiredSubjects": []
+      }
+    },
+    {
+    "caseId": "python-incomplete-ambiguity",
+      "kind": "synthetic",
+      "language": "python",
+      "syntheticClass": "incomplete/ambiguity",
+      "workspaceRef": "synthetic/python/incomplete-ambiguity",
+    "task": "Preserve uncertainty for the ambiguous and incomplete python fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.py"
+        }
+      ],
+      "changedPaths": [],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.py"
+          }
+        ],
+        "supportingSubjects": [],
+      "forbiddenRequiredSubjects": [
+        {
+          "kind": "file",
+          "path": "alternate.py"
+        }
+      ]
+      }
+    },
+    {
+      "caseId": "java-exact-target",
+      "kind": "synthetic",
+      "language": "java",
+      "syntheticClass": "exact-target",
+      "workspaceRef": "synthetic/java/exact-target",
+      "task": "Find the exact target in the java fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.java"
+        }
+      ],
+      "changedPaths": [],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.java"
+          }
+        ],
+        "supportingSubjects": [],
+        "forbiddenRequiredSubjects": []
+      }
+    },
+    {
+    "caseId": "java-relationship-change",
+      "kind": "synthetic",
+      "language": "java",
+      "syntheticClass": "relationship/change",
+      "workspaceRef": "synthetic/java/relationship-change",
+    "task": "Trace the caller and supporting relationship change in the java fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.java"
+        }
+      ],
+      "changedPaths": [
+        "main.java"
+      ],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.java"
+          }
+        ],
+      "supportingSubjects": [
+        {
+          "kind": "file",
+          "path": "related.java"
+        }
+      ],
+        "forbiddenRequiredSubjects": []
+      }
+    },
+    {
+    "caseId": "java-incomplete-ambiguity",
+      "kind": "synthetic",
+      "language": "java",
+      "syntheticClass": "incomplete/ambiguity",
+      "workspaceRef": "synthetic/java/incomplete-ambiguity",
+    "task": "Preserve uncertainty for the ambiguous and incomplete java fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.java"
+        }
+      ],
+      "changedPaths": [],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.java"
+          }
+        ],
+        "supportingSubjects": [],
+      "forbiddenRequiredSubjects": [
+        {
+          "kind": "file",
+          "path": "alternate.java"
+        }
+      ]
+      }
+    },
+    {
+      "caseId": "kotlin-exact-target",
+      "kind": "synthetic",
+      "language": "kotlin",
+      "syntheticClass": "exact-target",
+      "workspaceRef": "synthetic/kotlin/exact-target",
+      "task": "Find the exact target in the kotlin fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.kt"
+        }
+      ],
+      "changedPaths": [],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.kt"
+          }
+        ],
+        "supportingSubjects": [],
+        "forbiddenRequiredSubjects": []
+      }
+    },
+    {
+    "caseId": "kotlin-relationship-change",
+      "kind": "synthetic",
+      "language": "kotlin",
+      "syntheticClass": "relationship/change",
+      "workspaceRef": "synthetic/kotlin/relationship-change",
+    "task": "Trace the caller and supporting relationship change in the kotlin fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.kt"
+        }
+      ],
+      "changedPaths": [
+        "main.kt"
+      ],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.kt"
+          }
+        ],
+      "supportingSubjects": [
+        {
+          "kind": "file",
+          "path": "related.kt"
+        }
+      ],
+        "forbiddenRequiredSubjects": []
+      }
+    },
+    {
+    "caseId": "kotlin-incomplete-ambiguity",
+      "kind": "synthetic",
+      "language": "kotlin",
+      "syntheticClass": "incomplete/ambiguity",
+      "workspaceRef": "synthetic/kotlin/incomplete-ambiguity",
+    "task": "Preserve uncertainty for the ambiguous and incomplete kotlin fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.kt"
+        }
+      ],
+      "changedPaths": [],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.kt"
+          }
+        ],
+        "supportingSubjects": [],
+      "forbiddenRequiredSubjects": [
+        {
+          "kind": "file",
+          "path": "alternate.kt"
+        }
+      ]
+      }
+    },
+    {
+      "caseId": "go-exact-target",
+      "kind": "synthetic",
+      "language": "go",
+      "syntheticClass": "exact-target",
+      "workspaceRef": "synthetic/go/exact-target",
+      "task": "Find the exact target in the go fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.go"
+        }
+      ],
+      "changedPaths": [],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.go"
+          }
+        ],
+        "supportingSubjects": [],
+        "forbiddenRequiredSubjects": []
+      }
+    },
+    {
+    "caseId": "go-relationship-change",
+      "kind": "synthetic",
+      "language": "go",
+      "syntheticClass": "relationship/change",
+      "workspaceRef": "synthetic/go/relationship-change",
+    "task": "Trace the caller and supporting relationship change in the go fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.go"
+        }
+      ],
+      "changedPaths": [
+        "main.go"
+      ],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.go"
+          }
+        ],
+      "supportingSubjects": [
+        {
+          "kind": "file",
+          "path": "related.go"
+        }
+      ],
+        "forbiddenRequiredSubjects": []
+      }
+    },
+    {
+    "caseId": "go-incomplete-ambiguity",
+      "kind": "synthetic",
+      "language": "go",
+      "syntheticClass": "incomplete/ambiguity",
+      "workspaceRef": "synthetic/go/incomplete-ambiguity",
+    "task": "Preserve uncertainty for the ambiguous and incomplete go fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.go"
+        }
+      ],
+      "changedPaths": [],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.go"
+          }
+        ],
+        "supportingSubjects": [],
+      "forbiddenRequiredSubjects": [
+        {
+          "kind": "file",
+          "path": "alternate.go"
+        }
+      ]
+      }
+    },
+    {
+      "caseId": "rust-exact-target",
+      "kind": "synthetic",
+      "language": "rust",
+      "syntheticClass": "exact-target",
+      "workspaceRef": "synthetic/rust/exact-target",
+      "task": "Find the exact target in the rust fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.rs"
+        }
+      ],
+      "changedPaths": [],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.rs"
+          }
+        ],
+        "supportingSubjects": [],
+        "forbiddenRequiredSubjects": []
+      }
+    },
+    {
+    "caseId": "rust-relationship-change",
+      "kind": "synthetic",
+      "language": "rust",
+      "syntheticClass": "relationship/change",
+      "workspaceRef": "synthetic/rust/relationship-change",
+    "task": "Trace the caller and supporting relationship change in the rust fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.rs"
+        }
+      ],
+      "changedPaths": [
+        "main.rs"
+      ],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.rs"
+          }
+        ],
+      "supportingSubjects": [
+        {
+          "kind": "file",
+          "path": "related.rs"
+        }
+      ],
+        "forbiddenRequiredSubjects": []
+      }
+    },
+    {
+    "caseId": "rust-incomplete-ambiguity",
+      "kind": "synthetic",
+      "language": "rust",
+      "syntheticClass": "incomplete/ambiguity",
+      "workspaceRef": "synthetic/rust/incomplete-ambiguity",
+    "task": "Preserve uncertainty for the ambiguous and incomplete rust fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.rs"
+        }
+      ],
+      "changedPaths": [],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.rs"
+          }
+        ],
+        "supportingSubjects": [],
+      "forbiddenRequiredSubjects": [
+        {
+          "kind": "file",
+          "path": "alternate.rs"
+        }
+      ]
+      }
+    },
+    {
+      "caseId": "swift-exact-target",
+      "kind": "synthetic",
+      "language": "swift",
+      "syntheticClass": "exact-target",
+      "workspaceRef": "synthetic/swift/exact-target",
+      "task": "Find the exact target in the swift fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.swift"
+        }
+      ],
+      "changedPaths": [],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.swift"
+          }
+        ],
+        "supportingSubjects": [],
+        "forbiddenRequiredSubjects": []
+      }
+    },
+    {
+    "caseId": "swift-relationship-change",
+      "kind": "synthetic",
+      "language": "swift",
+      "syntheticClass": "relationship/change",
+      "workspaceRef": "synthetic/swift/relationship-change",
+    "task": "Trace the caller and supporting relationship change in the swift fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.swift"
+        }
+      ],
+      "changedPaths": [
+        "main.swift"
+      ],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.swift"
+          }
+        ],
+      "supportingSubjects": [
+        {
+          "kind": "file",
+          "path": "related.swift"
+        }
+      ],
+        "forbiddenRequiredSubjects": []
+      }
+    },
+    {
+    "caseId": "swift-incomplete-ambiguity",
+      "kind": "synthetic",
+      "language": "swift",
+      "syntheticClass": "incomplete/ambiguity",
+      "workspaceRef": "synthetic/swift/incomplete-ambiguity",
+    "task": "Preserve uncertainty for the ambiguous and incomplete swift fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.swift"
+        }
+      ],
+      "changedPaths": [],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.swift"
+          }
+        ],
+        "supportingSubjects": [],
+      "forbiddenRequiredSubjects": [
+        {
+          "kind": "file",
+          "path": "alternate.swift"
+        }
+      ]
+      }
+    },
+    {
+      "caseId": "dart-exact-target",
+      "kind": "synthetic",
+      "language": "dart",
+      "syntheticClass": "exact-target",
+      "workspaceRef": "synthetic/dart/exact-target",
+      "task": "Find the exact target in the dart fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.dart"
+        }
+      ],
+      "changedPaths": [],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.dart"
+          }
+        ],
+        "supportingSubjects": [],
+        "forbiddenRequiredSubjects": []
+      }
+    },
+    {
+    "caseId": "dart-relationship-change",
+      "kind": "synthetic",
+      "language": "dart",
+      "syntheticClass": "relationship/change",
+      "workspaceRef": "synthetic/dart/relationship-change",
+    "task": "Trace the caller and supporting relationship change in the dart fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.dart"
+        }
+      ],
+      "changedPaths": [
+        "main.dart"
+      ],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.dart"
+          }
+        ],
+      "supportingSubjects": [
+        {
+          "kind": "file",
+          "path": "related.dart"
+        }
+      ],
+        "forbiddenRequiredSubjects": []
+      }
+    },
+    {
+    "caseId": "dart-incomplete-ambiguity",
+      "kind": "synthetic",
+      "language": "dart",
+      "syntheticClass": "incomplete/ambiguity",
+      "workspaceRef": "synthetic/dart/incomplete-ambiguity",
+    "task": "Preserve uncertainty for the ambiguous and incomplete dart fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.dart"
+        }
+      ],
+      "changedPaths": [],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.dart"
+          }
+        ],
+        "supportingSubjects": [],
+      "forbiddenRequiredSubjects": [
+        {
+          "kind": "file",
+          "path": "alternate.dart"
+        }
+      ]
+      }
+    },
+    {
+      "caseId": "c-exact-target",
+      "kind": "synthetic",
+      "language": "c",
+      "syntheticClass": "exact-target",
+      "workspaceRef": "synthetic/c/exact-target",
+      "task": "Find the exact target in the c fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.c"
+        }
+      ],
+      "changedPaths": [],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.c"
+          }
+        ],
+        "supportingSubjects": [],
+        "forbiddenRequiredSubjects": []
+      }
+    },
+    {
+    "caseId": "c-relationship-change",
+      "kind": "synthetic",
+      "language": "c",
+      "syntheticClass": "relationship/change",
+      "workspaceRef": "synthetic/c/relationship-change",
+    "task": "Trace the caller and supporting relationship change in the c fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.c"
+        }
+      ],
+      "changedPaths": [
+        "main.c"
+      ],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.c"
+          }
+        ],
+      "supportingSubjects": [
+        {
+          "kind": "file",
+          "path": "related.c"
+        }
+      ],
+        "forbiddenRequiredSubjects": []
+      }
+    },
+    {
+    "caseId": "c-incomplete-ambiguity",
+      "kind": "synthetic",
+      "language": "c",
+      "syntheticClass": "incomplete/ambiguity",
+      "workspaceRef": "synthetic/c/incomplete-ambiguity",
+    "task": "Preserve uncertainty for the ambiguous and incomplete c fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.c"
+        }
+      ],
+      "changedPaths": [],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.c"
+          }
+        ],
+        "supportingSubjects": [],
+      "forbiddenRequiredSubjects": [
+        {
+          "kind": "file",
+          "path": "alternate.c"
+        }
+      ]
+      }
+    },
+    {
+      "caseId": "cpp-exact-target",
+      "kind": "synthetic",
+      "language": "cpp",
+      "syntheticClass": "exact-target",
+      "workspaceRef": "synthetic/cpp/exact-target",
+      "task": "Find the exact target in the cpp fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.cpp"
+        }
+      ],
+      "changedPaths": [],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.cpp"
+          }
+        ],
+        "supportingSubjects": [],
+        "forbiddenRequiredSubjects": []
+      }
+    },
+    {
+    "caseId": "cpp-relationship-change",
+      "kind": "synthetic",
+      "language": "cpp",
+      "syntheticClass": "relationship/change",
+      "workspaceRef": "synthetic/cpp/relationship-change",
+    "task": "Trace the caller and supporting relationship change in the cpp fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.cpp"
+        }
+      ],
+      "changedPaths": [
+        "main.cpp"
+      ],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.cpp"
+          }
+        ],
+      "supportingSubjects": [
+        {
+          "kind": "file",
+          "path": "related.cpp"
+        }
+      ],
+        "forbiddenRequiredSubjects": []
+      }
+    },
+    {
+    "caseId": "cpp-incomplete-ambiguity",
+      "kind": "synthetic",
+      "language": "cpp",
+      "syntheticClass": "incomplete/ambiguity",
+      "workspaceRef": "synthetic/cpp/incomplete-ambiguity",
+    "task": "Preserve uncertainty for the ambiguous and incomplete cpp fixture.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "main.cpp"
+        }
+      ],
+      "changedPaths": [],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "main.cpp"
+          }
+        ],
+        "supportingSubjects": [],
+      "forbiddenRequiredSubjects": [
+        {
+          "kind": "file",
+          "path": "alternate.cpp"
+        }
+      ]
+      }
+    },
+    {
+      "caseId": "snapshot-showdar-router",
+      "kind": "snapshot",
+      "language": "javascript",
+      "workspaceRef": "snapshots/showdar-router",
+      "task": "Review javascript snapshot context.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "cli/src/cli/utils/format.js"
+        }
+      ],
+      "changedPaths": [
+        "cli/src/cli/utils/format.js"
+      ],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "cli/src/cli/utils/format.js"
+          }
+        ],
+        "supportingSubjects": [],
+        "forbiddenRequiredSubjects": []
+      }
+    },
+    {
+      "caseId": "snapshot-basicsr",
+      "kind": "snapshot",
+      "language": "python",
+      "workspaceRef": "snapshots/basicsr",
+      "task": "Review python snapshot context.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "basicsr/__init__.py"
+        }
+      ],
+      "changedPaths": [
+        "basicsr/__init__.py"
+      ],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "basicsr/__init__.py"
+          }
+        ],
+        "supportingSubjects": [],
+        "forbiddenRequiredSubjects": []
+      }
+    },
+    {
+      "caseId": "snapshot-career-ops",
+      "kind": "snapshot",
+      "language": "go",
+      "workspaceRef": "snapshots/career-ops",
+      "task": "Review go snapshot context.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "dashboard/internal/data/career.go"
+        }
+      ],
+      "changedPaths": [
+        "dashboard/internal/data/career.go"
+      ],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "dashboard/internal/data/career.go"
+          }
+        ],
+        "supportingSubjects": [],
+        "forbiddenRequiredSubjects": []
+      }
+    },
+    {
+      "caseId": "snapshot-whisper-cpp",
+      "kind": "snapshot",
+      "language": "cpp",
+      "workspaceRef": "snapshots/whisper-cpp",
+      "task": "Review cpp snapshot context.",
+      "anchors": [
+        {
+          "kind": "file",
+          "path": "examples/deprecation-warning/deprecation-warning.cpp"
+        }
+      ],
+      "changedPaths": [
+        "examples/deprecation-warning/deprecation-warning.cpp"
+      ],
+      "truth": {
+        "requiredSubjects": [
+          {
+            "kind": "file",
+            "path": "examples/deprecation-warning/deprecation-warning.cpp"
+          }
+        ],
+        "supportingSubjects": [],
+        "forbiddenRequiredSubjects": []
+      }
+    }
+  ],
+  "snapshots": [
+    {
+      "snapshotId": "showdar-router",
+      "sourceRepository": "git@github.com:caongocquy/showdar-router.git",
+      "sourceCommitSha": "4178ff5f83c5c540633e42288c2b2570200f90c3",
+      "license": "MIT",
+      "licenseNoticeRequired": true,
+      "licenseNoticePath": "LICENSE",
+      "includedPaths": [
+        "cli/src/cli/utils/format.js"
+      ],
+      "sourceContentSha256": {
+        "cli/src/cli/utils/format.js": "b51326cb25264aa357ee6d19f357d5e405b3a64ce7c4d2f5ef8202eed363025f"
+      },
+      "snapshotContentSha256": {
+        "cli/src/cli/utils/format.js": "b51326cb25264aa357ee6d19f357d5e405b3a64ce7c4d2f5ef8202eed363025f"
+      },
+      "language": "javascript",
+      "inclusionReason": "Small JavaScript formatter used for cross-module context selection."
+    },
+    {
+      "snapshotId": "basicsr",
+      "sourceRepository": "https://github.com/XPixelGroup/BasicSR.git",
+      "sourceCommitSha": "8d56e3a045f9fb3e1d8872f92ee4a4f07f886b0a",
+      "license": "Apache-2.0",
+      "licenseNoticeRequired": true,
+      "licenseNoticePath": "LICENSE.txt",
+      "includedPaths": [
+        "basicsr/__init__.py"
+      ],
+      "sourceContentSha256": {
+        "basicsr/__init__.py": "739ab81122358d967e8e7598f80ceecb7a5fdcd2757b32e2d128582357966f46"
+      },
+      "snapshotContentSha256": {
+        "basicsr/__init__.py": "739ab81122358d967e8e7598f80ceecb7a5fdcd2757b32e2d128582357966f46"
+      },
+      "language": "python",
+      "inclusionReason": "Small Python package entrypoint used for repository-relative file context."
+    },
+    {
+      "snapshotId": "career-ops",
+      "sourceRepository": "https://github.com/santifer/career-ops.git",
+      "sourceCommitSha": "e1c1339b3c6a774e18ed104506fc0b145c228c57",
+      "license": "MIT",
+      "licenseNoticeRequired": true,
+      "licenseNoticePath": "LICENSE",
+      "includedPaths": [
+        "dashboard/internal/data/career.go"
+      ],
+      "sourceContentSha256": {
+        "dashboard/internal/data/career.go": "6355c212d78084eccf2960718d03e8281f5b44f593197d3e6d803e115ce74eb4"
+      },
+      "snapshotContentSha256": {
+        "dashboard/internal/data/career.go": "6355c212d78084eccf2960718d03e8281f5b44f593197d3e6d803e115ce74eb4"
+      },
+      "language": "go",
+      "inclusionReason": "Small Go data model used for cross-module impact context."
+    },
+    {
+      "snapshotId": "whisper-cpp",
+      "sourceRepository": "https://github.com/ggml-org/whisper.cpp.git",
+      "sourceCommitSha": "4834a2327d008ace3ec5a9ed00f51454bcabbc1c",
+      "license": "MIT",
+      "licenseNoticeRequired": true,
+      "licenseNoticePath": "LICENSE",
+      "includedPaths": [
+        "examples/deprecation-warning/deprecation-warning.cpp"
+      ],
+      "sourceContentSha256": {
+        "examples/deprecation-warning/deprecation-warning.cpp": "397a70a6c05178f231283d0addb6541ed90d635be155828ad1b4e26bb88918df"
+      },
+      "snapshotContentSha256": {
+        "examples/deprecation-warning/deprecation-warning.cpp": "397a70a6c05178f231283d0addb6541ed90d635be155828ad1b4e26bb88918df"
+      },
+      "language": "cpp",
+      "inclusionReason": "Small C++ example used for source and test adjustment context."
+    }
+  ]
+}
