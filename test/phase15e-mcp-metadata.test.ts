@@ -35,6 +35,7 @@ const expectedAnnotations = {
   architecture_drift: [true, false, true, false],
   change_gate: [true, false, true, false],
   trace: [true, false, true, false],
+  execution_flow: [true, false, true, false],
   inspect_retrieval: [false, true, false, false],
   list_communities: [true, false, true, false],
   get_community: [true, false, true, false],
@@ -55,7 +56,7 @@ test("MCP tools/list exposes truthful local safety annotations", async () => {
   const { client, server } = await connectedClient();
   try {
     const result = await client.listTools();
-    assert.equal(result.tools.length, 34);
+    assert.equal(result.tools.length, 35);
     const tools = new Map(result.tools.map((tool) => [tool.name, tool]));
     assert.deepEqual([...tools.keys()].sort(), Object.keys(expectedAnnotations).sort());
 
@@ -99,6 +100,7 @@ test("MCP tools/list distinguishes adjacent tools and guides material inputs", a
     assert.match(description("impact"), /structural blast radius.*single relation/i);
     assert.match(description("start_task_context"), /initial evidence/i);
     assert.match(description("trace"), /path between two known/i);
+    assert.match(description("execution_flow"), /downstream calls.*symbol or framework route/i);
     assert.match(description("list_communities"), /discover/i);
     assert.match(description("get_community"), /expand/i);
     assert.match(description("important_symbols"), /rank/i);
@@ -138,6 +140,8 @@ test("MCP tools/list distinguishes adjacent tools and guides material inputs", a
     assert.match(property("explain_incomplete", "base")?.description ?? "", /required.*range mode.*head/i);
     assert.match(property("explain_incomplete", "head")?.description ?? "", /required.*range mode.*base/i);
     assert.match(property("trace", "maxDepth")?.description ?? "", /bound/i);
+    assert.match(property("execution_flow", "maxDepth")?.description ?? "", /bound/i);
+    assert.match(property("execution_flow", "maxNodes")?.description ?? "", /bound.*flow nodes/i);
     assert.match(property("trace", "mode")?.description ?? "", /directed.*edge direction/i);
     assert.match(property("trace", "mode")?.description ?? "", /explanatory.*inverse edges/i);
     assert.match(description("compile_task_context"), /search_code.*matching-code lookup/i);
