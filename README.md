@@ -189,6 +189,51 @@ dependency walk and `affected-tests` to find structural test evidence and gaps.
 | Git hooks | Optional post-commit and post-checkout refresh |
 | MCP | The same local intelligence for coding-agent workflows |
 
+## Optional semantic retrieval
+
+Graph and lexical indexing remain the default. To add semantic retrieval with
+the built-in local embedding model:
+
+```bash
+code-atlas semantic setup --provider builtin-local
+code-atlas semantic test
+code-atlas semantic status
+```
+
+An OpenAI-compatible embedding endpoint can also be configured without storing
+the API key in repository configuration:
+
+```bash
+code-atlas semantic setup --provider openai-compatible \
+  --base-url https://embedding.example/v1 \
+  --model your-embedding-model \
+  --api-key-env OPENAI_API_KEY
+```
+
+The lifecycle also provides `semantic upgrade`, `semantic disable`, and
+`semantic clean`. Disable turns off semantic retrieval while retaining its
+configuration and vectors; clean removes only the repository's semantic index.
+Semantic providers are optional: disabled, unavailable, stale, or failed
+semantic retrieval falls back to lexical search, and semantic failures do not
+prevent graph or lexical indexing from being published.
+
+MCP `search_code` supports `mode: "hybrid"` to combine lexical and semantic
+results. `inspect_retrieval` with `includeSemantic: true` exposes vector,
+lexical, fused, and optional reranked stages. Compact and full details preserve
+the same stage order; a candidate appearing in multiple stages remains visible
+in each stage.
+
+During TypeScript/JavaScript indexing, CodeAtlas uses `scip-typescript` for
+additive cross-file binding evidence when its CLI is already available in the
+project or on `PATH`. It does not install the tool or invoke `npx`; if the tool
+is unavailable or fails, parser-based graph and lexical indexing continues.
+Parser facts remain the syntax baseline, while SCIP improves target binding
+where its evidence is unambiguous.
+
+Lexical relevance now uses owner-qualified names when parser facts identify a
+class or member owner. Bare identifier queries remain ambiguity-safe, and
+deterministic ordering is not treated as relevance evidence.
+
 ## Agent integrations
 
 CodeAtlas currently supports eight first-class integrations:
@@ -424,6 +469,7 @@ Run `code-atlas --help` for the live command surface.
 | Hooks | `hook install`, `hook uninstall`, `hook status` |
 | Task context | `context-compile`, `context-start`, `context-refresh`, `context-close` |
 | Runtime | `mcp`, `serve` |
+| Semantic retrieval | `semantic setup`, `status`, `test`, `upgrade`, `disable`, `clean` |
 | Updates | `upgrade` |
 
 ## CLI self-upgrade
@@ -547,7 +593,6 @@ Deferred work includes:
 - VS Code / GitHub Copilot integration
 - richer visual exploration
 - further change-intelligence workflows
-- optional semantic-provider integrations
 
 These are independent of the lightweight graph and lexical core.
 

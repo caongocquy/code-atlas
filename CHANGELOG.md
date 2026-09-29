@@ -4,6 +4,23 @@ All notable changes to CodeAtlas are documented here.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-09-29
+
+### Added
+
+- Optional semantic embeddings with a built-in local provider and an OpenAI-compatible provider. The semantic lifecycle supports setup, status, test, upgrade, disable, and clean operations.
+- Hybrid lexical and semantic retrieval, plus retrieval inspection for vector, lexical, fused, reranked, and context stages.
+
+### Improved
+
+- SCIP adds TypeScript/JavaScript cross-file binding evidence when a local `scip-typescript` executable is available; parser-based indexing remains the baseline and fallback.
+- Lexical relevance ordering now uses qualified owner context where known, while bare-identifier and hybrid ranking preserve ambiguity-safe tie behavior.
+- Compact retrieval inspection preserves each retrieval stage independently, including candidates that appear in multiple stages.
+
+### Reliability
+
+- Semantic setup, indexing, and search remain optional and local-first; semantic failures fall back to lexical and graph retrieval without blocking graph or lexical publication.
+
 ## [1.3.0] - 2026-09-21
 
 ### Added
