@@ -30,6 +30,7 @@ import {
 } from "../../core/graph/query/graph-query.service.js";
 import { analyzeImpact } from "../../core/graph/query/impact.service.js";
 import { traceGraph } from "../../core/graph/query/trace.service.js";
+import { discoverExecutionFlow } from "../../core/graph/query/execution-flow.service.js";
 import { calculateImportance } from "../../core/graph/intelligence/importance.service.js";
 import {
   detectArchitecturalBridges,
@@ -128,6 +129,7 @@ const toolAnnotations: Record<string, McpToolAnnotations> = {
   architecture_drift: readOnlyAnnotations,
   change_gate: readOnlyAnnotations,
   trace: readOnlyAnnotations,
+  execution_flow: readOnlyAnnotations,
   inspect_retrieval: localWriteAnnotations,
   list_communities: readOnlyAnnotations,
   get_community: readOnlyAnnotations,
@@ -856,6 +858,35 @@ export function createMcpServer(): McpServer {
     capabilityState: context.capabilityState,
     ...(context.framework?.reliability ? { reliability: context.framework.reliability } : {}),
   })));
+
+  const executionFlowRoute = z.object({
+    kind: z.literal("route"),
+    framework: z.enum(["nestjs", "spring", "next"]),
+    path: z.string().min(1),
+    method: z.string().min(1).nullable().optional(),
+    scope: z.string().min(1).optional(),
+    router: z.string().min(1).optional(),
+    owner: z.string().min(1).nullable().optional(),
+    conditions: z.array(z.string()).optional(),
+  }).strict();
+  registerJsonTool(server, "execution_flow", "Discover bounded downstream calls from a symbol or framework route; unlike trace, this does not require a target endpoint.", z.object({
+    ...commonInput,
+    entry: z.union([queryInput, executionFlowRoute]).describe("A symbol query string or an exact framework route selector. Route selectors can include scope, router, owner, and conditions to disambiguate."),
+    maxDepth: z.number().int().min(0).max(32).describe("Bound call traversal depth.").optional(),
+    maxNodes: z.number().int().min(1).max(MAX_LIMIT).describe("Bound flow nodes, including a framework route entry when present; limit is accepted as an alias.").optional(),
+  }).strict(), async (args) => withGraph(resolveRepo(args.repoPath as string | undefined), async (context) => {
+    const rawEntry = args.entry as string | { kind: "route"; framework: "nestjs" | "spring" | "next"; path: string; method?: string | null; scope?: string; router?: string; owner?: string | null; conditions?: string[] };
+    const entry = typeof rawEntry === "string" ? { kind: "symbol" as const, query: rawEntry } : rawEntry;
+    const detail = args.detail as McpDetail | undefined;
+    const result = discoverExecutionFlow(context.graph, context.framework, entry, {
+      maxDepth: args.maxDepth as number | undefined,
+      maxNodes: (args.maxNodes as number | undefined) ?? (args.limit as number | undefined) ?? (detail === "full" ? MAX_LIMIT : DEFAULT_DETAIL_LIMIT),
+      coverage: { mayBeIncomplete: context.mayBeIncomplete },
+    });
+    // The core traversal already applies deterministic depth/node bounds. Keep its
+    // graph order in compact output; generic MCP array projection sorts alphabetically.
+    return result;
+  }));
 
   registerJsonTool(server, "inspect_retrieval", "Diagnose retrieval stages and ranking; use search_code for default matching-code retrieval.", z.object({
     ...commonInput,
