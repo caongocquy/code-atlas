@@ -34,6 +34,8 @@ import { discoverExecutionFlow } from "../../core/graph/query/execution-flow.ser
 import { loadArchitecturePolicy } from "../../core/architecture/architecture-policy.js";
 import { buildRepositoryMap } from "../../core/graph/intelligence/repository-map.service.js";
 import type { RepositoryMap } from "../../core/graph/intelligence/repository-map.types.js";
+import { buildRepositoryEntryCatalog, filterRepositoryEntries } from "../../core/graph/intelligence/repository-entry-catalog.service.js";
+import type { RepositoryEntryCatalog, RepositoryEntryFilters } from "../../core/graph/intelligence/repository-entry-catalog.types.js";
 import { exactProjectionCount, projectKnownCollection } from "../../core/projection/known-collection.js";
 import { calculateImportance } from "../../core/graph/intelligence/importance.service.js";
 import {
@@ -137,6 +139,7 @@ const toolAnnotations: Record<string, McpToolAnnotations> = {
   inspect_retrieval: localWriteAnnotations,
   list_communities: readOnlyAnnotations,
   repository_map: readOnlyAnnotations,
+  list_entries: readOnlyAnnotations,
   get_community: readOnlyAnnotations,
   important_symbols: readOnlyAnnotations,
   architectural_bridges: readOnlyAnnotations,
@@ -458,6 +461,25 @@ export function projectRepositoryMapResponse(
     coverage: { ...map.coverage, mayBeIncomplete: map.coverage.mayBeIncomplete || truncated },
     mayBeIncomplete: map.mayBeIncomplete || truncated,
     ...(map.frameworkReliability ? { frameworkReliability: map.frameworkReliability } : {}),
+  };
+}
+
+export function projectRepositoryEntryCatalogResponse(
+  catalog: RepositoryEntryCatalog,
+  filters: RepositoryEntryFilters = {},
+  detail: McpDetail = "compact",
+  limit = detail === "full" ? MAX_LIMIT : DEFAULT_LIMIT,
+): JsonObject {
+  const entries = projectKnownCollection(filterRepositoryEntries(catalog.entries, filters), limit, { kind: "preserve" });
+  const diagnostics = projectKnownCollection(catalog.diagnostics, detail === "full" ? 100 : 20, { kind: "preserve" });
+  const frameworkDiagnostics = projectKnownCollection(catalog.frameworkDiagnostics, detail === "full" ? 100 : 20, { kind: "preserve" });
+  return {
+    entries: entries.items,
+    diagnostics: diagnostics.items,
+    frameworkDiagnostics: frameworkDiagnostics.items,
+    projection: { entries: entries.count, diagnostics: diagnostics.count, frameworkDiagnostics: frameworkDiagnostics.count },
+    mayBeIncomplete: catalog.mayBeIncomplete || entries.count.truncated || diagnostics.count.truncated || frameworkDiagnostics.count.truncated,
+    ...(catalog.frameworkReliability ? { frameworkReliability: catalog.frameworkReliability } : {}),
   };
 }
 
@@ -1026,6 +1048,23 @@ export function createMcpServer(): McpServer {
       maxFilesPerArea: args.maxFilesPerArea as number | undefined,
       maxRelations: args.maxRelations as number | undefined,
     });
+    return { ...projected, evidenceState: context.evidenceState };
+  }));
+
+  registerJsonTool(server, "list_entries", "List verified framework entry boundaries. NestJS and Spring HTTP routes have callable bindings; Next web routes are file boundaries, not verified callable HTTP handlers.", z.object({
+    ...commonInput,
+    kind: z.enum(["http", "web_route"]).describe("Exact entry kind.").optional(),
+    framework: z.enum(["nestjs", "spring", "next"]).describe("Exact framework.").optional(),
+    path: z.string().min(1).describe("Exact route path.").optional(),
+    method: z.string().min(1).describe("Exact HTTP method, normalized to uppercase; Next file boundaries have no method.").optional(),
+  }).strict(), async (args) => withGraph(resolveRepo(args.repoPath as string | undefined), async (context) => {
+    const catalog = buildRepositoryEntryCatalog(context.framework);
+    const projected = projectRepositoryEntryCatalogResponse(catalog, {
+      kind: args.kind as RepositoryEntryFilters["kind"],
+      framework: args.framework as RepositoryEntryFilters["framework"],
+      path: args.path as string | undefined,
+      method: args.method as string | undefined,
+    }, args.detail as McpDetail | undefined, args.limit as number | undefined);
     return { ...projected, evidenceState: context.evidenceState };
   }));
 

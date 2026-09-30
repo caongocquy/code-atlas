@@ -21,7 +21,7 @@ const expectedTools = [
   "repository_status", "search_code", "get_symbol", "context_read", "compile_task_context",
   "start_task_context", "refresh_task_context", "close_task_context", "find_callers", "find_callees",
   "find_imports", "find_imported_by", "impact", "inspect_change", "affected_tests", "explain_incomplete",
-  "graph_delta", "architecture_drift", "change_gate", "trace", "execution_flow", "inspect_retrieval", "list_communities", "repository_map",
+  "graph_delta", "architecture_drift", "change_gate", "trace", "execution_flow", "inspect_retrieval", "list_communities", "repository_map", "list_entries",
   "get_community", "important_symbols", "architectural_bridges", "find_cycles", "index_repository", "sync_repository",
   "semantic_setup", "semantic_status", "semantic_test", "semantic_upgrade", "semantic_disable", "semantic_clean",
 ] as const;
@@ -51,6 +51,7 @@ const expectedAnnotations: Record<string, Record<string, boolean>> = {
   inspect_retrieval: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   list_communities: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   repository_map: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  list_entries: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   get_community: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   important_symbols: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   architectural_bridges: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
