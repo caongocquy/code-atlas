@@ -207,6 +207,18 @@ export function frameworkEntityKey(ref: FrameworkEntityRef): string {
   return JSON.stringify([ref.framework, ref.kind, ref.logicalKey]);
 }
 
+export type FrameworkRouteIdentity = readonly [scope: string, router: string, path: string, method: string | null, conditions: string[], owner: string | null];
+
+export function decodeFrameworkRouteIdentity(ref: FrameworkEntityRef): FrameworkRouteIdentity | undefined {
+  if (ref.kind !== "route") return undefined;
+  try {
+    frameworkEntityKey(ref);
+    return JSON.parse(ref.logicalKey) as FrameworkRouteIdentity;
+  } catch {
+    return undefined;
+  }
+}
+
 export function frameworkSubjectKey(ref: FrameworkSubjectRef): string {
   if (!isSubjectRef(ref)) throw new TypeError("Invalid framework subject reference");
   return ref.kind === "language"

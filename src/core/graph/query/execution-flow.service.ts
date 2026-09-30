@@ -1,4 +1,4 @@
-import { frameworkEntityKey, frameworkSubjectKey } from "../../framework/framework-identity.js";
+import { decodeFrameworkRouteIdentity, frameworkEntityKey, frameworkSubjectKey } from "../../framework/framework-identity.js";
 import type { FrameworkEntity, FrameworkId, FrameworkProvenance } from "../../framework/framework.types.js";
 import type { ReliabilityProjection } from "../../reliability/reliability.types.js";
 import type { ResolutionCoverage } from "../resolution.types.js";
@@ -97,8 +97,6 @@ type Options = {
   coverage?: Pick<ResolutionCoverage, "mayBeIncomplete">;
 };
 
-type ParsedRouteIdentity = [string, string, string, string | null, string[], string | null];
-
 function clamp(value: number | undefined, fallback: number, maximum: number): number {
   return Math.max(0, Math.min(maximum, Math.floor(value ?? fallback)));
 }
@@ -132,24 +130,9 @@ function edgeComparator(nodeById: Map<string, GraphNode>, left: GraphEdge, right
   ) || left.from.localeCompare(right.from) || left.to.localeCompare(right.to) || edgeKey(left).localeCompare(edgeKey(right));
 }
 
-function parseRouteIdentity(entity: FrameworkEntity): ParsedRouteIdentity | undefined {
-  if (entity.ref.kind !== "route") return undefined;
-  try {
-    const value: unknown = JSON.parse(entity.ref.logicalKey);
-    if (!Array.isArray(value) || value.length !== 6) return undefined;
-    const [scope, router, path, method, conditions, owner] = value;
-    if (typeof scope !== "string" || typeof router !== "string" || typeof path !== "string"
-      || !(method === null || typeof method === "string") || !Array.isArray(conditions)
-      || !conditions.every((item) => typeof item === "string") || !(owner === null || typeof owner === "string")) return undefined;
-    return [scope, router, path, method, conditions, owner];
-  } catch {
-    return undefined;
-  }
-}
-
 function routeMatches(entity: FrameworkEntity, selector: FrameworkRouteSelector): boolean {
   if (entity.ref.framework !== selector.framework) return false;
-  const identity = parseRouteIdentity(entity);
+  const identity = decodeFrameworkRouteIdentity(entity.ref);
   if (!identity) return false;
   const [scope, router, path, method, conditions, owner] = identity;
   return path === selector.path
