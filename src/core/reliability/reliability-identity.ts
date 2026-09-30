@@ -39,7 +39,14 @@ export function canonicalReliabilityScope(input: ReliabilityScopeInput): Reliabi
     normalized.language ?? null,
     normalized.selectorKey ?? null,
   ]);
-  return { ...normalized, scopeKey };
+  return {
+    capability: normalized.capability,
+    ...(normalized.outputKind === undefined ? {} : { outputKind: normalized.outputKind }),
+    ...(normalized.framework === undefined ? {} : { framework: normalized.framework }),
+    ...(normalized.language === undefined ? {} : { language: normalized.language }),
+    ...(normalized.selectorKey === undefined ? {} : { selectorKey: normalized.selectorKey }),
+    scopeKey,
+  };
 }
 
 export function reliabilityScopeKey(scope: ReliabilityScope): string {
