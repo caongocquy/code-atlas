@@ -133,6 +133,7 @@ export type AtlasIndexGeneration = IndexGeneration;
 export type AtlasIndexManifest = IndexManifest;
 
 export type FrameworkQueryInputs = {
+  generationId?: string;
   graph: import("../../core/graph/types.js").CodeGraph;
   framework: FrameworkSnapshot | undefined;
   reliability: readonly ReliabilityContribution[];

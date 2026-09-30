@@ -10,6 +10,7 @@ import type { CodeGraph } from "./types.js";
 import { projectFrameworkGraphWithReliability } from "./query/framework-query.service.js";
 import { CURRENT_INDEX_VERSION_DOMAINS } from "../repository/index-version.js";
 import type { FrameworkQueryProjection } from "./query/framework-query.types.js";
+import { buildRepositoryEvidenceState, type RepositoryEvidenceState } from "../repository/repository-evidence-state.js";
 
 export type IndexedGraph = {
   repoPath: string;
@@ -17,6 +18,7 @@ export type IndexedGraph = {
   graph: CodeGraph;
   capabilityState: "ready" | "stale";
   mayBeIncomplete: boolean;
+  evidenceState: RepositoryEvidenceState;
   framework?: FrameworkQueryProjection;
 };
 
@@ -40,11 +42,10 @@ async function loadIndexedGraphInternal(inputPath: string, readOnly: boolean): P
     throw new Error("Repository graph is not indexed.");
   }
   try {
-    const activeGenerationId = store.getActiveGenerationId(repository.id);
-    if (status.graph.status === "not_indexed" && !activeGenerationId) {
+    const frameworkInputs = store.loadFrameworkQueryInputs(repository.id);
+    if (status.graph.status === "not_indexed" && !frameworkInputs.generationId) {
       throw new Error("Repository graph is not indexed.");
     }
-    const frameworkInputs = store.loadFrameworkQueryInputs(repository.id);
     const framework = projectFrameworkGraphWithReliability(frameworkInputs.graph, frameworkInputs.framework, frameworkInputs.reliability, { capability: "framework_repository" }, CURRENT_INDEX_VERSION_DOMAINS.frameworkResolutionVersion);
     return {
       repoPath,
@@ -52,6 +53,7 @@ async function loadIndexedGraphInternal(inputPath: string, readOnly: boolean): P
       graph: frameworkInputs.graph,
       capabilityState: status.graph.status === "stale" ? "stale" : "ready",
       mayBeIncomplete: status.graph.resolutionCoverage.mayBeIncomplete || status.graph.status === "stale" || framework.mayBeIncomplete,
+      evidenceState: buildRepositoryEvidenceState(repository.id, frameworkInputs.generationId, status.graph, framework.mayBeIncomplete),
       framework,
     };
   } finally {

@@ -34,6 +34,7 @@ import { discoverExecutionFlow } from "../../core/graph/query/execution-flow.ser
 import { loadArchitecturePolicy } from "../../core/architecture/architecture-policy.js";
 import { buildRepositoryMap } from "../../core/graph/intelligence/repository-map.service.js";
 import type { RepositoryMap } from "../../core/graph/intelligence/repository-map.types.js";
+import { exactProjectionCount, projectKnownCollection } from "../../core/projection/known-collection.js";
 import { calculateImportance } from "../../core/graph/intelligence/importance.service.js";
 import {
   detectArchitecturalBridges,
@@ -379,56 +380,70 @@ export function projectRepositoryMapResponse(
   const maxDiagnosticPaths = detail === "full" ? 100 : 20;
   const maxFrameworkDiagnostics = detail === "full" ? 100 : 20;
   const fileLimit = detail === "full" ? maxFiles : Math.min(maxFiles, 5);
-  const selectedAreas = map.areas.slice(0, maxAreas);
+  const areaProjection = projectKnownCollection(map.areas, maxAreas, { kind: "preserve" });
+  const selectedAreas = areaProjection.items;
   const selectedAreaIds = new Set(selectedAreas.map((area) => area.id));
   const eligibleRelations = map.relations.filter((relation) => selectedAreaIds.has(relation.sourceAreaId) && selectedAreaIds.has(relation.targetAreaId));
-  const selectedRelations = eligibleRelations.slice(0, maxRelations);
+  const selectedRelations = projectKnownCollection(eligibleRelations, maxRelations, { kind: "preserve" }).items;
+  const relationProjection = exactProjectionCount(map.relations.length, selectedRelations.length);
   const ambiguousFiles = map.diagnostics.ambiguousFiles.paths.slice(0, maxDiagnosticPaths);
   const unclassifiedFiles = map.diagnostics.unclassifiedFiles.paths.slice(0, maxDiagnosticPaths);
   const frameworkDiagnostics = map.diagnostics.frameworkDiagnostics.slice(0, maxFrameworkDiagnostics);
+  const ambiguousFileProjection = exactProjectionCount(map.diagnostics.ambiguousFiles.count, ambiguousFiles.length);
+  const unclassifiedFileProjection = exactProjectionCount(map.diagnostics.unclassifiedFiles.count, unclassifiedFiles.length);
+  const frameworkDiagnosticProjection = exactProjectionCount(map.diagnostics.frameworkDiagnostics.length, frameworkDiagnostics.length);
   const filesTruncated = selectedAreas.some((area) => area.files.length > fileLimit);
-  const pathsTruncated = map.diagnostics.ambiguousFiles.count > ambiguousFiles.length || map.diagnostics.unclassifiedFiles.count > unclassifiedFiles.length;
-  const areasTruncated = map.areas.length > selectedAreas.length;
-  const relationsTruncated = map.relations.length > selectedRelations.length;
+  const pathsTruncated = ambiguousFileProjection.truncated || unclassifiedFileProjection.truncated;
+  const areasTruncated = areaProjection.count.truncated;
+  const relationsTruncated = relationProjection.truncated;
   const representativeEdgesTruncated = detail !== "full" && selectedRelations.some((relation) => relation.representativeEdges.length > 1);
-  const frameworkDiagnosticsTruncated = map.diagnostics.frameworkDiagnostics.length > frameworkDiagnostics.length;
+  const frameworkDiagnosticsTruncated = frameworkDiagnosticProjection.truncated;
   const truncated = map.diagnostics.truncation.diagnosticPaths || pathsTruncated || areasTruncated || filesTruncated || relationsTruncated || representativeEdgesTruncated || frameworkDiagnosticsTruncated;
-  const areas = selectedAreas.map((area) => ({
-    id: area.id,
-    label: area.label,
-    boundarySource: area.boundarySource,
-    identityStability: area.identityStability,
-    identitySemantics: area.identitySemantics,
-    fileCount: area.fileCount,
-    symbolCount: area.symbolCount,
-    files: area.files.slice(0, fileLimit),
-    ...(detail === "full" ? { directories: area.directories } : {}),
-    representativeSymbols: area.representativeSymbols,
-    internalEdgeCount: area.internalEdgeCount,
-    externalEdgeCount: area.externalEdgeCount,
-    cohesion: area.cohesion,
-    coupling: area.coupling,
-    frameworkIds: area.frameworkIds,
-    executionEntryBindingCount: area.executionEntryBindingCount,
-  }));
-  const relations = selectedRelations.map((relation) => ({
-    sourceAreaId: relation.sourceAreaId,
-    targetAreaId: relation.targetAreaId,
-    edgeCount: relation.edgeCount,
-    relationCounts: relation.relationCounts,
-    representativeEdges: relation.representativeEdges.slice(0, detail === "full" ? 5 : 1),
-  }));
+  const areas = selectedAreas.map((area) => {
+    const files = projectKnownCollection(area.files, fileLimit, { kind: "preserve" });
+    return {
+      id: area.id,
+      label: area.label,
+      boundarySource: area.boundarySource,
+      identityStability: area.identityStability,
+      identitySemantics: area.identitySemantics,
+      fileCount: area.fileCount,
+      symbolCount: area.symbolCount,
+      files: files.items,
+      projection: { files: files.count },
+      ...(detail === "full" ? { directories: area.directories } : {}),
+      representativeSymbols: area.representativeSymbols,
+      internalEdgeCount: area.internalEdgeCount,
+      externalEdgeCount: area.externalEdgeCount,
+      cohesion: area.cohesion,
+      coupling: area.coupling,
+      frameworkIds: area.frameworkIds,
+      executionEntryBindingCount: area.executionEntryBindingCount,
+    };
+  });
+  const relations = selectedRelations.map((relation) => {
+    const representativeEdges = projectKnownCollection(relation.representativeEdges, detail === "full" ? 5 : 1, { kind: "preserve" });
+    return {
+      sourceAreaId: relation.sourceAreaId,
+      targetAreaId: relation.targetAreaId,
+      edgeCount: relation.edgeCount,
+      relationCounts: relation.relationCounts,
+      representativeEdges: representativeEdges.items,
+      projection: { representativeEdges: representativeEdges.count },
+    };
+  });
   return {
     boundarySource: map.boundarySource,
     identityStability: map.identityStability,
     totalAreaCount: map.areas.length,
     totalRelationCount: map.relations.length,
+    projection: { areas: areaProjection.count, relations: relationProjection, frameworkDiagnostics: frameworkDiagnosticProjection },
     areas,
     relations,
     diagnostics: {
       ...map.diagnostics,
-      ambiguousFiles: { count: map.diagnostics.ambiguousFiles.count, paths: ambiguousFiles },
-      unclassifiedFiles: { count: map.diagnostics.unclassifiedFiles.count, paths: unclassifiedFiles },
+      ambiguousFiles: { count: map.diagnostics.ambiguousFiles.count, paths: ambiguousFiles, projection: ambiguousFileProjection },
+      unclassifiedFiles: { count: map.diagnostics.unclassifiedFiles.count, paths: unclassifiedFiles, projection: unclassifiedFileProjection },
       frameworkDiagnostics,
       truncation: {
         ...map.diagnostics.truncation,
@@ -967,7 +982,7 @@ export function createMcpServer(): McpServer {
     });
     // The core traversal already applies deterministic depth/node bounds. Keep its
     // graph order in compact output; generic MCP array projection sorts alphabetically.
-    return result;
+    return { ...result, evidenceState: context.evidenceState };
   }));
 
   registerJsonTool(server, "inspect_retrieval", "Diagnose retrieval stages and ranking; use search_code for default matching-code retrieval.", z.object({
@@ -1006,11 +1021,12 @@ export function createMcpServer(): McpServer {
   }).strict(), async (args) => withGraph(resolveRepo(args.repoPath as string | undefined), async (context) => {
     const architecturePolicy = await loadArchitecturePolicy(context.repoPath);
     const map = buildRepositoryMap(context.graph, architecturePolicy, context.framework, { graphMayBeIncomplete: context.mayBeIncomplete });
-    return projectRepositoryMapResponse(map, args.detail as McpDetail | undefined, {
+    const projected = projectRepositoryMapResponse(map, args.detail as McpDetail | undefined, {
       maxAreas: (args.maxAreas as number | undefined) ?? Math.min((args.limit as number | undefined) ?? DEFAULT_LIMIT, 100),
       maxFilesPerArea: args.maxFilesPerArea as number | undefined,
       maxRelations: args.maxRelations as number | undefined,
     });
+    return { ...projected, evidenceState: context.evidenceState };
   }));
 
   registerJsonTool(server, "list_communities", "Discover graph communities and coupling metadata; use get_community to expand one known community.", z.object({

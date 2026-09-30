@@ -896,8 +896,10 @@ export class AtlasStore {
 
   loadFrameworkQueryInputs(repositoryId: string): FrameworkQueryInputs {
     return this.readTransaction(() => {
-      const framework = this.loadFrameworkInternal(repositoryId);
+      const generationId = this.getActiveGenerationId(repositoryId);
+      const framework = this.loadFrameworkInternal(repositoryId, generationId);
       return {
+        generationId,
         graph: this.loadGraphInternal(repositoryId),
         framework,
         reliability: this.loadReliabilityInputs(repositoryId),
