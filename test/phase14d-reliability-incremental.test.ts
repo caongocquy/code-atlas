@@ -10,6 +10,7 @@ import { getRepositoryIdentity } from "../src/core/repository/repository-identit
 import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
 import type { ReliabilityContribution } from "../src/core/reliability/reliability.types.js";
 import { materializeReliabilityIncremental } from "../src/core/reliability/reliability-incremental.js";
+import { canonicalReliabilityScope } from "../src/core/reliability/reliability-identity.js";
 
 const contribution: ReliabilityContribution = {
   ownerKey: "[\"src/routes.ts\",\"facts\",null,null]",
@@ -46,6 +47,26 @@ test("reliability contributions are generation-scoped and inactive before public
   assert.deepEqual(store.loadReliabilityContributions(repository.id), []);
   assert.deepEqual(store.loadReliabilityContributions(repository.id, generation.id), [contribution]);
   store.close();
+});
+
+test("canonical optional scope fields round-trip while unrelated undefined remains invalid", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "codeatlas-phase14d-scope-json-"));
+  const store = new AtlasStore(path.join(root, ".codeatlas", "atlas.db"));
+  try {
+    const repository = store.ensureRepository(getRepositoryIdentity(root));
+    const generation = createCandidateGeneration(repository.id, undefined, { ...CURRENT_INDEX_VERSION_DOMAINS, reliabilityVersion: "1.0.0" }, []);
+    store.beginCandidateGeneration(generation);
+    store.writeCandidateManifest(generation.manifest);
+    const accepted = { ...contribution, scope: canonicalReliabilityScope({ capability: "route_binding", outputKind: "relationship", framework: "next" }) };
+    store.stageReliabilityContributions(generation.id, [accepted]);
+    assert.deepEqual(store.loadReliabilityContributions(repository.id, generation.id), [accepted]);
+
+    const invalid = { ...accepted, evidence: [{ ...accepted.evidence[0]!, localId: undefined }] };
+    assert.throws(() => store.stageReliabilityContributions(generation.id, [invalid]), /Invalid framework JSON: Framework JSON contains an unsupported value/);
+    assert.deepEqual(store.loadReliabilityContributions(repository.id, generation.id), [accepted]);
+  } finally {
+    store.close();
+  }
 });
 
 test("conflicting contribution keys are rejected atomically", () => {

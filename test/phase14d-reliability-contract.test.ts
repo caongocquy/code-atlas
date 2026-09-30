@@ -47,6 +47,23 @@ test("normalizes evidence refs and scopes deterministically", () => {
   assert.equal(reliabilityScopeKey(first), reliabilityScopeKey(second));
 });
 
+test("canonical scopes omit absent optional fields without changing semantic keys", () => {
+  const cases = [
+    [{}, { scopeKey: '["routes",null,null,null,null]', capability: "routes" }],
+    [{ language: "typescript" }, { scopeKey: '["routes",null,null,"typescript",null]', capability: "routes", language: "typescript" }],
+    [{ selectorKey: "/users" }, { scopeKey: '["routes",null,null,null,"/users"]', capability: "routes", selectorKey: "/users" }],
+    [{ language: "typescript", selectorKey: "/users" }, { scopeKey: '["routes",null,null,"typescript","/users"]', capability: "routes", language: "typescript", selectorKey: "/users" }],
+  ] as const;
+  for (const [input, expected] of cases) {
+    const scope = canonicalReliabilityScope({ capability: "routes", ...input });
+    assert.deepEqual(scope, expected);
+    assert.deepEqual(JSON.parse(JSON.stringify(scope)), expected);
+  }
+  assert.deepEqual(canonicalReliabilityScope({ capability: "routes", outputKind: "relationship", framework: "next" }), {
+    scopeKey: '["routes","relationship","next",null,null]', capability: "routes", outputKind: "relationship", framework: "next",
+  });
+});
+
 test("semantic keys exclude generation and checkout identity", () => {
   const first = reliabilityOutputKey({
     kind: "classification",
