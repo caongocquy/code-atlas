@@ -9,4 +9,4 @@ export const LEXICAL_INDEX_VERSION = "1.1.0";
 
 export const GRAPH_INDEX_VERSION = "2.0.0";
 
-export const RESOLUTION_VERSION = "1.0.0";
+export const RESOLUTION_VERSION = "1.1.0";
