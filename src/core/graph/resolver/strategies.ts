@@ -148,13 +148,26 @@ function resolveTypes(input: ResolverInput, site: ResolutionSiteIdentity, strate
 
 function resolveMembers(input: ResolverInput, site: ResolutionSiteIdentity, strategy: ResolutionStrategyId): readonly ResolutionCandidate[] {
   const call = input.facts.callSites.find((item) => item.localId === site.localId);
-  const facts = input.facts.members.filter((item) => item.localId === site.localId || (input.facts.language === "java" && call && item.memberKind === "method"
-    && item.range.startLine === call.range.startLine && item.range.startColumn === call.range.startColumn
-    && item.range.endLine === call.range.endLine && item.range.endColumn === call.range.endColumn));
+  const ecmascript = ["typescript", "javascript", "tsx"].includes(input.facts.language);
+  const expressions = new Map(input.facts.expressions.map((item) => [item.localId, item]));
+  const facts = input.facts.members.filter((item) => {
+    if (item.localId === site.localId) return true;
+    if (!call || item.memberKind !== "method" || item.range.startLine !== call.range.startLine || item.range.startColumn !== call.range.startColumn) return false;
+    if (input.facts.language === "java") return item.range.endLine === call.range.endLine && item.range.endColumn === call.range.endColumn;
+    const receiver = item.receiverId ? expressions.get(item.receiverId) : undefined;
+    // ECMAScript member ranges exclude the call's argument list.
+    return ecmascript && receiver?.ownerScopeId === call.scopeId && !!receiver?.text
+      && call.calleeText.replace(/\s/g, "") === `${receiver.text}.${item.memberName}`.replace(/\s/g, "")
+      && (item.range.endLine < call.range.endLine || (item.range.endLine === call.range.endLine
+        && item.range.endColumn !== undefined && call.range.endColumn !== undefined && item.range.endColumn < call.range.endColumn));
+  });
   const names = new Set(facts.map((item) => item.memberName));
   const members = input.evidence.members.filter((item) => sameSourceUnit(item.sourceUnit, site.sourceUnit)
     && names.has(item.memberName)
-    && facts.some((fact) => item.evidenceId.endsWith(`member:${fact.localId}`)));
+    && facts.some((fact) => item.evidenceId.endsWith(`member:${fact.localId}`))
+    // Persisted ECMAScript method nodes cannot distinguish duplicate qualified names.
+    && (!ecmascript || !call || input.facts.symbols.filter((symbol) => symbol.kind === item.member.kind
+      && (symbol.declaredQualifiedName ?? symbol.name) === item.member.qualifiedName).length === 1));
   return mergeCandidates(members.flatMap((item) => {
     const result = input.environment.resolveMember(item.ownerType, item.memberName);
     if (result.status !== "found") return [];
