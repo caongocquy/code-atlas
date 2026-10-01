@@ -28,6 +28,7 @@ export async function runIndexingCommand(
     ? indexRepository
     : syncRepository;
   const quiet = args.includes("--quiet");
+  const diagnosticTimings = args.includes("--diagnostic-timings");
   const reporter = createCliCommandReporter({ command: operation === "sync" ? "sync" : "index", json, quiet });
   reporter.start(operation === "index" ? "CodeAtlas Index" : "CodeAtlas Sync");
   let cancelled = false;
@@ -50,12 +51,16 @@ export async function runIndexingCommand(
         progress: createInlineProgressRunner(progressReporter),
         skipGit: args.includes("--skip-git"),
         includeSemantic,
+        diagnosticTimings,
         semanticProviders: includeSemantic && providers?.embeddingProvider ? {
           embeddingProvider: providers.embeddingProvider,
           vectorStore: providers.vectorStore,
         } : undefined,
       }),
     );
+    if (diagnosticTimings && result.phaseTimingsMs) {
+      process.stderr.write(`CODEATLAS_PHASE_TIMINGS_MS=${JSON.stringify(result.phaseTimingsMs)}\n`);
+    }
     if (result.kind === "failed") {
       process.exitCode = 1;
       const error = new Error(result.failure.message);

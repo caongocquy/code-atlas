@@ -57,10 +57,10 @@ function mergeProvenance(left: FrameworkProvenance, right: FrameworkProvenance):
 }
 
 function hasIncompleteCoverage(coverage: readonly FrameworkMaterialization["coverage"][number][]): boolean {
+  // Resolved counts unique outputs; multiple attempted observations may merge into one output.
   return coverage.some((item) => item.applicable > 0 && (
     item.supported < item.applicable
     || item.attempted < item.applicable
-    || item.resolved + item.ambiguous + item.unknown + item.unsupported + item.budgetExhausted < item.attempted
     || item.ambiguous > 0
     || item.unknown > 0
     || item.unsupported > 0
@@ -313,7 +313,7 @@ export function analyzeFramework(ctx: FrameworkAnalysisContext, adapters: readon
       evidence.push(...result.evidence.slice(0, remaining));
       if (result.evidence.length > remaining) evidence.push({ evidenceId: `framework-budget:${adapter.id}`, framework: adapter.frameworks[0] ?? "react", adapterId: adapter.id, adapterVersion: adapter.version, strategy: adapter.id, capability: "adapter", relativePath: "", origin: "framework_inferred", confidence: "exact", refs: [], entities: [], applicable: true, supported: false, attempted: true, state: "budget_exhausted", outputKind: "relationship", relationKind: "component_usage", sourceCandidates: [], targetCandidates: [] });
       for (const dependency of result.dependencies) {
-        const key = JSON.stringify([dependency.framework, dependency.scope, dependency.ownerPath]);
+        const key = JSON.stringify([dependency.framework, dependency.scope, dependency.ownerPath, ...(dependency.framework === "react" ? dependency.lookupKeys : [])]);
         const existing = dependencies.get(key);
         if (!existing) dependencies.set(key, dependency);
         else dependencies.set(key, {
@@ -528,7 +528,7 @@ export function analyzeFramework(ctx: FrameworkAnalysisContext, adapters: readon
   }
   const mergedDependencies = new Map<string, FrameworkMaterialization["dependencies"][number]>();
   for (const dependency of [...ctx.previousFramework.dependencies.filter((item) => !analyzePaths.has(item.ownerPath)), ...dependencies.values()]) {
-    const key = JSON.stringify([dependency.framework, dependency.scope, dependency.ownerPath]);
+    const key = JSON.stringify([dependency.framework, dependency.scope, dependency.ownerPath, ...(dependency.framework === "react" ? dependency.lookupKeys : [])]);
     const existing = mergedDependencies.get(key);
     if (!existing) mergedDependencies.set(key, dependency);
     else mergedDependencies.set(key, { ...existing, inputKeys: [...new Set([...existing.inputKeys, ...dependency.inputKeys])].sort(), lookupKeys: [...new Set([...existing.lookupKeys, ...dependency.lookupKeys])].sort(), complete: existing.complete && dependency.complete });

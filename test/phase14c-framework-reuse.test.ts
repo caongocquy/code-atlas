@@ -210,6 +210,7 @@ test("distinct observations count attempts without double-counting the accepted 
   assert.equal(result.relationships.length, 1);
   assert.equal(coverage?.attempted, 2);
   assert.equal(result.coverage.reduce((sum, item) => sum + item.resolved, 0), 1);
+  assert.equal(result.complete, true);
 });
 
 test("cold diagnostic materialization is incomplete", () => {

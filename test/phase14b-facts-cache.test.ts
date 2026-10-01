@@ -30,6 +30,6 @@ test("v3 facts round-trip and v2 facts miss without mutation", () => {
     }).kind,
     "miss",
   );
-  assert.equal(CURRENT_INDEX_VERSION_DOMAINS.factsVersion, "3.0.0");
+  assert.equal(CURRENT_INDEX_VERSION_DOMAINS.factsVersion, "3.1.0");
   assert.equal(CURRENT_INDEX_VERSION_DOMAINS.factsSchemaVersion, "3.0.0");
 });

@@ -26,11 +26,11 @@ export type ChangeDetectorOptions = {
   progress?: ProgressRunner;
   changeDetection?: ChangeDetectionMode;
   forceFullScan?: boolean;
+  onPhaseTiming?: (phase: "scan" | "hash", elapsedMs: number) => void;
 };
 
 type FileStates = Map<IndexCapability, Map<string, AtlasFileCapabilityState>>;
 
-const MODULE_CONFIG_FILENAMES = new Set(["package.json", "tsconfig.json", "jsconfig.json"]);
 const CONFIG_SCAN_IGNORED_DIRECTORIES = new Set([
   ".git", ".codeatlas", ".code-rag", "node_modules", "dist", "build", ".next", ".turbo",
   "coverage", ".dart_tool", "Pods", "DerivedData", ".gradle", ".venv", "venv", "vendor",
@@ -39,10 +39,11 @@ const CONFIG_SCAN_IGNORED_DIRECTORIES = new Set([
 ]);
 
 export function isModuleConfigPath(relativePath: string): boolean {
-  return MODULE_CONFIG_FILENAMES.has(path.posix.basename(relativePath));
+  const name = path.posix.basename(relativePath);
+  return name === "package.json" || /^(?:tsconfig|jsconfig)(?:\.[^/]+)?\.json$/i.test(name);
 }
 
-async function scanModuleConfigFiles(repoPath: string): Promise<string[]> {
+export async function scanModuleConfigFiles(repoPath: string): Promise<string[]> {
   const found: string[] = [];
 
   async function visit(directory: string): Promise<void> {
@@ -132,23 +133,26 @@ function stateNeedsIndex(
 async function scanFiles(
   repoPath: string,
   progress: ChangeDetectorOptions["progress"],
+  onPhaseTiming?: ChangeDetectorOptions["onPhaseTiming"],
 ): Promise<string[]> {
-  if (!progress) {
-    return scanRepo(repoPath);
+  const startedAt = onPhaseTiming ? performance.now() : undefined;
+  try {
+    if (!progress) return await scanRepo(repoPath);
+    return await progress.run("Scanning repository", async (reporter) => {
+      const files = await scanRepo(repoPath);
+      reporter.update(`${files.length} found`);
+      return files;
+    });
+  } finally {
+    if (startedAt !== undefined) onPhaseTiming?.("scan", performance.now() - startedAt);
   }
-
-  return progress.run("Scanning repository", async (reporter) => {
-    const files = await scanRepo(repoPath);
-    reporter.update(`${files.length} found`);
-    return files;
-  });
 }
 
 export async function detectFilesystemChanges(
   repoPath: string,
   options: ChangeDetectorOptions,
 ): Promise<IndexingChanges> {
-  const files = await scanFiles(repoPath, options.progress);
+  const files = await scanFiles(repoPath, options.progress, options.onPhaseTiming);
   const relativeFiles = files.map((file) => repositoryRelativePath(repoPath, file));
   const currentFiles = new Set(relativeFiles);
   const persistedFiles = options.store.getIndexedFilePaths(options.repoId);
@@ -182,19 +186,23 @@ export async function detectFilesystemChanges(
     }
   };
 
-  if (options.progress) {
-    await options.progress.run("Hashing files", hashes, "graph");
-  } else {
-    await hashes({ setProgress() {} });
-  }
-
-  for (const relativeFile of configPaths) {
-    try {
-      fileHashes.set(relativeFile, createFileHash(await fs.readFile(path.join(repoPath, relativeFile), "utf8")));
-      currentFiles.add(relativeFile);
-    } catch {
-      // A removed config is reported from persistedFiles below.
+  const hashStartedAt = options.onPhaseTiming ? performance.now() : undefined;
+  try {
+    if (options.progress) {
+      await options.progress.run("Hashing files", hashes, "graph");
+    } else {
+      await hashes({ setProgress() {} });
     }
+    for (const relativeFile of configPaths) {
+      try {
+        fileHashes.set(relativeFile, createFileHash(await fs.readFile(path.join(repoPath, relativeFile), "utf8")));
+        currentFiles.add(relativeFile);
+      } catch {
+        // A removed config is reported from persistedFiles below.
+      }
+    }
+  } finally {
+    if (hashStartedAt !== undefined) options.onPhaseTiming?.("hash", performance.now() - hashStartedAt);
   }
 
   const candidateFiles = new Set<string>();

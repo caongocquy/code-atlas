@@ -191,15 +191,32 @@ function parseJson(value: string, maxLength = MAX_FRAMEWORK_RECORD_JSON_LENGTH):
   return JSON.parse(value) as unknown;
 }
 
-function sortedUniqueStrings(value: unknown, label: string, allowEmpty = false): string[] {
-  if (!Array.isArray(value) || value.length > MAX_FRAMEWORK_REFS) throw new TypeError(`${label} must contain at most ${MAX_FRAMEWORK_REFS} items`);
+function sortedUniqueStrings(value: unknown, label: string, allowEmpty = false, context?: string): string[] {
+  if (!Array.isArray(value)) throw new TypeError(`${label} must contain at most ${MAX_FRAMEWORK_REFS} items`);
+  if (value.length > MAX_FRAMEWORK_REFS) {
+    if (!context) throw new TypeError(`${label} must contain at most ${MAX_FRAMEWORK_REFS} items`);
+    const sample = value.slice(0, 128).filter((item): item is string => typeof item === "string");
+    const uniqueKeys = sample.length === value.length ? String(new Set(sample).size) : "unavailable";
+    const keyFamilies = [...new Set(sample.map((item) => item.split(":", 1)[0]?.slice(0, 40) ?? ""))].sort().slice(0, 8);
+    const lookupKeys = sample.slice(0, 8).map((item) => item.slice(0, 160));
+    throw new TypeError(`${label} must contain at most ${MAX_FRAMEWORK_REFS} items (${context}; totalKeys=${value.length}; uniqueKeys=${uniqueKeys}; keyFamilies=${JSON.stringify(keyFamilies)}; lookupKeys=${JSON.stringify(lookupKeys)})`);
+  }
   const values = value.map((item) => {
     if (typeof item !== "string" || item.length > MAX_FRAMEWORK_STRING_LENGTH || (!allowEmpty && item.length === 0)) {
       throw new TypeError(`${label} contains an invalid string`);
     }
     return item;
   });
-  if (new Set(values).size !== values.length) throw new TypeError(`${label} contains duplicates`);
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const item of values) {
+    if (seen.has(item)) duplicates.add(item);
+    else seen.add(item);
+  }
+  if (duplicates.size > 0) {
+    const preview = (items: readonly string[]) => JSON.stringify(items.slice(0, 8).map((item) => item.slice(0, 160)));
+    throw new TypeError(`${label} contains duplicates${context ? ` (${context}; lookupKeys=${preview(values)}; duplicateValues=${preview([...duplicates])}; totalKeys=${values.length})` : ""}`);
+  }
   return values.sort((left, right) => left.localeCompare(right));
 }
 
@@ -339,7 +356,7 @@ function normalizeConfigValue(value: unknown, depth = 0): unknown {
 function normalizeConfig(value: unknown): FrameworkConfigFact {
   if (!isRecord(value) || !hasExactKeys(value, ["relativePath", "scope", "inputKey", "kind", "values", "complete"])
     || !isSafeRelativePath(value.relativePath) || typeof value.scope !== "string" || value.scope.length > MAX_FRAMEWORK_STRING_LENGTH || !isBoundedString(value.inputKey)
-    || !["package", "next", "maven", "gradle", "pubspec"].includes(String(value.kind)) || typeof value.complete !== "boolean" || !isRecord(value.values)) {
+    || !["package", "tsconfig", "jsconfig", "next", "maven", "gradle", "pubspec"].includes(String(value.kind)) || typeof value.complete !== "boolean" || !isRecord(value.values)) {
     throw new TypeError("Invalid framework config fact");
   }
   const result = { relativePath: value.relativePath, scope: value.scope, inputKey: value.inputKey, kind: value.kind as FrameworkConfigFact["kind"], values: normalizeConfigValue(value.values) as FrameworkConfigFact["values"], complete: value.complete };
@@ -364,7 +381,7 @@ function normalizeDependency(value: unknown): FrameworkDependency {
     || !isFrameworkId(value.framework) || !isBoundedString(value.scope) || !isSafeRelativePath(value.ownerPath) || typeof value.complete !== "boolean") {
     throw new TypeError("Invalid framework dependency");
   }
-  const result: FrameworkDependency = { framework: value.framework, scope: value.scope, ownerPath: value.ownerPath, inputKeys: sortedUniqueStrings(value.inputKeys, "inputKeys"), lookupKeys: sortedUniqueStrings(value.lookupKeys, "lookupKeys"), complete: value.complete };
+  const result: FrameworkDependency = { framework: value.framework, scope: value.scope, ownerPath: value.ownerPath, inputKeys: sortedUniqueStrings(value.inputKeys, "inputKeys"), lookupKeys: sortedUniqueStrings(value.lookupKeys, "lookupKeys", false, `file=${value.ownerPath} language=unavailable siteKind=framework_dependency localId=unavailable owner=${value.ownerPath} caller=unavailable framework=${value.framework}`), complete: value.complete };
   stableJson(result);
   return result;
 }
@@ -414,6 +431,98 @@ function frameworkDiagnosticKey(record: FrameworkDiagnostic): string {
   return stableJson([record.code, record.outcome, record.framework, record.capability, record.relativePath, record.strategy, record.evidenceIds, record.refs, record.reason]);
 }
 
+function incompleteFrameworkContext(snapshot: FrameworkSnapshot | undefined): string {
+  if (!snapshot) return JSON.stringify({ stagedFramework: "missing_or_invalid" });
+  const coverage = snapshot.coverage;
+  const diagnostics = snapshot.diagnostics;
+  const outputs = [...snapshot.relationships, ...snapshot.classifications];
+  const unresolvedByReason: Record<string, number> = {};
+  for (const item of coverage) {
+    for (const [reason, count] of [
+      ["coverage_not_supported", Math.max(0, item.applicable - item.supported)],
+      ["coverage_not_attempted", Math.max(0, item.applicable - item.attempted)],
+      ["coverage_ambiguous", item.ambiguous],
+      ["coverage_unknown", item.unknown],
+      ["coverage_unsupported", item.unsupported],
+      ["coverage_budget_exhausted", item.budgetExhausted],
+    ] as const) if (count > 0) unresolvedByReason[reason] = (unresolvedByReason[reason] ?? 0) + count;
+  }
+  for (const item of diagnostics) unresolvedByReason[item.code] = (unresolvedByReason[item.code] ?? 0) + 1;
+  const incompleteConfig = snapshot.config.filter((item) => !item.complete).length;
+  const incompleteDependencies = snapshot.dependencies.filter((item) => !item.complete).length;
+  if (incompleteConfig) unresolvedByReason.config_incomplete = incompleteConfig;
+  if (incompleteDependencies) unresolvedByReason.dependency_incomplete = incompleteDependencies;
+  const sites = [...new Set(coverage.map((item) => JSON.stringify([item.framework, item.relativePath])))];
+  const fileSummaries = sites.map((key) => {
+    const [framework, file] = JSON.parse(key) as [FrameworkId, string];
+    const rows = coverage.filter((item) => item.framework === framework && item.relativePath === file);
+    const related = outputs.filter((item) => item.provenance.framework === framework && item.provenance.refs.some((ref) => ref.relativePath === file));
+    const unresolved = diagnostics.filter((item) => item.framework === framework && item.relativePath === file);
+    return {
+      framework, file,
+      owner: snapshot.dependencies.find((item) => item.framework === framework && item.ownerPath === file)?.ownerPath,
+      attemptedSites: rows.reduce((total, item) => total + item.attempted, 0),
+      representedSites: new Set(related.flatMap((item) => item.provenance.evidenceIds)).size,
+      resolvedSites: rows.reduce((total, item) => total + item.resolved, 0),
+      uniqueRelations: related.filter((item) => item.outputKind === "relationship").length,
+      unresolved: unresolved.length,
+    };
+  }).sort((left, right) => right.unresolved - left.unresolved || left.framework.localeCompare(right.framework) || left.file.localeCompare(right.file));
+  return JSON.stringify({
+    attemptedSites: coverage.reduce((total, item) => total + item.attempted, 0),
+    representedSites: new Set(outputs.flatMap((item) => item.provenance.evidenceIds)).size,
+    resolvedSites: coverage.reduce((total, item) => total + item.resolved, 0),
+    uniqueRelations: snapshot.relationships.length,
+    unresolvedByReason,
+    files: fileSummaries.slice(0, 5),
+    omittedFiles: Math.max(0, fileSummaries.length - 5),
+    unresolvedSamples: diagnostics.slice(0, 5).map((item) => ({
+      framework: item.framework,
+      file: item.relativePath,
+      owner: snapshot.dependencies.find((dependency) => dependency.framework === item.framework && dependency.ownerPath === item.relativePath)?.ownerPath,
+      site: item.refs.find((ref) => ref.localId)?.localId,
+      reason: item.code,
+      strategy: item.strategy,
+      detail: item.reason.slice(0, 160),
+    })),
+    omittedUnresolved: Math.max(0, diagnostics.length - 5),
+  });
+}
+
+function canPublishFramework(snapshot: FrameworkSnapshot): boolean {
+  if (snapshot.config.some((item) => !item.complete) || snapshot.dependencies.some((item) => !item.complete) || snapshot.detections.some((item) => !item.complete)) return false;
+
+  const dynamicCounts = new Map<string, number>();
+  const dynamicEvidenceIds = new Set<string>();
+  for (const item of snapshot.diagnostics) {
+    if (item.code !== "framework_construct_unsupported" || item.outcome !== "unsupported"
+      || item.framework !== "react" || item.capability !== "react.component_usage"
+      || item.strategy !== "jsx-dynamic-component-usage" || item.reason !== "framework construct is unsupported"
+      || item.evidenceIds.length === 0
+      || !item.refs.some((ref) => ref.relativePath === item.relativePath && ref.inputKey === `facts:${item.relativePath}`)) return false;
+    const key = stableJson([item.framework, item.capability, item.relativePath, item.strategy]);
+    dynamicCounts.set(key, (dynamicCounts.get(key) ?? 0) + item.evidenceIds.length);
+    for (const evidenceId of item.evidenceIds) {
+      if (dynamicEvidenceIds.has(evidenceId)) return false;
+      dynamicEvidenceIds.add(evidenceId);
+    }
+  }
+  if ([...snapshot.relationships, ...snapshot.classifications].some((item) => item.provenance.evidenceIds.some((id) => dynamicEvidenceIds.has(id)))) return false;
+
+  for (const item of snapshot.coverage) {
+    if (item.attempted !== item.applicable || item.ambiguous || item.unknown || item.budgetExhausted || item.weakDropped) return false;
+    const key = stableJson([item.framework, item.capability, item.relativePath, item.strategy]);
+    if (item.unsupported || item.supported !== item.applicable) {
+      if (item.framework !== "react" || item.capability !== "react.component_usage" || item.strategy !== "jsx-dynamic-component-usage"
+        || item.outputKind !== "relationship" || item.kind !== "component_usage"
+        || item.supported !== 0 || item.unsupported !== item.applicable || item.resolved !== 0
+        || dynamicCounts.get(key) !== item.unsupported) return false;
+      dynamicCounts.delete(key);
+    }
+  }
+  return dynamicCounts.size === 0 && snapshot.complete === (snapshot.diagnostics.length === 0);
+}
+
 function normalizeMaterialization(value: unknown, languageNodeIds: ReadonlySet<string>): FrameworkMaterialization {
   if (!isRecord(value) || !hasExactKeys(value, ["frameworkResolutionVersion", "entities", "relationships", "classifications", "diagnostics", "coverage", "config", "detections", "dependencies", "complete"])
     || !isBoundedString(value.frameworkResolutionVersion) || typeof value.complete !== "boolean") throw new TypeError("Invalid framework materialization");
@@ -439,7 +548,7 @@ function normalizeMaterialization(value: unknown, languageNodeIds: ReadonlySet<s
   const coverage = dedupeRecords((value.coverage as unknown[]).map(normalizeCoverage), (record) => stableJson([record.framework, record.capability, record.relativePath, record.strategy, record.outputKind, record.kind]), "coverage");
   const config = dedupeRecords((value.config as unknown[]).map(normalizeConfig), (record) => stableJson([record.relativePath, record.scope, record.inputKey, record.kind]), "config");
   const detections = dedupeRecords((value.detections as unknown[]).map(normalizeDetection), (record) => stableJson([record.framework, record.scope]), "detections");
-  const dependencies = dedupeRecords((value.dependencies as unknown[]).map(normalizeDependency), (record) => stableJson([record.framework, record.scope, record.ownerPath]), "dependencies");
+  const dependencies = dedupeRecords((value.dependencies as unknown[]).map(normalizeDependency), (record) => stableJson([record.framework, record.scope, record.ownerPath, ...(record.framework === "react" ? record.lookupKeys : [])]), "dependencies");
   const result: FrameworkMaterialization = { frameworkResolutionVersion: value.frameworkResolutionVersion, entities, relationships, classifications, diagnostics, coverage, config, detections, dependencies, complete: value.complete };
   stableJson(result, MAX_FRAMEWORK_STATE_JSON_LENGTH);
   return result;
@@ -1493,6 +1602,16 @@ export class AtlasStore {
     return this.loadReliabilityContributions(repositoryId);
   }
 
+  assertCandidateFrameworkComplete(repositoryId: string, generationId: string, expectedVersion: string): void {
+    const frameworkState = this.database.prepare(
+      "SELECT framework_resolution_version, complete FROM generation_framework_state WHERE repository_id = ? AND generation_id = ?",
+    ).get(repositoryId, generationId) as { framework_resolution_version: string; complete: number } | undefined;
+    const snapshot = this.loadFrameworkInternal(repositoryId, generationId);
+    if (!frameworkState || frameworkState.framework_resolution_version !== expectedVersion || !snapshot || !canPublishFramework(snapshot)) {
+      throw new Error(`Candidate framework materialization is incomplete: ${incompleteFrameworkContext(snapshot)}`);
+    }
+  }
+
   publishCandidateGeneration(generationId: string, options: {
     requireGraph?: boolean;
     requireLexical?: boolean;
@@ -1519,12 +1638,7 @@ export class AtlasStore {
       const versions = JSON.parse(generation.versions_json) as IndexVersionDomains;
       if (versions.frameworkResolutionVersion) {
         if (options.frameworkStaged !== true) throw new Error("Candidate framework materialization is missing");
-        const frameworkState = this.database.prepare(
-          "SELECT framework_resolution_version, complete FROM generation_framework_state WHERE repository_id = ? AND generation_id = ?",
-        ).get(generation.repository_id, generationId) as { framework_resolution_version: string; complete: number } | undefined;
-        if (!frameworkState || frameworkState.complete !== 1 || frameworkState.framework_resolution_version !== versions.frameworkResolutionVersion) {
-          throw new Error("Candidate framework materialization is incomplete");
-        }
+        this.assertCandidateFrameworkComplete(generation.repository_id, generationId, versions.frameworkResolutionVersion);
       }
       if (versions.reliabilityVersion && options.reliabilityStaged !== true && options.frameworkStaged !== true) {
         throw new Error("Candidate reliability contributions are missing");

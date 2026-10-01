@@ -185,7 +185,7 @@ export interface FrameworkConfigFact {
   relativePath: string;
   scope: string;
   inputKey: string;
-  kind: "package" | "next" | "maven" | "gradle" | "pubspec";
+  kind: "package" | "tsconfig" | "jsconfig" | "next" | "maven" | "gradle" | "pubspec";
   values: Readonly<Record<string, FrameworkConfigValue>>;
   complete: boolean;
 }

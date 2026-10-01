@@ -76,6 +76,7 @@ const details: Record<string, string[]> = {
     "Options:",
     "  --skip-git         Use filesystem scanning instead of Git change detection",
     "  --json             Print machine-readable output",
+    "  --diagnostic-timings Print bounded index phase timings to stderr",
     "",
     "Example: code-atlas index .",
   ],
@@ -88,6 +89,7 @@ const details: Record<string, string[]> = {
     "  --skip-git         Use filesystem scanning instead of Git change detection",
     "  --quiet            Suppress human progress and summary output",
     "  --json             Print machine-readable output",
+    "  --diagnostic-timings Print bounded index phase timings to stderr",
   ],
   status: [
     "Usage: code-atlas status [path] [options]",
