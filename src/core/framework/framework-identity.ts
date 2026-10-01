@@ -22,6 +22,7 @@ const RELATION_KINDS: readonly FrameworkRelationKind[] = [
   "route_binding",
   "layout_binding",
   "controller_route",
+  "graphql_resolver",
   "module_provider",
   "dependency_injection",
   "bean_relationship",
@@ -104,12 +105,31 @@ function isCanonicalLogicalKey(value: unknown, framework: FrameworkId): value is
     && JSON.stringify(parsed) === value;
 }
 
+function isCanonicalGraphqlOperationKey(value: unknown): value is string {
+  if (!isNonEmptyString(value)) return false;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed)
+      && parsed.length === 3
+      && isCanonicalRelativePath(parsed[0])
+      && (parsed[1] === "query" || parsed[1] === "mutation")
+      && typeof parsed[2] === "string"
+      && /^[_A-Za-z][_0-9A-Za-z]*$/.test(parsed[2])
+      && JSON.stringify(parsed) === value;
+  } catch {
+    return false;
+  }
+}
+
 function isFrameworkEntityRef(value: unknown): value is FrameworkEntityRef {
   return isRecord(value)
     && hasOnlyKeys(value, ["framework", "kind", "logicalKey"])
     && FRAMEWORK_IDS.includes(value.framework as FrameworkId)
-    && (value.kind === "route" || value.kind === "layout")
-    && isCanonicalLogicalKey(value.logicalKey, value.framework as FrameworkId);
+    && ((value.kind === "graphql_operation"
+      && (value.framework === "nestjs" || value.framework === "spring")
+      && isCanonicalGraphqlOperationKey(value.logicalKey))
+      || ((value.kind === "route" || value.kind === "layout")
+        && isCanonicalLogicalKey(value.logicalKey, value.framework as FrameworkId)));
 }
 
 function isSubjectRef(value: unknown): value is FrameworkSubjectRef {
@@ -219,6 +239,18 @@ export function decodeFrameworkRouteIdentity(ref: FrameworkEntityRef): Framework
   }
 }
 
+export type FrameworkGraphqlOperationIdentity = readonly [scope: string, operationKind: "query" | "mutation", fieldName: string];
+
+export function decodeFrameworkGraphqlOperationIdentity(ref: FrameworkEntityRef): FrameworkGraphqlOperationIdentity | undefined {
+  if (ref.kind !== "graphql_operation") return undefined;
+  try {
+    frameworkEntityKey(ref);
+    return JSON.parse(ref.logicalKey) as FrameworkGraphqlOperationIdentity;
+  } catch {
+    return undefined;
+  }
+}
+
 export function frameworkSubjectKey(ref: FrameworkSubjectRef): string {
   if (!isSubjectRef(ref)) throw new TypeError("Invalid framework subject reference");
   return ref.kind === "language"
@@ -235,6 +267,11 @@ export function decodeFrameworkAcceptedOutput(payload: unknown): FrameworkAccept
       && isSubjectRef(value.source)
       && isSubjectRef(value.target)
       && RELATION_KINDS.includes(value.relationKind as FrameworkRelationKind)
+      && (value.relationKind !== "graphql_resolver"
+        || (value.source.kind === "language"
+          && value.target.kind === "framework"
+          && value.target.entity.kind === "graphql_operation"
+          && value.target.entity.framework === value.provenance.framework))
       ? value as unknown as FrameworkAcceptedOutput
       : undefined;
   }

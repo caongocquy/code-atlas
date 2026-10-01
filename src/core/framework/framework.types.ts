@@ -6,7 +6,7 @@ import type { CodeGraph } from "../graph/types.js";
 
 export type FrameworkId = "react" | "next" | "nestjs" | "spring" | "flutter";
 
-export type FrameworkEntityKind = "route" | "layout";
+export type FrameworkEntityKind = "route" | "layout" | "graphql_operation";
 
 export interface FrameworkEntityRef {
   framework: FrameworkId;
@@ -23,6 +23,7 @@ export type FrameworkRelationKind =
   | "route_binding"
   | "layout_binding"
   | "controller_route"
+  | "graphql_resolver"
   | "module_provider"
   | "dependency_injection"
   | "bean_relationship"
@@ -260,7 +261,7 @@ export interface FrameworkCanonicalRoute {
   framework: FrameworkId;
   scope: string;
   router: string;
-  kind: FrameworkEntityKind;
+  kind: "route" | "layout";
   path: string;
   method: string | null;
   conditions: readonly string[];

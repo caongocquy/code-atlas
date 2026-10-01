@@ -132,6 +132,7 @@ const FRAMEWORK_RELATION_KINDS: readonly FrameworkRelationship["relationKind"][]
   "route_binding",
   "layout_binding",
   "controller_route",
+  "graphql_resolver",
   "module_provider",
   "dependency_injection",
   "bean_relationship",

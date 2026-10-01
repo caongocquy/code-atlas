@@ -988,13 +988,14 @@ export function createMcpServer(): McpServer {
     owner: z.string().min(1).nullable().optional(),
     conditions: z.array(z.string()).optional(),
   }).strict();
-  registerJsonTool(server, "execution_flow", "Discover bounded downstream calls from a symbol or framework route; unlike trace, this does not require a target endpoint.", z.object({
+  const executionFlowGraphql = z.object({ kind: z.literal("graphql"), id: z.string().min(1) }).strict();
+  registerJsonTool(server, "execution_flow", "Discover bounded downstream calls from a symbol or framework route, or a declared GraphQL operation; unlike trace, this does not require a target endpoint.", z.object({
     ...commonInput,
-    entry: z.union([queryInput, executionFlowRoute]).describe("A symbol query string or an exact framework route selector. Route selectors can include scope, router, owner, and conditions to disambiguate."),
+    entry: z.union([queryInput, executionFlowRoute, executionFlowGraphql]).describe("A symbol query, exact framework route selector, or GraphQL operation ID returned by list_entries."),
     maxDepth: z.number().int().min(0).max(32).describe("Bound call traversal depth.").optional(),
-    maxNodes: z.number().int().min(1).max(MAX_LIMIT).describe("Bound flow nodes, including a framework route entry when present; limit is accepted as an alias.").optional(),
+    maxNodes: z.number().int().min(1).max(MAX_LIMIT).describe("Bound flow nodes, including a framework entry when present; limit is accepted as an alias.").optional(),
   }).strict(), async (args) => withGraph(resolveRepo(args.repoPath as string | undefined), async (context) => {
-    const rawEntry = args.entry as string | { kind: "route"; framework: "nestjs" | "spring" | "next"; path: string; method?: string | null; scope?: string; router?: string; owner?: string | null; conditions?: string[] };
+    const rawEntry = args.entry as string | { kind: "route"; framework: "nestjs" | "spring" | "next"; path: string; method?: string | null; scope?: string; router?: string; owner?: string | null; conditions?: string[] } | { kind: "graphql"; id: string };
     const entry = typeof rawEntry === "string" ? { kind: "symbol" as const, query: rawEntry } : rawEntry;
     const detail = args.detail as McpDetail | undefined;
     const result = discoverExecutionFlow(context.graph, context.framework, entry, {
@@ -1051,9 +1052,9 @@ export function createMcpServer(): McpServer {
     return { ...projected, evidenceState: context.evidenceState };
   }));
 
-  registerJsonTool(server, "list_entries", "List verified framework entry boundaries. NestJS and Spring HTTP routes have callable bindings; Next web routes are file boundaries, not verified callable HTTP handlers.", z.object({
+  registerJsonTool(server, "list_entries", "List framework entries. NestJS and Spring HTTP routes have callable bindings; Next web routes are file boundaries; GraphQL Query/Mutation entries are declared resolver mappings with unverified schema exposure.", z.object({
     ...commonInput,
-    kind: z.enum(["http", "web_route"]).describe("Exact entry kind.").optional(),
+    kind: z.enum(["http", "web_route", "graphql"]).describe("Exact entry kind.").optional(),
     framework: z.enum(["nestjs", "spring", "next"]).describe("Exact framework.").optional(),
     path: z.string().min(1).describe("Exact route path.").optional(),
     method: z.string().min(1).describe("Exact HTTP method, normalized to uppercase; Next file boundaries have no method.").optional(),

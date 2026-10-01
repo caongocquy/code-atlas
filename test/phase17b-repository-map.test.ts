@@ -115,6 +115,22 @@ test("NestJS, Spring, and Next file-route entry facets follow touched language n
   assert.equal(map.areas.find((area) => area.id === "next")?.representativeSymbols.length, 0);
 });
 
+test("repository_map entry count remains the Phase17B route/file-bound count when GraphQL mappings are present", () => {
+  const graph: CodeGraph = { nodes: [node("resolver", "src/nest/resolver.ts", "method")], edges: [] };
+  const routeBinding = route("nestjs", "resolver", "controller_route");
+  const graphqlBinding: FrameworkRelationship = {
+    ...routeBinding,
+    relationKind: "graphql_resolver",
+    target: { kind: "framework", entity: { framework: "nestjs", kind: "graphql_operation", logicalKey: JSON.stringify(["root", "query", "users"]) } },
+    provenance: { ...routeBinding.provenance, capability: "nestjs.graphql" },
+  };
+  const groupPolicy = policy([{ id: "nest", include: ["src/nest/**"] }]);
+  const graphqlOnly = buildRepositoryMap(graph, groupPolicy, frameworkFixture(graph, [graphqlBinding]));
+  const withRoute = buildRepositoryMap(graph, groupPolicy, frameworkFixture(graph, [graphqlBinding, routeBinding]));
+  assert.deepEqual(graphqlOnly.areas.map((area) => [area.frameworkIds, area.executionEntryBindingCount]), [[["nestjs"], 0]]);
+  assert.deepEqual(withRoute.areas.map((area) => area.executionEntryBindingCount), [1]);
+});
+
 test("framework reliability and incomplete evidence propagate to map coverage", () => {
   const graph: CodeGraph = { nodes: [node("controller", "src/nest/controller.ts", "class")], edges: [] };
   const framework = frameworkFixture(graph, [route("nestjs", "controller", "controller_route")], true);

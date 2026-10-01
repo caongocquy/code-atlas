@@ -23,7 +23,7 @@ export type FrameworkRouteSelector = {
   conditions?: string[];
 };
 
-export type ExecutionFlowEntry = { kind: "symbol"; query: string } | FrameworkRouteSelector;
+export type ExecutionFlowEntry = { kind: "symbol"; query: string } | FrameworkRouteSelector | { kind: "graphql"; id: string };
 
 export type ExecutionFlowSubject =
   | { kind: "language"; node: GraphNode }
@@ -40,7 +40,7 @@ export type ExecutionFlowEdge =
       kind: "framework_entry";
       from: string;
       to: string;
-      relation: "controller_route" | "route_binding";
+      relation: "controller_route" | "route_binding" | "graphql_resolver";
       provenance: FrameworkProvenance;
     }
   | {
@@ -51,7 +51,7 @@ export type ExecutionFlowEdge =
     };
 
 export type ExecutionFlowDiagnostic = {
-  code: "entry_not_callable" | "route_binding_missing" | "file_bound_route" | "call_target_missing";
+  code: "entry_not_callable" | "route_binding_missing" | "graphql_binding_missing" | "schema_unverified" | "file_bound_route" | "call_target_missing";
   message: string;
   subjectId?: string;
 };
@@ -65,12 +65,13 @@ export type ExecutionFlowCycle = {
 export type ExecutionFlowResolution =
   | { kind: "symbol"; value: GraphEntityResolution }
   | { kind: "route"; status: "resolved"; query: string; entity: FrameworkEntity }
+  | { kind: "graphql"; status: "resolved"; query: string; entity: FrameworkEntity }
   | {
-      kind: "route";
+      kind: "route" | "graphql";
       status: "ambiguous" | "not_found";
       query: string;
       candidates: Array<FrameworkEntity | GraphNode>;
-      reason: "route_identity" | "route_binding" | "framework_unavailable";
+      reason: "route_identity" | "route_binding" | "graphql_identity" | "graphql_binding" | "framework_unavailable";
     };
 
 export type ExecutionFlowResult = {
@@ -144,13 +145,13 @@ function routeMatches(entity: FrameworkEntity, selector: FrameworkRouteSelector)
 }
 
 function baseResult(entry: ExecutionFlowEntry, limits: ExecutionFlowResult["limits"], mayBeIncomplete: boolean, framework?: FrameworkQueryProjection): ExecutionFlowResult {
-  const query = entry.kind === "symbol" ? entry.query : entry.path;
+  const query = entry.kind === "symbol" ? entry.query : entry.kind === "graphql" ? entry.id : entry.path;
   return {
     status: "not_found",
     entry,
     resolution: entry.kind === "symbol"
       ? { kind: "symbol", value: { status: "not_found", query, candidates: [] } }
-      : { kind: "route", status: "not_found", query, candidates: [], reason: framework ? "route_identity" : "framework_unavailable" },
+      : { kind: entry.kind, status: "not_found", query, candidates: [], reason: framework ? entry.kind === "graphql" ? "graphql_identity" : "route_identity" : "framework_unavailable" },
     roots: [], nodes: [], edges: [], terminals: [], cycles: [], limits,
     truncated: false, truncatedBy: [], knownOmittedNodes: 0,
     mayBeIncomplete: mayBeIncomplete || framework?.mayBeIncomplete === true,
@@ -159,13 +160,13 @@ function baseResult(entry: ExecutionFlowEntry, limits: ExecutionFlowResult["limi
   };
 }
 
-function routeRelationships(framework: FrameworkQueryProjection, route: FrameworkEntity) {
+function entryRelationships(framework: FrameworkQueryProjection, route: FrameworkEntity) {
   const routeKey = frameworkSubjectKey({ kind: "framework", entity: route.ref });
   return framework.edges.flatMap((item) => {
     if (item.kind !== "framework" || item.relationship.target.kind !== "framework"
       || frameworkSubjectKey(item.relationship.target) !== routeKey) return [];
     const relation = item.relationship;
-    if (relation.relationKind !== "controller_route" && relation.relationKind !== "route_binding") return [];
+    if (relation.relationKind !== "controller_route" && relation.relationKind !== "route_binding" && relation.relationKind !== "graphql_resolver") return [];
     if (relation.source.kind !== "language") return [];
     return [{ relation, nodeId: relation.source.nodeId }];
   }).sort((left, right) => left.relation.relationKind.localeCompare(right.relation.relationKind)
@@ -315,28 +316,40 @@ export function discoverExecutionFlow(
   }
 
   if (!framework) return unresolved(result, "not_found", result.resolution, true);
-  const routeMatchesFound = framework.nodes.flatMap((item) => item.kind === "framework" && routeMatches(item.entity, entry) ? [item.entity] : [])
+  const routeMatchesFound = framework.nodes.flatMap((item) => item.kind === "framework" && (entry.kind === "graphql"
+    ? item.entity.ref.kind === "graphql_operation" && frameworkEntityKey(item.entity.ref) === entry.id
+    : routeMatches(item.entity, entry)) ? [item.entity] : [])
     .sort((left, right) => frameworkEntityKey(left.ref).localeCompare(frameworkEntityKey(right.ref)));
-  if (routeMatchesFound.length === 0) return unresolved(result, "not_found", { kind: "route", status: "not_found", query: entry.path, candidates: [], reason: "route_identity" });
-  if (routeMatchesFound.length > 1) return unresolved(result, "ambiguous", { kind: "route", status: "ambiguous", query: entry.path, candidates: routeMatchesFound, reason: "route_identity" });
+  const query = entry.kind === "graphql" ? entry.id : entry.path;
+  const identityReason = entry.kind === "graphql" ? "graphql_identity" : "route_identity";
+  const bindingReason = entry.kind === "graphql" ? "graphql_binding" : "route_binding";
+  if (routeMatchesFound.length === 0) return unresolved(result, "not_found", { kind: entry.kind, status: "not_found", query, candidates: [], reason: identityReason });
+  if (routeMatchesFound.length > 1) return unresolved(result, "ambiguous", { kind: entry.kind, status: "ambiguous", query, candidates: routeMatchesFound, reason: identityReason });
 
   const route = routeMatchesFound[0]!;
   result.status = "resolved";
-  result.resolution = { kind: "route", status: "resolved", query: entry.path, entity: route };
+  result.resolution = { kind: entry.kind, status: "resolved", query, entity: route };
+  if (entry.kind === "graphql") {
+    result.mayBeIncomplete = true;
+    result.diagnostics.push({ code: "schema_unverified", message: "Resolver mapping is declared in code; GraphQL schema exposure is unverified." });
+  }
   const routeId = addRoot(result, { kind: "framework", entity: route });
   const graphNodeById = new Map(graph.nodes.map((node) => [node.id, node]));
-  const bindings = routeRelationships(framework, route).filter(({ relation, nodeId }) => {
+  const bindings = entryRelationships(framework, route).filter(({ relation, nodeId }) => {
     const node = graphNodeById.get(nodeId);
     if (!node) return false;
+    if (entry.kind === "graphql") return relation.relationKind === "graphql_resolver" && (node.type === "function" || node.type === "method");
     if (relation.relationKind === "controller_route") return (entry.framework === "nestjs" || entry.framework === "spring") && (node.type === "function" || node.type === "method");
-    return entry.framework === "next" && node.type === "file";
+    return relation.relationKind === "route_binding" && entry.framework === "next" && node.type === "file";
   });
   const boundIds = [...new Set(bindings.map((binding) => binding.nodeId))].sort((left, right) => languageNodeKey(graphNodeById.get(left)!).localeCompare(languageNodeKey(graphNodeById.get(right)!)));
   if (boundIds.length > 1) {
-    return unresolved(result, "ambiguous", { kind: "route", status: "ambiguous", query: entry.path, candidates: boundIds.map((id) => graphNodeById.get(id)!), reason: "route_binding" }, true);
+    return unresolved(result, "ambiguous", { kind: entry.kind, status: "ambiguous", query, candidates: boundIds.map((id) => graphNodeById.get(id)!), reason: bindingReason }, true);
   }
   if (boundIds.length === 0) {
-    result.diagnostics.push({ code: "route_binding_missing", message: "Framework route has no unique callable controller binding or supported file boundary." });
+    result.diagnostics.push(entry.kind === "graphql"
+      ? { code: "graphql_binding_missing", message: "GraphQL operation has no unique callable resolver binding." }
+      : { code: "route_binding_missing", message: "Framework route has no unique callable controller binding or supported file boundary." });
     result.mayBeIncomplete = true;
     result.terminals.push({ nodeId: routeId, reason: "no_calls" });
     return result;
@@ -358,7 +371,7 @@ export function discoverExecutionFlow(
     kind: "framework_entry",
     from: routeId,
     to: subjectId,
-    relation: binding.relation.relationKind as "controller_route" | "route_binding",
+    relation: binding.relation.relationKind as "controller_route" | "route_binding" | "graphql_resolver",
     provenance: binding.relation.provenance,
   });
   if (bound.type === "file") {
