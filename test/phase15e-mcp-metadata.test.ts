@@ -40,6 +40,7 @@ const expectedAnnotations = {
   list_communities: [true, false, true, false],
   repository_map: [true, false, true, false],
   list_entries: [true, false, true, false],
+  message_links: [true, false, true, false],
   get_community: [true, false, true, false],
   important_symbols: [true, false, true, false],
   architectural_bridges: [true, false, true, false],
@@ -58,7 +59,7 @@ test("MCP tools/list exposes truthful local safety annotations", async () => {
   const { client, server } = await connectedClient();
   try {
     const result = await client.listTools();
-    assert.equal(result.tools.length, 37);
+    assert.equal(result.tools.length, 38);
     const tools = new Map(result.tools.map((tool) => [tool.name, tool]));
     assert.deepEqual([...tools.keys()].sort(), Object.keys(expectedAnnotations).sort());
 

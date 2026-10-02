@@ -24,6 +24,7 @@ import type {
   LexicalFileUpdate,
   LexicalSearchRow,
   FrameworkQueryInputs,
+  AtlasMessageGraphQueryInputs,
 } from "./atlas.types.js";
 import {
   decodeFrameworkAcceptedOutput,
@@ -1155,6 +1156,102 @@ export class AtlasStore {
         graph: this.loadGraphInternal(repositoryId),
         framework,
         reliability: this.loadReliabilityInputs(repositoryId),
+      };
+    });
+  }
+
+  loadMessageGraphQueryInputs(repositoryId: string): AtlasMessageGraphQueryInputs {
+    return this.readTransaction(() => {
+      const generationId = this.getActiveGenerationId(repositoryId);
+      if (!generationId) {
+        return {
+          graph: { nodes: [], edges: [] },
+          framework: undefined,
+          reliability: [],
+          sourceFacts: [],
+          factDiagnostics: [{ code: "generation_unavailable" }],
+        };
+      }
+
+      const factDiagnostics: AtlasMessageGraphQueryInputs["factDiagnostics"] = [];
+      let generationManifest: IndexManifest | undefined;
+      try {
+        generationManifest = this.getGenerationManifestById(generationId);
+      } catch {
+        factDiagnostics.push({ code: "generation_manifest_invalid" });
+      }
+
+      const sourceFacts: AtlasMessageGraphQueryInputs["sourceFacts"] = [];
+      if (!generationManifest) {
+        factDiagnostics.push({ code: "generation_manifest_unavailable" });
+      } else if (generationManifest.generationId !== generationId) {
+        factDiagnostics.push({ code: "generation_manifest_mismatch" });
+      } else if (
+        !Array.isArray(generationManifest.files)
+        || !generationManifest.versions
+        || typeof generationManifest.versions.factsVersion !== "string"
+        || typeof generationManifest.versions.factsSchemaVersion !== "string"
+      ) {
+        factDiagnostics.push({ code: "generation_manifest_invalid" });
+      } else {
+        const pathCounts = new Map<string, number>();
+        for (const binding of generationManifest.files) {
+          if (typeof binding.relativePath === "string") {
+            pathCounts.set(binding.relativePath, (pathCounts.get(binding.relativePath) ?? 0) + 1);
+          }
+        }
+        for (const binding of generationManifest.files) {
+          const file = binding.relativePath;
+          const normalizedPath = typeof file === "string" ? path.posix.normalize(file) : "";
+          if (
+            binding.repositoryId !== repositoryId
+            || binding.generationId !== generationId
+            || typeof file !== "string"
+            || !file
+            || file.includes("\\")
+            || path.posix.isAbsolute(file)
+            || normalizedPath !== file
+            || normalizedPath === "."
+            || normalizedPath === ".."
+            || normalizedPath.startsWith("../")
+            || (pathCounts.get(file) ?? 0) !== 1
+          ) {
+            factDiagnostics.push({ file, code: "fact_binding_invalid" });
+            continue;
+          }
+
+          const payload = this.getFactBlob(binding.factBlobKey);
+          if (!payload) {
+            factDiagnostics.push({ file, code: "fact_blob_unavailable" });
+            continue;
+          }
+          try {
+            const facts = JSON.parse(payload) as ParsedFactsBlob;
+            if (
+              facts.contentHash !== binding.contentHash
+              || facts.language !== binding.language
+              || facts.factsVersion !== generationManifest.versions.factsVersion
+              || facts.factsSchemaVersion !== generationManifest.versions.factsSchemaVersion
+              || factBlobKey(facts) !== binding.factBlobKey
+            ) {
+              factDiagnostics.push({ file, code: "fact_provenance_mismatch" });
+              continue;
+            }
+            sourceFacts.push({ relativePath: file, facts });
+          } catch {
+            factDiagnostics.push({ file, code: "fact_blob_invalid" });
+          }
+        }
+      }
+
+      return {
+        generationId,
+        graph: this.loadGenerationGraph(repositoryId, generationId),
+        framework: this.loadFrameworkInternal(repositoryId, generationId),
+        reliability: this.loadReliabilityContributions(repositoryId, generationId),
+        sourceFacts,
+        factDiagnostics,
+        ...(generationManifest ? { generationManifest } : {}),
       };
     });
   }
