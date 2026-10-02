@@ -1,4 +1,5 @@
 import { collectScheduledEvidence } from "../framework-scheduled.js";
+import { collectMessageConsumerEvidence } from "../framework-message.js";
 import path from "node:path";
 import type { ParsedFactsBlob } from "../../facts/facts.types.js";
 import type { SyntaxObservation } from "../../facts/objective-syntax.types.js";
@@ -20,6 +21,21 @@ export function canonicalizeNestRoute(input: FrameworkCanonicalRoute): Framework
 const literal = (node: { kind: string; value?: string | number | boolean | null; name?: string } | undefined): string | undefined =>
   node?.kind === "literal" && typeof node.value === "string" ? node.value : undefined;
 
+function isConstructorParameter(facts: ParsedFactsBlob, ownerId: string | undefined): boolean | undefined {
+  if (!Array.isArray(facts.symbols) || !Array.isArray(facts.containmentScopes)) return undefined;
+  const method = facts.symbols.find((item) => item.localId === ownerId && item.kind === "method");
+  if (!method) return undefined;
+  const scopes = new Map(facts.containmentScopes.map((scope) => [scope.localId, scope]));
+  let scopeId = method.scopeId;
+  let className: string | undefined;
+  while (scopeId) {
+    const type = facts.symbols.find((item) => item.kind === "class" && item.scopeId === scopeId);
+    if (type) { className = type.name; break; }
+    scopeId = scopes.get(scopeId)?.parentId;
+  }
+  return method.name === "constructor" || (facts.language === "java" && method.name === className);
+}
+
 function detect(ctx: Parameters<FrameworkSemanticAdapter["detect"]>[0]): readonly DetectionResult[] {
   const configured = ctx.config.some((item) => item.kind === "package" && (Object.hasOwn(item.values, "@nestjs/common") || Object.hasOwn(item.values, "@nestjs/schedule")));
   const observed = ctx.facts.some((item) => item.facts.imports.some((value) => value.moduleSpecifier === "@nestjs/common" || value.moduleSpecifier.startsWith("@nestjs/")));
@@ -28,12 +44,17 @@ function detect(ctx: Parameters<FrameworkSemanticAdapter["detect"]>[0]): readonl
     || ctx.facts.some((item) => item.facts.imports.some((value) => value.moduleSpecifier === "@nestjs/graphql"));
   const annotations = ctx.facts.flatMap((item) => item.facts.frameworkSyntax?.nodes.filter((node) => node.kind === "annotation").map((node) => node.name) ?? []);
   const scheduling = ctx.facts.some((item) => item.facts.imports.some((value) => value.moduleSpecifier === "@nestjs/schedule")) || ctx.config.some((item) => item.kind === "package" && Object.hasOwn(item.values, "@nestjs/schedule"));
+  const messagingPackage = ctx.config.some((item) => item.kind === "package" && Object.hasOwn(item.values, "@nestjs/microservices"));
+  const messagePattern = messagingPackage || ctx.facts.some((item) => item.facts.imports.some((value) => value.moduleSpecifier === "@nestjs/microservices" && value.importedName === "MessagePattern"));
+  const eventPattern = messagingPackage || ctx.facts.some((item) => item.facts.imports.some((value) => value.moduleSpecifier === "@nestjs/microservices" && value.importedName === "EventPattern"));
   const capabilities = [
     ...(["Get", "Post", "Put", "Patch", "Delete", "Options", "Head", "All"].some((name) => annotations.includes(name)) ? ["nestjs.routes"] : []),
     ...(annotations.includes("Module") ? ["nestjs.modules"] : []),
-    ...(ctx.facts.some((item) => item.facts.parameters?.some((parameter) => !!parameter.typeText)) ? ["nestjs.injection"] : []),
+    ...(ctx.facts.some((item) => item.facts.parameters?.some((parameter) => !!parameter.typeText && isConstructorParameter(item.facts, parameter.ownerSymbolId) !== false)) ? ["nestjs.injection"] : []),
     ...(graphql ? ["nestjs.graphql"] : []),
     ...(scheduling ? ["nestjs.schedule"] : []),
+    ...(messagePattern ? ["nestjs.message_pattern"] : []),
+    ...(eventPattern ? ["nestjs.event_pattern"] : []),
   ];
   const refs = ctx.config.filter((item) => item.kind === "package").map((item) => ({ relativePath: item.relativePath, inputKey: item.inputKey }));
   return [{ framework: "nestjs", scope: "root", configured, observed, capabilities, refs, complete: ctx.config.every((item) => item.complete) }];
@@ -117,9 +138,9 @@ function resolverParent(ctx: FrameworkAnalysisContext, relativePath: string, fac
 }
 
 export const nestjsAdapter: FrameworkSemanticAdapter = {
-  id: "nestjs", version: "1.3.0", frameworks: ["nestjs"], detect,
+  id: "nestjs", version: "1.4.0", frameworks: ["nestjs"], detect,
   analyze: (ctx: FrameworkAnalysisContext): { evidence: readonly FrameworkEvidence[]; dependencies: readonly { framework: "nestjs"; scope: string; ownerPath: string; inputKeys: readonly string[]; lookupKeys: readonly string[]; complete: boolean }[] } => {
-    const evidence: FrameworkEvidence[] = collectScheduledEvidence(ctx, "nestjs");
+    const evidence: FrameworkEvidence[] = [...collectScheduledEvidence(ctx, "nestjs"), ...collectMessageConsumerEvidence(ctx, "nestjs")];
     const dependencies: { framework: "nestjs"; scope: string; ownerPath: string; inputKeys: readonly string[]; lookupKeys: readonly string[]; complete: boolean }[] = [];
     for (const materialized of ctx.facts) {
       if (!materialized.facts.imports.some((item) => item.moduleSpecifier === "@nestjs/common" || item.moduleSpecifier.startsWith("@nestjs/"))) continue;
@@ -144,7 +165,7 @@ export const nestjsAdapter: FrameworkSemanticAdapter = {
         if (!operationKind) {
           const imported = materialized.facts.imports.find((item) => item.localName === annotation.name && item.moduleSpecifier === "@nestjs/graphql");
           if (imported?.kind === "namespace" || ["Query", "Mutation", "Subscription", "ResolveField"].includes(imported?.importedName ?? "")) {
-            graphqlEvidence.push({ evidenceId: `nestjs-graphql:${materialized.relativePath}:${annotation.id}`, framework: "nestjs", adapterId: "nestjs", adapterVersion: "1.3.0",
+            graphqlEvidence.push({ evidenceId: `nestjs-graphql:${materialized.relativePath}:${annotation.id}`, framework: "nestjs", adapterId: "nestjs", adapterVersion: "1.4.0",
               strategy: "resolver.import-unsupported", capability: "nestjs.graphql", relativePath: materialized.relativePath, origin: "framework_inferred", confidence: "exact",
               refs: [{ relativePath: materialized.relativePath, inputKey: `facts:${materialized.relativePath}`, localId: annotation.id, range: annotation.range }],
               entities: [], applicable: true, supported: false, attempted: true, state: "unsupported", outputKind: "relationship", relationKind: "graphql_resolver", sourceCandidates: [], targetCandidates: [] });
@@ -168,7 +189,7 @@ export const nestjsAdapter: FrameworkSemanticAdapter = {
         const refs = [{ relativePath: materialized.relativePath, inputKey: `facts:${materialized.relativePath}`, localId: annotation.id, range: annotation.range },
           ...resolverAnnotations.map((item) => ({ relativePath: materialized.relativePath, inputKey: `facts:${materialized.relativePath}`, localId: item.id, range: item.range })), ...(parent?.refs ?? [])];
         graphqlEvidence.push({
-          evidenceId: `nestjs-graphql:${materialized.relativePath}:${annotation.id}`, framework: "nestjs", adapterId: "nestjs", adapterVersion: "1.3.0",
+          evidenceId: `nestjs-graphql:${materialized.relativePath}:${annotation.id}`, framework: "nestjs", adapterId: "nestjs", adapterVersion: "1.4.0",
           strategy: operationKind === "field" ? "resolver.resolve-field" : operationKind === "subscription" ? "resolver.subscription" : "resolver.operation", capability: "nestjs.graphql", relativePath: materialized.relativePath, origin: "framework_inferred", confidence: "exact", refs,
           entities: accepted && ref && ownerClass ? [{ ref, displayName: `${operationKind}.${fieldName} (${ownerClass.qualifiedName ?? ownerClass.name})`, declarationKey: `graphql:${materialized.relativePath}:${annotation.id}`, confidence: "exact", refs }] : [],
           applicable: true, supported: true, attempted: true, state: accepted && owner ? "candidate" : "unknown",
@@ -194,7 +215,7 @@ export const nestjsAdapter: FrameworkSemanticAdapter = {
         const canonical = canonicalizeNestRoute({ framework: "nestjs", scope: "root", router: "http", kind: "route", path: routePath, method, conditions: [], owner: owner.qualifiedName ?? owner.name ?? null });
         if (canonical.kind !== "canonical" || !owner) continue;
         const entity = { ref: canonical.ref, displayName: canonical.ref.logicalKey, declarationKey: `route:${materialized.relativePath}:${annotation.id}`, confidence: "exact" as const, refs: [{ relativePath: materialized.relativePath, inputKey: `facts:${materialized.relativePath}`, localId: annotation.id, range: annotation.range }] };
-        evidence.push({ evidenceId: `nestjs-route:${materialized.relativePath}:${annotation.id}`, framework: "nestjs", adapterId: "nestjs", adapterVersion: "1.3.0", strategy: "controller-route", capability: "nestjs.routes", relativePath: materialized.relativePath, origin: "framework_inferred", confidence: "exact", refs: entity.refs, entities: [entity], applicable: true, supported: true, attempted: true, state: "candidate", outputKind: "relationship", relationKind: "controller_route", sourceCandidates: [{ kind: "language", nodeId: owner.id }], targetCandidates: [{ kind: "framework", entity: canonical.ref }] });
+        evidence.push({ evidenceId: `nestjs-route:${materialized.relativePath}:${annotation.id}`, framework: "nestjs", adapterId: "nestjs", adapterVersion: "1.4.0", strategy: "controller-route", capability: "nestjs.routes", relativePath: materialized.relativePath, origin: "framework_inferred", confidence: "exact", refs: entity.refs, entities: [entity], applicable: true, supported: true, attempted: true, state: "candidate", outputKind: "relationship", relationKind: "controller_route", sourceCandidates: [{ kind: "language", nodeId: owner.id }], targetCandidates: [{ kind: "framework", entity: canonical.ref }] });
       }
       const lookupKeys: string[] = [];
       const names = (id: string): string[] => {
@@ -216,16 +237,17 @@ export const nestjsAdapter: FrameworkSemanticAdapter = {
           lookupKeys.push(...targetNames.map((name) => `module:${property.name}:${name}`));
           for (const targetName of targetNames) {
             const targets = ctx.graph.nodes.filter((node) => node.type !== "file" && node.name === targetName).map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id }));
-            evidence.push({ evidenceId: `nestjs-module:${materialized.relativePath}:${annotation.id}:${property.name}:${targetName}`, framework: "nestjs", adapterId: "nestjs", adapterVersion: "1.3.0", strategy: `module.${property.name}`, capability: "nestjs.modules", relativePath: materialized.relativePath, origin: "framework_inferred", confidence: "exact", refs: [{ relativePath: materialized.relativePath, inputKey: `facts:${materialized.relativePath}`, localId: annotation.id, range: annotation.range }], entities: [], applicable: true, supported: true, attempted: true, state: "candidate", outputKind: "relationship", relationKind: property.name === "controllers" ? "module_provider" : property.name === "providers" ? "module_provider" : "module_provider", sourceCandidates: moduleOwner.map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id })), targetCandidates: targets });
+            evidence.push({ evidenceId: `nestjs-module:${materialized.relativePath}:${annotation.id}:${property.name}:${targetName}`, framework: "nestjs", adapterId: "nestjs", adapterVersion: "1.4.0", strategy: `module.${property.name}`, capability: "nestjs.modules", relativePath: materialized.relativePath, origin: "framework_inferred", confidence: "exact", refs: [{ relativePath: materialized.relativePath, inputKey: `facts:${materialized.relativePath}`, localId: annotation.id, range: annotation.range }], entities: [], applicable: true, supported: true, attempted: true, state: "candidate", outputKind: "relationship", relationKind: property.name === "controllers" ? "module_provider" : property.name === "providers" ? "module_provider" : "module_provider", sourceCandidates: moduleOwner.map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id })), targetCandidates: targets });
           }
         }
       }
       for (const parameter of materialized.facts.parameters ?? []) {
         if (!parameter.typeText || !parameter.ownerSymbolId) continue;
+        if (isConstructorParameter(materialized.facts, parameter.ownerSymbolId) === false) continue;
         const owners = graphNodes.filter((node) => node.id === parameter.ownerSymbolId);
         const providers = ctx.graph.nodes.filter((node) => node.type !== "file" && node.name === parameter.typeText);
         lookupKeys.push(`inject:${parameter.typeText}`);
-        evidence.push({ evidenceId: `nestjs-inject:${materialized.relativePath}:${parameter.localId}`, framework: "nestjs", adapterId: "nestjs", adapterVersion: "1.3.0", strategy: "constructor.type", capability: "nestjs.injection", relativePath: materialized.relativePath, origin: "framework_inferred", confidence: "exact", refs: [{ relativePath: materialized.relativePath, inputKey: `facts:${materialized.relativePath}`, localId: parameter.localId, range: parameter.range }], entities: [], applicable: true, supported: true, attempted: true, state: "candidate", outputKind: "relationship", relationKind: "dependency_injection", sourceCandidates: owners.map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id })), targetCandidates: providers.map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id })) });
+        evidence.push({ evidenceId: `nestjs-inject:${materialized.relativePath}:${parameter.localId}`, framework: "nestjs", adapterId: "nestjs", adapterVersion: "1.4.0", strategy: "constructor.type", capability: "nestjs.injection", relativePath: materialized.relativePath, origin: "framework_inferred", confidence: "exact", refs: [{ relativePath: materialized.relativePath, inputKey: `facts:${materialized.relativePath}`, localId: parameter.localId, range: parameter.range }], entities: [], applicable: true, supported: true, attempted: true, state: "candidate", outputKind: "relationship", relationKind: "dependency_injection", sourceCandidates: owners.map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id })), targetCandidates: providers.map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id })) });
       }
       evidence.push(...graphqlEvidence);
       dependencies.push({ framework: "nestjs", scope: "root", ownerPath: materialized.relativePath, inputKeys: [...new Set([`facts:${materialized.relativePath}`, ...graphqlEvidence.flatMap((item) => item.refs.map((ref) => ref.inputKey))])].sort(), lookupKeys: [...new Set(lookupKeys)].sort(), complete: syntax.complete });

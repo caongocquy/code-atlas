@@ -203,7 +203,7 @@ export function collectScheduledEvidence(ctx: FrameworkAnalysisContext, framewor
       const ownerClass = frameworkEnclosingClass(ctx, materialized.relativePath, facts, annotation.ownerSymbolId, owner);
       const callable = annotation.ownerSymbolId && callableKey(facts, materialized.relativePath, annotation.ownerSymbolId);
       const refs = [{ relativePath: materialized.relativePath, inputKey: `facts:${materialized.relativePath}`, localId: annotation.id, range: annotation.range }];
-      const base = { evidenceId: `${framework}-schedule:${materialized.relativePath}:${annotation.id}`, framework, adapterId: framework, adapterVersion: "1.3.0", capability: framework === "nestjs" ? "nestjs.schedule" : "spring.scheduling", relativePath: materialized.relativePath, origin: "framework_inferred" as const, confidence: "exact" as const, refs, applicable: true, attempted: true, outputKind: "relationship" as const, relationKind: "scheduled_handler" as const };
+      const base = { evidenceId: `${framework}-schedule:${materialized.relativePath}:${annotation.id}`, framework, adapterId: framework, adapterVersion: "1.4.0", capability: framework === "nestjs" ? "nestjs.schedule" : "spring.scheduling", relativePath: materialized.relativePath, origin: "framework_inferred" as const, confidence: "exact" as const, refs, applicable: true, attempted: true, outputKind: "relationship" as const, relationKind: "scheduled_handler" as const };
       if (unsupported) {
         evidence.push({ ...base, strategy: `schedule.${unsupported}`, scheduledUnsupportedReason: unsupported, supported: false, state: "unsupported", entities: [], sourceCandidates: [], targetCandidates: [] });
         continue;
