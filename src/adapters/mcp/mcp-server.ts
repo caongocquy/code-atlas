@@ -989,9 +989,9 @@ export function createMcpServer(): McpServer {
     conditions: z.array(z.string()).optional(),
   }).strict();
   const executionFlowGraphql = z.object({ kind: z.literal("graphql"), id: z.string().min(1) }).strict();
-  registerJsonTool(server, "execution_flow", "Discover bounded downstream calls from a symbol or framework route, or a declared GraphQL operation; unlike trace, this does not require a target endpoint.", z.object({
+  registerJsonTool(server, "execution_flow", "Discover bounded downstream calls from a symbol or framework route, or an exact GraphQL root operation or nested field mapping; unlike trace, this does not require a target endpoint.", z.object({
     ...commonInput,
-    entry: z.union([queryInput, executionFlowRoute, executionFlowGraphql]).describe("A symbol query, exact framework route selector, or GraphQL operation ID returned by list_entries."),
+    entry: z.union([queryInput, executionFlowRoute, executionFlowGraphql]).describe("A symbol query, exact framework route selector, or GraphQL entity ID. list_entries returns roots only; nested graphql_field IDs are available in framework intelligence."),
     maxDepth: z.number().int().min(0).max(32).describe("Bound call traversal depth.").optional(),
     maxNodes: z.number().int().min(1).max(MAX_LIMIT).describe("Bound flow nodes, including a framework entry when present; limit is accepted as an alias.").optional(),
   }).strict(), async (args) => withGraph(resolveRepo(args.repoPath as string | undefined), async (context) => {
@@ -1052,7 +1052,7 @@ export function createMcpServer(): McpServer {
     return { ...projected, evidenceState: context.evidenceState };
   }));
 
-  registerJsonTool(server, "list_entries", "List framework entries. NestJS and Spring HTTP routes have callable bindings; Next web routes are file boundaries; GraphQL Query/Mutation entries are declared resolver mappings with unverified schema exposure.", z.object({
+  registerJsonTool(server, "list_entries", "List framework entries. NestJS and Spring HTTP routes have callable bindings; Next web routes are file boundaries; GraphQL query/mutation/subscription roots are declared resolver mappings with unverified schema exposure. Nested fields are not external entries.", z.object({
     ...commonInput,
     kind: z.enum(["http", "web_route", "graphql"]).describe("Exact entry kind.").optional(),
     framework: z.enum(["nestjs", "spring", "next"]).describe("Exact framework.").optional(),

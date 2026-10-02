@@ -51,7 +51,7 @@ test("GraphQL key is canonical, kind-specific, stable across owner/location, and
   const route = { framework: "nestjs" as const, kind: "route" as const, logicalKey: JSON.stringify(["root", "http", "/users", "GET", [], null]) };
   assert.deepEqual(decodeFrameworkRouteIdentity(route), ["root", "http", "/users", "GET", [], null]);
   for (const key of [
-    ["root", "query"], ["/root", "query", "users"], ["root", "subscription", "users"],
+    ["root", "query"], ["/root", "query", "users"], ["root", "unsupported", "users"],
     ["root", "query", ""], ["root", "query", "bad-name"], ["root", "query", 1],
     ["root", "query", "users", "owner"],
   ]) assert.throws(() => frameworkEntityKey({ ...query, logicalKey: JSON.stringify(key) }));

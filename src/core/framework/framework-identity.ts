@@ -111,14 +111,25 @@ function isCanonicalGraphqlOperationKey(value: unknown): value is string {
     const parsed: unknown = JSON.parse(value);
     return Array.isArray(parsed)
       && parsed.length === 3
-      && isCanonicalRelativePath(parsed[0])
-      && (parsed[1] === "query" || parsed[1] === "mutation")
+      && isCanonicalRelativePath(parsed[0]) && parsed[0].trim() === parsed[0]
+      && (parsed[1] === "query" || parsed[1] === "mutation" || parsed[1] === "subscription")
       && typeof parsed[2] === "string"
       && /^[_A-Za-z][_0-9A-Za-z]*$/.test(parsed[2])
       && JSON.stringify(parsed) === value;
   } catch {
     return false;
   }
+}
+
+function isCanonicalGraphqlFieldKey(value: unknown): value is string {
+  if (!isNonEmptyString(value)) return false;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) && parsed.length === 3
+      && isCanonicalRelativePath(parsed[0]) && parsed[0].trim() === parsed[0]
+      && parsed.slice(1).every((item) => typeof item === "string" && /^[_A-Za-z][_0-9A-Za-z]*$/.test(item))
+      && JSON.stringify(parsed) === value;
+  } catch { return false; }
 }
 
 function isFrameworkEntityRef(value: unknown): value is FrameworkEntityRef {
@@ -128,6 +139,9 @@ function isFrameworkEntityRef(value: unknown): value is FrameworkEntityRef {
     && ((value.kind === "graphql_operation"
       && (value.framework === "nestjs" || value.framework === "spring")
       && isCanonicalGraphqlOperationKey(value.logicalKey))
+      || (value.kind === "graphql_field"
+        && (value.framework === "nestjs" || value.framework === "spring")
+        && isCanonicalGraphqlFieldKey(value.logicalKey))
       || ((value.kind === "route" || value.kind === "layout")
         && isCanonicalLogicalKey(value.logicalKey, value.framework as FrameworkId)));
 }
@@ -239,7 +253,8 @@ export function decodeFrameworkRouteIdentity(ref: FrameworkEntityRef): Framework
   }
 }
 
-export type FrameworkGraphqlOperationIdentity = readonly [scope: string, operationKind: "query" | "mutation", fieldName: string];
+export type FrameworkGraphqlOperationIdentity = readonly [scope: string, operationKind: "query" | "mutation" | "subscription", fieldName: string];
+export type FrameworkGraphqlFieldIdentity = readonly [scope: string, parentType: string, fieldName: string];
 
 export function decodeFrameworkGraphqlOperationIdentity(ref: FrameworkEntityRef): FrameworkGraphqlOperationIdentity | undefined {
   if (ref.kind !== "graphql_operation") return undefined;
@@ -249,6 +264,14 @@ export function decodeFrameworkGraphqlOperationIdentity(ref: FrameworkEntityRef)
   } catch {
     return undefined;
   }
+}
+
+export function decodeFrameworkGraphqlFieldIdentity(ref: FrameworkEntityRef): FrameworkGraphqlFieldIdentity | undefined {
+  if (ref.kind !== "graphql_field") return undefined;
+  try {
+    frameworkEntityKey(ref);
+    return JSON.parse(ref.logicalKey) as FrameworkGraphqlFieldIdentity;
+  } catch { return undefined; }
 }
 
 export function frameworkSubjectKey(ref: FrameworkSubjectRef): string {
@@ -270,7 +293,7 @@ export function decodeFrameworkAcceptedOutput(payload: unknown): FrameworkAccept
       && (value.relationKind !== "graphql_resolver"
         || (value.source.kind === "language"
           && value.target.kind === "framework"
-          && value.target.entity.kind === "graphql_operation"
+          && (value.target.entity.kind === "graphql_operation" || value.target.entity.kind === "graphql_field")
           && value.target.entity.framework === value.provenance.framework))
       ? value as unknown as FrameworkAcceptedOutput
       : undefined;

@@ -6,7 +6,7 @@ import type { CodeGraph } from "../graph/types.js";
 
 export type FrameworkId = "react" | "next" | "nestjs" | "spring" | "flutter";
 
-export type FrameworkEntityKind = "route" | "layout" | "graphql_operation";
+export type FrameworkEntityKind = "route" | "layout" | "graphql_operation" | "graphql_field";
 
 export interface FrameworkEntityRef {
   framework: FrameworkId;

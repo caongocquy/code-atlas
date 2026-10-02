@@ -33,7 +33,7 @@ export type RepositoryRouteEntry = RepositoryEntryBase & {
 export type RepositoryGraphqlEntry = RepositoryEntryBase & {
   kind: "graphql";
   framework: "nestjs" | "spring";
-  operationKind: "query" | "mutation";
+  operationKind: "query" | "mutation" | "subscription";
   fieldName: string;
   exposure: "declared_mapping";
 };

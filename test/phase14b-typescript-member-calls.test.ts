@@ -68,7 +68,7 @@ for (const [name, input] of [
 });
 
 test("resolution 1.1.0 re-resolves unchanged TypeScript facts without changing facts/framework domains", async () => {
-  assert.equal(RESOLUTION_VERSION, "1.2.0"); assert.equal(FACTS_VERSION, "3.1.0"); assert.equal(FACTS_SCHEMA_VERSION, "3.0.0"); assert.equal(FRAMEWORK_RESOLUTION_VERSION, "1.3.0");
+  assert.equal(RESOLUTION_VERSION, "1.2.0"); assert.equal(FACTS_VERSION, "3.1.0"); assert.equal(FACTS_SCHEMA_VERSION, "3.0.0"); assert.equal(FRAMEWORK_RESOLUTION_VERSION, "1.4.0");
   const { repoPath, loaded } = await indexedSource(source);
   try {
     const generationId = loaded.evidenceState.generationId;
@@ -102,7 +102,7 @@ test("accepted B1 Nest Query reaches Atlas list_entries and same-ID execution_fl
     const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"), { readOnly: true });
     try {
       const persisted = store.loadFramework(loaded.repoId, loaded.evidenceState.generationId);
-      assert.ok(persisted); assert.equal(persisted.frameworkResolutionVersion, "1.3.0");
+      assert.ok(persisted); assert.equal(persisted.frameworkResolutionVersion, FRAMEWORK_RESOLUTION_VERSION);
       assert.equal(persisted.entities.length, 1); assert.equal(persisted.relationships.length, 1);
     } finally { store.close(); }
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
