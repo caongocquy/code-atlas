@@ -23,7 +23,7 @@ export type FrameworkRouteSelector = {
   conditions?: string[];
 };
 
-export type ExecutionFlowEntry = { kind: "symbol"; query: string } | FrameworkRouteSelector | { kind: "graphql"; id: string };
+export type ExecutionFlowEntry = { kind: "symbol"; query: string } | FrameworkRouteSelector | { kind: "graphql"; id: string } | { kind: "scheduled"; id: string };
 
 export type ExecutionFlowSubject =
   | { kind: "language"; node: GraphNode }
@@ -40,7 +40,7 @@ export type ExecutionFlowEdge =
       kind: "framework_entry";
       from: string;
       to: string;
-      relation: "controller_route" | "route_binding" | "graphql_resolver";
+      relation: "controller_route" | "route_binding" | "graphql_resolver" | "scheduled_handler";
       provenance: FrameworkProvenance;
     }
   | {
@@ -51,7 +51,7 @@ export type ExecutionFlowEdge =
     };
 
 export type ExecutionFlowDiagnostic = {
-  code: "entry_not_callable" | "route_binding_missing" | "graphql_binding_missing" | "schema_unverified" | "file_bound_route" | "call_target_missing";
+  code: "scheduled_binding_missing" | "runtime_registration_unverified" | "entry_not_callable" | "route_binding_missing" | "graphql_binding_missing" | "schema_unverified" | "file_bound_route" | "call_target_missing";
   message: string;
   subjectId?: string;
 };
@@ -65,13 +65,13 @@ export type ExecutionFlowCycle = {
 export type ExecutionFlowResolution =
   | { kind: "symbol"; value: GraphEntityResolution }
   | { kind: "route"; status: "resolved"; query: string; entity: FrameworkEntity }
-  | { kind: "graphql"; status: "resolved"; query: string; entity: FrameworkEntity }
+  | { kind: "graphql" | "scheduled"; status: "resolved"; query: string; entity: FrameworkEntity }
   | {
-      kind: "route" | "graphql";
+      kind: "route" | "graphql" | "scheduled";
       status: "ambiguous" | "not_found";
       query: string;
       candidates: Array<FrameworkEntity | GraphNode>;
-      reason: "route_identity" | "route_binding" | "graphql_identity" | "graphql_binding" | "framework_unavailable";
+      reason: "scheduled_identity" | "scheduled_binding" | "route_identity" | "route_binding" | "graphql_identity" | "graphql_binding" | "framework_unavailable";
     };
 
 export type ExecutionFlowResult = {
@@ -145,13 +145,13 @@ function routeMatches(entity: FrameworkEntity, selector: FrameworkRouteSelector)
 }
 
 function baseResult(entry: ExecutionFlowEntry, limits: ExecutionFlowResult["limits"], mayBeIncomplete: boolean, framework?: FrameworkQueryProjection): ExecutionFlowResult {
-  const query = entry.kind === "symbol" ? entry.query : entry.kind === "graphql" ? entry.id : entry.path;
+  const query = entry.kind === "symbol" ? entry.query : entry.kind !== "route" ? entry.id : entry.path;
   return {
     status: "not_found",
     entry,
     resolution: entry.kind === "symbol"
       ? { kind: "symbol", value: { status: "not_found", query, candidates: [] } }
-      : { kind: entry.kind, status: "not_found", query, candidates: [], reason: framework ? entry.kind === "graphql" ? "graphql_identity" : "route_identity" : "framework_unavailable" },
+      : { kind: entry.kind, status: "not_found", query, candidates: [], reason: framework ? entry.kind === "scheduled" ? "scheduled_identity" : entry.kind === "graphql" ? "graphql_identity" : "route_identity" : "framework_unavailable" },
     roots: [], nodes: [], edges: [], terminals: [], cycles: [], limits,
     truncated: false, truncatedBy: [], knownOmittedNodes: 0,
     mayBeIncomplete: mayBeIncomplete || framework?.mayBeIncomplete === true,
@@ -166,7 +166,7 @@ function entryRelationships(framework: FrameworkQueryProjection, route: Framewor
     if (item.kind !== "framework" || item.relationship.target.kind !== "framework"
       || frameworkSubjectKey(item.relationship.target) !== routeKey) return [];
     const relation = item.relationship;
-    if (relation.relationKind !== "controller_route" && relation.relationKind !== "route_binding" && relation.relationKind !== "graphql_resolver") return [];
+    if (relation.relationKind !== "controller_route" && relation.relationKind !== "route_binding" && relation.relationKind !== "graphql_resolver" && relation.relationKind !== "scheduled_handler") return [];
     if (relation.source.kind !== "language") return [];
     return [{ relation, nodeId: relation.source.nodeId }];
   }).sort((left, right) => left.relation.relationKind.localeCompare(right.relation.relationKind)
@@ -316,19 +316,23 @@ export function discoverExecutionFlow(
   }
 
   if (!framework) return unresolved(result, "not_found", result.resolution, true);
-  const routeMatchesFound = framework.nodes.flatMap((item) => item.kind === "framework" && (entry.kind === "graphql"
+  const routeMatchesFound = framework.nodes.flatMap((item) => item.kind === "framework" && (entry.kind === "scheduled" ? item.entity.ref.kind === "scheduled_job" && frameworkEntityKey(item.entity.ref) === entry.id : entry.kind === "graphql"
     ? (item.entity.ref.kind === "graphql_operation" || item.entity.ref.kind === "graphql_field") && frameworkEntityKey(item.entity.ref) === entry.id
     : routeMatches(item.entity, entry)) ? [item.entity] : [])
     .sort((left, right) => frameworkEntityKey(left.ref).localeCompare(frameworkEntityKey(right.ref)));
-  const query = entry.kind === "graphql" ? entry.id : entry.path;
-  const identityReason = entry.kind === "graphql" ? "graphql_identity" : "route_identity";
-  const bindingReason = entry.kind === "graphql" ? "graphql_binding" : "route_binding";
+  const query = entry.kind !== "route" ? entry.id : entry.path;
+  const identityReason = entry.kind === "scheduled" ? "scheduled_identity" : entry.kind === "graphql" ? "graphql_identity" : "route_identity";
+  const bindingReason = entry.kind === "scheduled" ? "scheduled_binding" : entry.kind === "graphql" ? "graphql_binding" : "route_binding";
   if (routeMatchesFound.length === 0) return unresolved(result, "not_found", { kind: entry.kind, status: "not_found", query, candidates: [], reason: identityReason });
   if (routeMatchesFound.length > 1) return unresolved(result, "ambiguous", { kind: entry.kind, status: "ambiguous", query, candidates: routeMatchesFound, reason: identityReason });
 
   const route = routeMatchesFound[0]!;
   result.status = "resolved";
   result.resolution = { kind: entry.kind, status: "resolved", query, entity: route };
+  if (entry.kind === "scheduled") {
+    result.mayBeIncomplete = true;
+    result.diagnostics.push({ code: "runtime_registration_unverified", message: "Schedule is declared in code; scheduler registration, enablement and runtime execution are unverified." });
+  }
   if (entry.kind === "graphql") {
     result.mayBeIncomplete = true;
     result.diagnostics.push({ code: "schema_unverified", message: "Resolver mapping is declared in code; GraphQL schema exposure and runtime execution are unverified; subscription transport and batch execution are not modeled." });
@@ -338,6 +342,7 @@ export function discoverExecutionFlow(
   const bindings = entryRelationships(framework, route).filter(({ relation, nodeId }) => {
     const node = graphNodeById.get(nodeId);
     if (!node) return false;
+    if (entry.kind === "scheduled") return relation.relationKind === "scheduled_handler" && (node.type === "function" || node.type === "method");
     if (entry.kind === "graphql") return relation.relationKind === "graphql_resolver" && (node.type === "function" || node.type === "method");
     if (relation.relationKind === "controller_route") return (entry.framework === "nestjs" || entry.framework === "spring") && (node.type === "function" || node.type === "method");
     return relation.relationKind === "route_binding" && entry.framework === "next" && node.type === "file";
@@ -347,7 +352,7 @@ export function discoverExecutionFlow(
     return unresolved(result, "ambiguous", { kind: entry.kind, status: "ambiguous", query, candidates: boundIds.map((id) => graphNodeById.get(id)!), reason: bindingReason }, true);
   }
   if (boundIds.length === 0) {
-    result.diagnostics.push(entry.kind === "graphql"
+    result.diagnostics.push(entry.kind === "scheduled" ? { code: "scheduled_binding_missing", message: "Scheduled declaration has no unique callable handler binding." } : entry.kind === "graphql"
       ? { code: "graphql_binding_missing", message: "GraphQL mapping has no unique callable resolver binding." }
       : { code: "route_binding_missing", message: "Framework route has no unique callable controller binding or supported file boundary." });
     result.mayBeIncomplete = true;
@@ -371,7 +376,7 @@ export function discoverExecutionFlow(
     kind: "framework_entry",
     from: routeId,
     to: subjectId,
-    relation: binding.relation.relationKind as "controller_route" | "route_binding" | "graphql_resolver",
+    relation: binding.relation.relationKind as "controller_route" | "route_binding" | "graphql_resolver" | "scheduled_handler",
     provenance: binding.relation.provenance,
   });
   if (bound.type === "file") {

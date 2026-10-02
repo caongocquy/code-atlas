@@ -1,3 +1,4 @@
+import { decodeScheduledIdentity, isScheduledMetadata } from "../../framework/framework-scheduled.js";
 import { decodeFrameworkGraphqlOperationIdentity, decodeFrameworkRouteIdentity, frameworkEntityKey } from "../../framework/framework-identity.js";
 import type { FrameworkRelationship } from "../../framework/framework.types.js";
 import type { FrameworkQueryProjection } from "../query/framework-query.types.js";
@@ -26,17 +27,18 @@ export function buildRepositoryEntryCatalog(framework: FrameworkQueryProjection 
   const entries: RepositoryEntry[] = [];
   const diagnostics: RepositoryEntryDiagnostic[] = [];
   for (const item of framework.nodes) {
-    if (item.kind !== "framework" || !["route", "graphql_operation"].includes(item.entity.ref.kind) || !SUPPORTED_FRAMEWORKS.has(item.entity.ref.framework)) continue;
+    if (item.kind !== "framework" || !["route", "graphql_operation", "scheduled_job"].includes(item.entity.ref.kind) || !SUPPORTED_FRAMEWORKS.has(item.entity.ref.framework)) continue;
     const entity = item.entity;
+    const isScheduled = entity.ref.kind === "scheduled_job";
     const isGraphql = entity.ref.kind === "graphql_operation";
-    const identity = isGraphql ? decodeFrameworkGraphqlOperationIdentity(entity.ref) : decodeFrameworkRouteIdentity(entity.ref);
+    const identity = isScheduled ? decodeScheduledIdentity(entity.ref.framework, entity.ref.logicalKey) : isGraphql ? decodeFrameworkGraphqlOperationIdentity(entity.ref) : decodeFrameworkRouteIdentity(entity.ref);
     if (!identity) {
-      diagnostics.push({ code: isGraphql ? "invalid_graphql_identity" : "invalid_route_identity", entityId: JSON.stringify(entity.ref), subjectIds: [] });
+      diagnostics.push({ code: isScheduled ? "invalid_scheduled_identity" : isGraphql ? "invalid_graphql_identity" : "invalid_route_identity", entityId: JSON.stringify(entity.ref), subjectIds: [] });
       continue;
     }
     const id = frameworkEntityKey(entity.ref);
     const isNext = entity.ref.framework === "next";
-    const expectedRelation = isGraphql ? "graphql_resolver" : isNext ? "route_binding" : "controller_route";
+    const expectedRelation = isScheduled ? "scheduled_handler" : isGraphql ? "graphql_resolver" : isNext ? "route_binding" : "controller_route";
     const relationships = relationshipsByEntity.get(id) ?? [];
     const bindings: RepositoryEntryBinding[] = [];
     const unsupported: string[] = [];
@@ -60,7 +62,19 @@ export function buildRepositoryEntryCatalog(framework: FrameworkQueryProjection 
     const boundIds = [...new Set(bindings.map((binding) => binding.subjectId))];
     if (boundIds.length > 1) {
       diagnostics.push({ code: "ambiguous_binding", entityId: id, subjectIds: boundIds });
-      if (isGraphql) continue;
+      if (isGraphql || isScheduled) continue;
+    }
+    if (isScheduled) {
+      if (!isScheduledMetadata(entity.scheduledMetadata) || hasUnsupportedBinding) {
+        diagnostics.push({ code: "invalid_scheduled_identity", entityId: id, subjectIds: boundIds });
+        continue;
+      }
+      const [scope, callableKey, triggerKind, schedule, declaredName, modifiers] = identity as NonNullable<ReturnType<typeof decodeScheduledIdentity>>;
+      entries.push({ id, kind: "scheduled", framework: entity.ref.framework as "nestjs" | "spring", frameworkEntity: entity.ref,
+        displayName: entity.displayName, scope, callableKey, triggerKind, schedule, declaredName, modifiers,
+        declaration: entity.scheduledMetadata, exposure: "declared_mapping", bindings, provenance: entity.provenance });
+      diagnostics.push({ code: "runtime_registration_unverified", entityId: id, subjectIds: boundIds });
+      continue;
     }
     if (isGraphql) {
       const [scope, operationKind, fieldName] = identity as NonNullable<ReturnType<typeof decodeFrameworkGraphqlOperationIdentity>>;
@@ -79,7 +93,7 @@ export function buildRepositoryEntryCatalog(framework: FrameworkQueryProjection 
   }
   // Semantic order: kind, framework, route path/method or GraphQL operation/field, then identity.
   const order = (entry: RepositoryEntry) => entry.kind === "graphql"
-    ? [entry.operationKind, entry.fieldName] : [entry.path, entry.method ?? ""];
+    ? [entry.operationKind, entry.fieldName] : entry.kind === "scheduled" ? [entry.triggerKind, entry.declaredName ?? ""] : [entry.path, entry.method ?? ""];
   entries.sort((left, right) => left.kind.localeCompare(right.kind) || left.framework.localeCompare(right.framework)
     || order(left)[0]!.localeCompare(order(right)[0]!) || order(left)[1]!.localeCompare(order(right)[1]!) || left.id.localeCompare(right.id));
   diagnostics.sort((left, right) => left.entityId.localeCompare(right.entityId) || left.code.localeCompare(right.code));
@@ -94,6 +108,8 @@ export function filterRepositoryEntries(entries: readonly RepositoryEntry[], fil
   const method = filters.method?.toUpperCase();
   return entries.filter((entry) => (filters.kind === undefined || entry.kind === filters.kind)
     && (filters.framework === undefined || entry.framework === filters.framework)
-    && (filters.path === undefined || (entry.kind !== "graphql" && entry.path === filters.path))
-    && (method === undefined || (entry.kind !== "graphql" && entry.method?.toUpperCase() === method)));
+    && (filters.path === undefined || ((entry.kind === "http" || entry.kind === "web_route") && entry.path === filters.path))
+    && (method === undefined || ((entry.kind === "http" || entry.kind === "web_route") && entry.method?.toUpperCase() === method))
+    && (filters.triggerKind === undefined || (entry.kind === "scheduled" && entry.triggerKind === filters.triggerKind))
+    && (filters.declaredName === undefined || (entry.kind === "scheduled" && entry.declaredName === filters.declaredName)));
 }

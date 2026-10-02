@@ -133,7 +133,7 @@ export function resolveFrameworkEvidence(ctx: FrameworkAnalysisContext, evidence
     if (item.confidence !== "exact" && item.confidence !== "strong") continue;
     for (const observation of item.entities) {
       if (observation.confidence === "weak") continue;
-      const entity: FrameworkEntity = { ref: observation.ref, displayName: observation.displayName, provenance: provenance(item) };
+      const entity: FrameworkEntity = { ref: observation.ref, displayName: observation.displayName, ...(observation.scheduledMetadata ? { scheduledMetadata: observation.scheduledMetadata } : {}), provenance: provenance(item) };
       const key = frameworkEntityKey(entity.ref);
       const existing = entities.get(key);
       if (conflictingEntities.has(key)) continue;
@@ -193,7 +193,7 @@ export function resolveFrameworkEvidence(ctx: FrameworkAnalysisContext, evidence
     }
     if (item.state === "unsupported" || !item.supported) {
       dimension.unsupported += 1;
-      diagnostics.push(diagnostic(item, "framework_construct_unsupported", "unsupported", "framework construct is unsupported"));
+      diagnostics.push(diagnostic(item, item.scheduledUnsupportedReason ? "framework_schedule_unsupported" : "framework_construct_unsupported", "unsupported", item.scheduledUnsupportedReason ?? "framework construct is unsupported"));
       coverage.set(coverageKey, dimension);
       continue;
     }

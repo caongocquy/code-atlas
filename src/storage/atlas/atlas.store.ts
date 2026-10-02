@@ -1,3 +1,4 @@
+import { isScheduledMetadata, isPublishableScheduledDiagnostic, isScheduledCoverage } from "../../core/framework/framework-scheduled.js";
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -133,6 +134,7 @@ const FRAMEWORK_RELATION_KINDS: readonly FrameworkRelationship["relationKind"][]
   "layout_binding",
   "controller_route",
   "graphql_resolver",
+  "scheduled_handler",
   "module_provider",
   "dependency_injection",
   "bean_relationship",
@@ -277,7 +279,7 @@ function normalizeProvenance(value: unknown): FrameworkProvenance {
 }
 
 function normalizeEntity(value: unknown): FrameworkEntity {
-  if (!isRecord(value) || !hasExactKeys(value, ["ref", "displayName", "provenance"]) || !isBoundedString(value.displayName)) {
+  if (!isRecord(value) || !hasExactKeys(value, value.ref && isRecord(value.ref) && value.ref.kind === "scheduled_job" ? ["ref", "displayName", "provenance", "scheduledMetadata"] : ["ref", "displayName", "provenance"]) || !isBoundedString(value.displayName)) {
     throw new TypeError("Invalid framework entity");
   }
   const ref = value.ref as FrameworkEntityRef;
@@ -285,7 +287,8 @@ function normalizeEntity(value: unknown): FrameworkEntity {
   void key;
   const provenance = normalizeProvenance(value.provenance);
   if (provenance.framework !== ref.framework) throw new TypeError("Framework entity provenance does not match its framework");
-  const result = { ref: { framework: ref.framework, kind: ref.kind, logicalKey: ref.logicalKey }, displayName: value.displayName, provenance };
+  if (ref.kind === "scheduled_job" && !isScheduledMetadata(value.scheduledMetadata)) throw new TypeError("Invalid scheduled declaration metadata");
+  const result: FrameworkEntity = { ref: { framework: ref.framework, kind: ref.kind, logicalKey: ref.logicalKey }, displayName: value.displayName, provenance, ...(isScheduledMetadata(value.scheduledMetadata) ? { scheduledMetadata: { ...value.scheduledMetadata } } : {}) };
   stableJson(result);
   return result;
 }
@@ -388,7 +391,7 @@ function normalizeDependency(value: unknown): FrameworkDependency {
 }
 
 function normalizeDiagnostic(value: unknown): FrameworkDiagnostic {
-  const codes = ["framework_construct_unsupported", "framework_target_ambiguous", "framework_target_unknown", "framework_budget_exhausted", "framework_config_incomplete", "framework_adapter_failed", "framework_entity_identity_collision", "framework_subject_ambiguous", "framework_subject_unknown", "framework_classification_conflict"] as const;
+  const codes = ["framework_schedule_unsupported", "framework_construct_unsupported", "framework_target_ambiguous", "framework_target_unknown", "framework_budget_exhausted", "framework_config_incomplete", "framework_adapter_failed", "framework_entity_identity_collision", "framework_subject_ambiguous", "framework_subject_unknown", "framework_classification_conflict"] as const;
   const outcomes = ["ambiguous", "unknown", "unsupported", "budget_exhausted", "adapter_failed"] as const;
   if (!isRecord(value) || !hasExactKeys(value, ["code", "outcome", "framework", "capability", "relativePath", "strategy", "evidenceIds", "refs", "reason"])
     || !codes.includes(value.code as typeof codes[number]) || !outcomes.includes(value.outcome as typeof outcomes[number]) || !isFrameworkId(value.framework)
@@ -496,11 +499,12 @@ function canPublishFramework(snapshot: FrameworkSnapshot): boolean {
   const dynamicCounts = new Map<string, number>();
   const dynamicEvidenceIds = new Set<string>();
   for (const item of snapshot.diagnostics) {
-    if (item.code !== "framework_construct_unsupported" || item.outcome !== "unsupported"
-      || item.framework !== "react" || item.capability !== "react.component_usage"
-      || item.strategy !== "jsx-dynamic-component-usage" || item.reason !== "framework construct is unsupported"
+    if ((!(item.code === "framework_construct_unsupported" && item.outcome === "unsupported"
+      && item.framework === "react" && item.capability === "react.component_usage"
+      && item.strategy === "jsx-dynamic-component-usage" && item.reason === "framework construct is unsupported") && !isPublishableScheduledDiagnostic(item))
       || item.evidenceIds.length === 0
       || !item.refs.some((ref) => ref.relativePath === item.relativePath && ref.inputKey === `facts:${item.relativePath}`)) return false;
+    if (isPublishableScheduledDiagnostic(item) && !snapshot.detections.some((d) => d.framework === item.framework && d.observed && d.capabilities.includes(item.capability))) return false;
     const key = stableJson([item.framework, item.capability, item.relativePath, item.strategy]);
     dynamicCounts.set(key, (dynamicCounts.get(key) ?? 0) + item.evidenceIds.length);
     for (const evidenceId of item.evidenceIds) {
@@ -508,14 +512,15 @@ function canPublishFramework(snapshot: FrameworkSnapshot): boolean {
       dynamicEvidenceIds.add(evidenceId);
     }
   }
-  if ([...snapshot.relationships, ...snapshot.classifications].some((item) => item.provenance.evidenceIds.some((id) => dynamicEvidenceIds.has(id)))) return false;
+  if ([...snapshot.entities, ...snapshot.relationships, ...snapshot.classifications].some((item) => item.provenance.evidenceIds.some((id) => dynamicEvidenceIds.has(id)))) return false;
 
   for (const item of snapshot.coverage) {
     if (item.attempted !== item.applicable || item.ambiguous || item.unknown || item.budgetExhausted || item.weakDropped) return false;
     const key = stableJson([item.framework, item.capability, item.relativePath, item.strategy]);
     if (item.unsupported || item.supported !== item.applicable) {
-      if (item.framework !== "react" || item.capability !== "react.component_usage" || item.strategy !== "jsx-dynamic-component-usage"
-        || item.outputKind !== "relationship" || item.kind !== "component_usage"
+      if ((!(item.framework === "react" && item.capability === "react.component_usage" && item.strategy === "jsx-dynamic-component-usage"
+        && item.kind === "component_usage") && !isScheduledCoverage(item.framework, item.capability, item.strategy, item.kind))
+        || item.outputKind !== "relationship"
         || item.supported !== 0 || item.unsupported !== item.applicable || item.resolved !== 0
         || dynamicCounts.get(key) !== item.unsupported) return false;
       dynamicCounts.delete(key);
@@ -524,7 +529,7 @@ function canPublishFramework(snapshot: FrameworkSnapshot): boolean {
   return dynamicCounts.size === 0 && snapshot.complete === (snapshot.diagnostics.length === 0);
 }
 
-function normalizeMaterialization(value: unknown, languageNodeIds: ReadonlySet<string>): FrameworkMaterialization {
+function normalizeMaterialization(value: unknown, languageNodeTypes: ReadonlyMap<string, string>): FrameworkMaterialization {
   if (!isRecord(value) || !hasExactKeys(value, ["frameworkResolutionVersion", "entities", "relationships", "classifications", "diagnostics", "coverage", "config", "detections", "dependencies", "complete"])
     || !isBoundedString(value.frameworkResolutionVersion) || typeof value.complete !== "boolean") throw new TypeError("Invalid framework materialization");
   const arrays = ["entities", "relationships", "classifications", "diagnostics", "coverage", "config", "detections", "dependencies"] as const;
@@ -539,11 +544,22 @@ function normalizeMaterialization(value: unknown, languageNodeIds: ReadonlySet<s
   if (classificationOutputs.some((record) => record.outputKind !== "classification")) throw new TypeError("Framework classifications contain a relationship");
   const classifications = dedupeRecords(classificationOutputs as FrameworkClassification[], (record) => stableJson([frameworkSubjectKey(record.subject), record.classificationKind]), "classifications");
   const checkSubject = (subject: FrameworkSubjectRef): void => {
-    if (subject.kind === "language" && !languageNodeIds.has(subject.nodeId)) throw new TypeError("Framework output has a dangling language node");
+    if (subject.kind === "language" && !languageNodeTypes.has(subject.nodeId)) throw new TypeError("Framework output has a dangling language node");
     if (subject.kind === "framework" && !entityKeys.has(frameworkEntityKey(subject.entity))) throw new TypeError("Framework output has a dangling framework entity");
   };
-  for (const relationship of relationships) { checkSubject(relationship.source); checkSubject(relationship.target); }
+  for (const relationship of relationships) {
+    checkSubject(relationship.source); checkSubject(relationship.target);
+    if (relationship.relationKind === "scheduled_handler" && (relationship.source.kind !== "language"
+      || !["function", "method"].includes(languageNodeTypes.get(relationship.source.nodeId) ?? ""))) {
+      throw new TypeError("Scheduled handler source must be callable");
+    }
+  }
   for (const classification of classifications) checkSubject(classification.subject);
+  for (const entity of entities) {
+    if (entity.ref.kind !== "scheduled_job") continue;
+    const handlers = relationships.filter((r) => r.relationKind === "scheduled_handler" && r.target.kind === "framework" && frameworkEntityKey(r.target.entity) === frameworkEntityKey(entity.ref));
+    if (handlers.length !== 1) throw new TypeError("Scheduled entity must have exactly one handler");
+  }
 
   const diagnostics = dedupeRecords((value.diagnostics as unknown[]).map(normalizeDiagnostic), frameworkDiagnosticKey, "diagnostics");
   const coverage = dedupeRecords((value.coverage as unknown[]).map(normalizeCoverage), (record) => stableJson([record.framework, record.capability, record.relativePath, record.strategy, record.outputKind, record.kind]), "coverage");
@@ -1458,9 +1474,9 @@ export class AtlasStore {
     try {
       const generation = this.generationRepository(generationId);
       const languageNodeRows = this.database.prepare(
-        "SELECT id FROM generation_symbols WHERE repository_id = ? AND generation_id = ?",
-      ).all(generation.repository_id, generationId) as Array<{ id: string }>;
-      const normalized = normalizeMaterialization(materialization, new Set(languageNodeRows.map((row) => row.id)));
+        "SELECT id, type FROM generation_symbols WHERE repository_id = ? AND generation_id = ?",
+      ).all(generation.repository_id, generationId) as Array<{ id: string; type: string }>;
+      const normalized = normalizeMaterialization(materialization, new Map(languageNodeRows.map((row) => [row.id, row.type])));
 
       for (const table of [
         "generation_framework_entities",
@@ -2778,10 +2794,10 @@ export class AtlasStore {
       const config = parseJson(state.config_json, MAX_FRAMEWORK_STATE_JSON_LENGTH);
       const detections = parseJson(state.detections_json, MAX_FRAMEWORK_STATE_JSON_LENGTH);
       const dependencies = parseJson(state.dependencies_json, MAX_FRAMEWORK_STATE_JSON_LENGTH);
-      const languageNodeIds = new Set((this.database.prepare(
-        "SELECT id FROM generation_symbols WHERE repository_id = ? AND generation_id = ?",
-      ).all(repositoryId, generationId) as Array<{ id: string }>).map((row) => row.id));
-      const normalized = normalizeMaterialization({ frameworkResolutionVersion: state.framework_resolution_version, entities, relationships, classifications, diagnostics, coverage, config, detections, dependencies, complete: state.complete === 1 && (!expectedFrameworkVersion || expectedFrameworkVersion === state.framework_resolution_version) }, languageNodeIds);
+      const languageNodeTypes = new Map((this.database.prepare(
+        "SELECT id, type FROM generation_symbols WHERE repository_id = ? AND generation_id = ?",
+      ).all(repositoryId, generationId) as Array<{ id: string; type: string }>).map((row) => [row.id, row.type]));
+      const normalized = normalizeMaterialization({ frameworkResolutionVersion: state.framework_resolution_version, entities, relationships, classifications, diagnostics, coverage, config, detections, dependencies, complete: state.complete === 1 && (!expectedFrameworkVersion || expectedFrameworkVersion === state.framework_resolution_version) }, languageNodeTypes);
       return { repositoryId, generationId, ...normalized };
     } catch {
       return undefined;
