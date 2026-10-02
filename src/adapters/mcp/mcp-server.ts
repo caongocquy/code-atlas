@@ -32,6 +32,7 @@ import { analyzeImpact } from "../../core/graph/query/impact.service.js";
 import { traceGraph } from "../../core/graph/query/trace.service.js";
 import { discoverExecutionFlow } from "../../core/graph/query/execution-flow.service.js";
 import { loadArchitecturePolicy } from "../../core/architecture/architecture-policy.js";
+import { queryMessageLinks, MessageLinksError, type MessageLinksInput } from "../../core/graph/intelligence/message-links.service.js";
 import { buildRepositoryMap } from "../../core/graph/intelligence/repository-map.service.js";
 import type { RepositoryMap } from "../../core/graph/intelligence/repository-map.types.js";
 import { buildRepositoryEntryCatalog, filterRepositoryEntries } from "../../core/graph/intelligence/repository-entry-catalog.service.js";
@@ -140,6 +141,7 @@ const toolAnnotations: Record<string, McpToolAnnotations> = {
   list_communities: readOnlyAnnotations,
   repository_map: readOnlyAnnotations,
   list_entries: readOnlyAnnotations,
+  message_links: readOnlyAnnotations,
   get_community: readOnlyAnnotations,
   important_symbols: readOnlyAnnotations,
   architectural_bridges: readOnlyAnnotations,
@@ -1082,6 +1084,24 @@ export function createMcpServer(): McpServer {
     }, args.detail as McpDetail | undefined, args.limit as number | undefined);
     return { ...projected, evidenceState: context.evidenceState };
   }));
+
+  registerJsonTool(server, "message_links", "Inspect outbound messaging calls and declared consumers using static compatibility only; runtime dispatch, transport, broker and delivery are unverified. Producer calls are generation-scoped evidence, not execution entries. Use returned consumer IDs independently with execution_flow.", z.object({
+    ...commonInput,
+    producerSymbol: queryInput.describe("Exact callable identity/name; mutually exclusive with consumerId.").optional(),
+    consumerId: queryInput.describe("Existing message_consumer entity ID; selects compatible incoming producer calls.").optional(),
+    protocolKind: z.enum(["unspecified", "kafka"]).describe("Exact proven producer protocol; Nest transport remains unknown.").optional(),
+    destination: z.string().describe("Exact literal pattern/topic metadata filter; does not prove producer behavior.").optional(),
+  }).strict().refine(args => args.producerSymbol === undefined || args.consumerId === undefined, {
+    message: "producerSymbol and consumerId are mutually exclusive.",
+  }), async (args) => {
+    try {
+      return await queryMessageLinks(resolveRepo(args.repoPath as string | undefined), args as MessageLinksInput);
+    } catch (error) {
+      if (error instanceof MessageLinksError) throw new McpToolError(error.code, error.message);
+      if (error instanceof Error && error.message === "Repository graph is not indexed.") throw new McpToolError("index_required", error.message);
+      throw error;
+    }
+  });
 
   registerJsonTool(server, "list_communities", "Discover graph communities and coupling metadata; use get_community to expand one known community.", z.object({
     ...commonInput,
