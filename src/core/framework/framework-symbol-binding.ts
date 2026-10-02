@@ -41,3 +41,21 @@ export function frameworkEnclosingClass(
   }
   return undefined;
 }
+
+// Competing declarations/imports cannot prove decorator provenance. Fail closed.
+export function frameworkImportedName(facts: ParsedFactsBlob, name: string | undefined, moduleSpecifier: string): string | undefined {
+  if (!name) return undefined;
+  const imports = facts.imports.filter((item) => item.localName === name);
+  if (imports.length !== 1 || imports[0]!.kind !== "named" || imports[0]!.moduleSpecifier !== moduleSpecifier) return undefined;
+  if (facts.symbols.some((item) => item.name === name && item.kind !== "method")
+    || facts.bindingSeeds.some((item) => item.name === name && item.bindingKind !== "import")) return undefined;
+  // Annotation-type declarations have no symbol in current JVM facts.
+  const contains = (outer: { startLine: number; endLine: number; startColumn?: number; endColumn?: number }, inner: typeof outer) =>
+    (inner.startLine > outer.startLine || (inner.startLine === outer.startLine && (inner.startColumn ?? 0) >= (outer.startColumn ?? 0)))
+    && (inner.endLine < outer.endLine || (inner.endLine === outer.endLine && (inner.endColumn ?? 0) <= (outer.endColumn ?? 0)));
+  if (facts.frameworkSyntax?.nodes.some((item) => item.kind === "annotation" && item.name === name && !item.ownerSymbolId)) return undefined;
+  if (facts.frameworkSyntax?.nodes.some((item) => item.kind === "identifier" && item.name === name && !item.ownerSymbolId
+    && !facts.imports.some((entry) => contains(entry.range, item.range))
+    && !facts.frameworkSyntax!.nodes.some((entry) => entry.kind === "annotation" && contains(entry.range, item.range)))) return undefined;
+  return imports[0]!.importedName;
+}

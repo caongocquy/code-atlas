@@ -150,7 +150,7 @@ test("real Spring source reaches persisted GraphQL list_entries and same-ID exec
       const refreshed = await loadIndexedGraphReadOnly(repoPath);
       assert.equal(refreshed.evidenceState.generationId, renewed.generationId);
       const readOnly = new AtlasStore(databasePath, { readOnly: true });
-      try { assert.equal(readOnly.loadFramework(getRepositoryIdentity(repoPath).id, renewed.generationId)?.frameworkResolutionVersion, "1.3.0"); }
+      try { assert.equal(readOnly.loadFramework(getRepositoryIdentity(repoPath).id, renewed.generationId)?.frameworkResolutionVersion, FRAMEWORK_RESOLUTION_VERSION); }
       finally { readOnly.close(); }
     }
   } finally {

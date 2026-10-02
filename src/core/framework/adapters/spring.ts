@@ -1,5 +1,7 @@
+import type { ParsedFactsBlob } from "../../facts/facts.types.js";
+import type { SyntaxObservation } from "../../facts/objective-syntax.types.js";
 import { frameworkEntityKey } from "../framework-identity.js";
-import { frameworkEnclosingClass, frameworkGraphSymbol } from "../framework-symbol-binding.js";
+import { frameworkEnclosingClass, frameworkGraphSymbol, frameworkImportedName } from "../framework-symbol-binding.js";
 import type { DetectionResult, FrameworkAdapterResult, FrameworkAnalysisContext, FrameworkCanonicalRoute, FrameworkCanonicalization, FrameworkEvidence, FrameworkSemanticAdapter, FrameworkSubjectRef } from "../framework.types.js";
 
 export function canonicalizeSpringRoute(input: FrameworkCanonicalRoute): FrameworkCanonicalization {
@@ -32,45 +34,104 @@ function detect(ctx: Parameters<FrameworkSemanticAdapter["detect"]>[0]): readonl
   return [{ framework: "spring", scope: "root", configured, observed, capabilities, refs, complete: ctx.config.every((item) => item.complete) }];
 }
 
+function mappingAttributes(annotation: SyntaxObservation, nodes: Map<string, SyntaxObservation>, nested: boolean, batch: boolean): { field?: string; parent?: string } | undefined {
+  const values = new Map<string, string>();
+  for (const argument of annotation.arguments) {
+    const name = argument.name ?? "value";
+    const node = nodes.get(argument.valueId);
+    if (batch && name === "maxBatchSize") {
+      if (values.has(name) || node?.kind !== "literal" || typeof node.value !== "number" || !Number.isInteger(node.value) || node.value <= 0) return undefined;
+      values.set(name, String(node.value));
+      continue;
+    }
+    if (!(nested ? ["field", "value", "typeName"] : ["name", "value"]).includes(name) || values.has(name)) return undefined;
+    const value = literal(node);
+    if (value === undefined) return undefined;
+    values.set(name, value);
+  }
+  const field = values.get(nested ? "field" : "name");
+  const alias = values.get("value");
+  if (field !== undefined && alias !== undefined && field !== alias) return undefined;
+  return { field: (field ?? alias) || undefined, parent: values.get("typeName") || undefined };
+}
+
+function springSourceParent(facts: ParsedFactsBlob, methodId: string | undefined, batch: boolean): string | undefined {
+  const parameters = facts.parameters.filter((item) => item.ownerSymbolId === methodId);
+  // Only the single unannotated source parameter is authoritative here.
+  if (parameters.length !== 1) return undefined;
+  const parameter = parameters[0]!;
+  if (facts.frameworkSyntax?.nodes.some((node) => node.kind === "annotation" && node.range.startLine >= parameter.range.startLine
+    && node.range.endLine <= parameter.range.endLine && (node.range.startLine !== parameter.range.startLine || (node.range.startColumn ?? 0) >= (parameter.range.startColumn ?? 0)))) return undefined;
+  const type = batch ? /^(?:java\.util\.)?List\s*<\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*>$/.exec(parameter.typeText ?? "")?.[1] : parameter.typeText;
+  if (!type || !/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(type)) return undefined;
+  const classes = facts.symbols.filter((item) => item.kind === "class" && item.name === type);
+  const imports = facts.imports.filter((item) => item.localName === type);
+  if (classes.length === 1 && imports.length === 0) return type;
+  if (classes.length !== 0 || imports.length !== 1 || imports[0]!.kind !== "named"
+    || imports[0]!.moduleSpecifier.startsWith("java.") || imports[0]!.moduleSpecifier.startsWith("org.springframework.")) return undefined;
+  return imports[0]!.importedName;
+}
+
 function collectSpringGraphqlEvidence(ctx: FrameworkAnalysisContext): FrameworkAdapterResult {
   const evidence: FrameworkEvidence[] = [];
   for (const materialized of ctx.facts) {
     const imports = materialized.facts.imports;
-    const graphqlImports = new Map(imports.filter((item) => item.moduleSpecifier.startsWith("org.springframework.graphql.data.method.annotation.") && item.kind === "named").map((item) => [item.localName, item.importedName]));
-    if (graphqlImports.size === 0) continue;
+    const graphqlImport = (name: string | undefined): string | undefined => {
+      const imported = imports.filter((item) => item.localName === name);
+      if (imported.length !== 1 || !["QueryMapping", "MutationMapping", "SubscriptionMapping", "SchemaMapping", "BatchMapping"].includes(imported[0]!.importedName ?? "")) return undefined;
+      return frameworkImportedName(materialized.facts, name, `org.springframework.graphql.data.method.annotation.${imported[0]!.importedName}`);
+    };
+    if (!imports.some((item) => item.moduleSpecifier.startsWith("org.springframework.graphql.data.method.annotation."))) continue;
     const syntax = materialized.facts.frameworkSyntax;
     if (!syntax) continue;
     const annotations = syntax.nodes.filter((node) => node.kind === "annotation");
     const nodes = new Map(syntax.nodes.map((node) => [node.id, node]));
-    const controllerImport = imports.some((item) => item.moduleSpecifier === "org.springframework.stereotype.Controller" && item.importedName === "Controller");
     const controllers = new Set<string>(annotations.flatMap((item) => {
-      const owner = controllerImport && item.name === "Controller"
+      const owner = frameworkImportedName(materialized.facts, item.name, "org.springframework.stereotype.Controller") === "Controller"
         ? frameworkGraphSymbol(ctx, materialized.relativePath, materialized.facts, item.ownerSymbolId, "class") : undefined;
       return owner ? [owner.id] : [];
     }));
     for (const annotation of annotations) {
-      const imported = annotation.name && graphqlImports.get(annotation.name);
-      const operationKind = imported === "QueryMapping" ? "query" : imported === "MutationMapping" ? "mutation" : undefined;
-      const excluded = imported === "SubscriptionMapping" || imported === "SchemaMapping" || imported === "BatchMapping";
-      if (!operationKind && !excluded) continue;
+      const imported = graphqlImport(annotation.name);
+      const operationKind = imported === "QueryMapping" ? "query" : imported === "MutationMapping" ? "mutation"
+        : imported === "SubscriptionMapping" ? "subscription" : imported === "SchemaMapping" || imported === "BatchMapping" ? "field" : undefined;
+      if (!operationKind) {
+        const imported = imports.find((item) => item.localName === annotation.name && item.moduleSpecifier.startsWith("org.springframework.graphql.data.method.annotation."));
+        if (imported) evidence.push({ evidenceId: `spring-graphql:${materialized.relativePath}:${annotation.id}`, framework: "spring", adapterId: "spring", adapterVersion: "1.2.0",
+          strategy: "controller.import-unsupported", capability: "spring.graphql", relativePath: materialized.relativePath, origin: "framework_inferred", confidence: "exact",
+          refs: [{ relativePath: materialized.relativePath, inputKey: `facts:${materialized.relativePath}`, localId: annotation.id, range: annotation.range }],
+          entities: [], applicable: true, supported: false, attempted: true, state: "unsupported", outputKind: "relationship", relationKind: "graphql_resolver", sourceCandidates: [], targetCandidates: [] });
+        continue;
+      }
+      // Class-level SchemaMapping supplies a type default; it is not a callable entry.
+      if (imported === "SchemaMapping" && materialized.facts.symbols.some((item) => item.localId === annotation.ownerSymbolId && item.kind === "class")) continue;
       const owner = frameworkGraphSymbol(ctx, materialized.relativePath, materialized.facts, annotation.ownerSymbolId, "method");
       const ownerClass = frameworkEnclosingClass(ctx, materialized.relativePath, materialized.facts, annotation.ownerSymbolId, owner);
-      const argument = annotation.arguments[0];
       const methodName = owner?.name ?? materialized.facts.symbols.find((item) => item.localId === annotation.ownerSymbolId && item.kind === "method")?.name;
-      const fieldName = annotation.arguments.length === 0 ? methodName
-        : annotation.arguments.length === 1 && (argument?.name === undefined || argument.name === "name" || argument.name === "value")
-          ? literal(nodes.get(argument.valueId)) : undefined;
-      const ref = fieldName && operationKind ? { framework: "spring" as const, kind: "graphql_operation" as const, logicalKey: JSON.stringify(["root", operationKind, fieldName]) } : undefined;
-      let accepted = !!ref && !!ownerClass && controllers.has(ownerClass.id) && syntax.complete;
+      const nested = operationKind === "field";
+      const attributes = mappingAttributes(annotation, nodes, nested, imported === "BatchMapping");
+      const classMappings = annotations.filter((item) => graphqlImport(item.name) === "SchemaMapping"
+        && frameworkGraphSymbol(ctx, materialized.relativePath, materialized.facts, item.ownerSymbolId, "class")?.id === ownerClass?.id);
+      const classAttributes = classMappings.length === 1 ? mappingAttributes(classMappings[0]!, nodes, true, false) : undefined;
+      const parent = nested && attributes ? attributes.parent ?? (classMappings.length === 0 || (classMappings.length === 1 && classAttributes)
+        ? classAttributes?.parent ?? springSourceParent(materialized.facts, annotation.ownerSymbolId, imported === "BatchMapping") : undefined) : undefined;
+      const fieldName = attributes && (attributes.field ?? methodName);
+      const ref = fieldName && (!nested || parent) ? { framework: "spring" as const, kind: nested && !["Query", "Mutation", "Subscription"].includes(parent!) ? "graphql_field" as const : "graphql_operation" as const,
+        logicalKey: JSON.stringify(nested ? (["Query", "Mutation", "Subscription"].includes(parent!)
+          ? ["root", parent!.toLowerCase(), fieldName] : ["root", parent, fieldName]) : ["root", operationKind, fieldName]) } : undefined;
+      let accepted = !!ref && !!ownerClass && controllers.has(ownerClass.id) && syntax.complete
+        && !(imported === "BatchMapping" && ["Query", "Mutation", "Subscription"].includes(parent!));
       if (accepted && ref) {
         try { frameworkEntityKey(ref); } catch { accepted = false; }
       }
-      const refs = [{ relativePath: materialized.relativePath, inputKey: `facts:${materialized.relativePath}`, localId: annotation.id, range: annotation.range }];
+      const refs = [{ relativePath: materialized.relativePath, inputKey: `facts:${materialized.relativePath}`, localId: annotation.id, range: annotation.range },
+        ...classMappings.map((item) => ({ relativePath: materialized.relativePath, inputKey: `facts:${materialized.relativePath}`, localId: item.id, range: item.range }))];
       evidence.push({
-        evidenceId: `spring-graphql:${materialized.relativePath}:${annotation.id}`, framework: "spring", adapterId: "spring", adapterVersion: "1.1.0",
-        strategy: "controller.graphql-mapping", capability: "spring.graphql", relativePath: materialized.relativePath, origin: "framework_inferred", confidence: "exact", refs,
+        evidenceId: `spring-graphql:${materialized.relativePath}:${annotation.id}`, framework: "spring", adapterId: "spring", adapterVersion: "1.2.0",
+        strategy: imported === "BatchMapping" ? "controller.batch-mapping" : imported === "SchemaMapping" ? "controller.schema-mapping"
+          : imported === "SubscriptionMapping" ? "controller.subscription-mapping" : "controller.graphql-mapping", capability: "spring.graphql", relativePath: materialized.relativePath, origin: "framework_inferred", confidence: "exact", refs,
         entities: accepted && ref && ownerClass ? [{ ref, displayName: `${operationKind}.${fieldName} (${ownerClass.qualifiedName ?? ownerClass.name})`, declarationKey: `graphql:${materialized.relativePath}:${annotation.id}`, confidence: "exact", refs }] : [],
-        applicable: true, supported: !excluded, attempted: true, state: accepted && owner ? "candidate" : excluded ? "unsupported" : "unknown",
+        applicable: true, supported: true, attempted: true, state: accepted && owner ? "candidate" : "unknown",
         outputKind: "relationship", relationKind: "graphql_resolver",
         sourceCandidates: accepted && owner ? [{ kind: "language", nodeId: owner.id }] : [],
         targetCandidates: accepted && ref ? [{ kind: "framework", entity: ref }] : [],
@@ -90,7 +151,7 @@ export function collectSpringBeanEvidence(ctx: FrameworkAnalysisContext): Framew
         const methods = annotation.ownerSymbolId ? graphNodes.filter((node) => node.id === annotation.ownerSymbolId && node.type === "method") : [];
         for (const method of methods) {
           const owners = graphNodes.filter((node) => node.type === "class" && ctx.graph.edges.some((edge) => edge.type === "contains" && edge.from === node.id && edge.to === method.id));
-          evidence.push({ evidenceId: `spring-bean:${materialized.relativePath}:${annotation.id}`, framework: "spring", adapterId: "spring", adapterVersion: "1.1.0", strategy: "bean.factory-method", capability: "spring.beans", relativePath: materialized.relativePath, origin: "framework_inferred", confidence: "exact", refs: [{ relativePath: materialized.relativePath, inputKey: `facts:${materialized.relativePath}`, localId: annotation.id, range: annotation.range }], entities: [], applicable: true, supported: true, attempted: true, state: "candidate", outputKind: "relationship", relationKind: "bean_relationship", sourceCandidates: owners.map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id })), targetCandidates: [{ kind: "language", nodeId: method.id }] });
+          evidence.push({ evidenceId: `spring-bean:${materialized.relativePath}:${annotation.id}`, framework: "spring", adapterId: "spring", adapterVersion: "1.2.0", strategy: "bean.factory-method", capability: "spring.beans", relativePath: materialized.relativePath, origin: "framework_inferred", confidence: "exact", refs: [{ relativePath: materialized.relativePath, inputKey: `facts:${materialized.relativePath}`, localId: annotation.id, range: annotation.range }], entities: [], applicable: true, supported: true, attempted: true, state: "candidate", outputKind: "relationship", relationKind: "bean_relationship", sourceCandidates: owners.map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id })), targetCandidates: [{ kind: "language", nodeId: method.id }] });
         }
       }
       const syntax = materialized.facts.frameworkSyntax;
@@ -117,7 +178,7 @@ export function collectSpringBeanEvidence(ctx: FrameworkAnalysisContext): Framew
         if (canonical.kind !== "canonical") continue;
         const refs = [{ relativePath: materialized.relativePath, inputKey: `facts:${materialized.relativePath}`, localId: annotation.id, range: annotation.range }];
         const entity = { ref: canonical.ref, displayName: canonical.ref.logicalKey, declarationKey: `route:${materialized.relativePath}:${annotation.id}`, confidence: "exact" as const, refs };
-        evidence.push({ evidenceId: `spring-route:${materialized.relativePath}:${annotation.id}`, framework: "spring", adapterId: "spring", adapterVersion: "1.1.0", strategy: "request-mapping", capability: "spring.routes", relativePath: materialized.relativePath, origin: "framework_inferred", confidence: "exact", refs, entities: [entity], applicable: true, supported: true, attempted: true, state: "candidate", outputKind: "relationship", relationKind: "controller_route", sourceCandidates: [{ kind: "language", nodeId: owner.id }], targetCandidates: [{ kind: "framework", entity: canonical.ref }] });
+        evidence.push({ evidenceId: `spring-route:${materialized.relativePath}:${annotation.id}`, framework: "spring", adapterId: "spring", adapterVersion: "1.2.0", strategy: "request-mapping", capability: "spring.routes", relativePath: materialized.relativePath, origin: "framework_inferred", confidence: "exact", refs, entities: [entity], applicable: true, supported: true, attempted: true, state: "candidate", outputKind: "relationship", relationKind: "controller_route", sourceCandidates: [{ kind: "language", nodeId: owner.id }], targetCandidates: [{ kind: "framework", entity: canonical.ref }] });
       }
   }
   return { evidence, dependencies: [] };
@@ -132,14 +193,14 @@ export function collectSpringInjectionEvidence(ctx: FrameworkAnalysisContext): F
       if (!parameter.typeText || !parameter.ownerSymbolId) continue;
       const owners = graphNodes.filter((node) => node.id === parameter.ownerSymbolId);
       const providers = ctx.graph.nodes.filter((node) => node.type !== "file" && node.name === parameter.typeText);
-      evidence.push({ evidenceId: `spring-inject:${materialized.relativePath}:${parameter.localId}`, framework: "spring", adapterId: "spring", adapterVersion: "1.1.0", strategy: "autowired.constructor", capability: "spring.injection", relativePath: materialized.relativePath, origin: "framework_inferred", confidence: "exact", refs: [{ relativePath: materialized.relativePath, inputKey: `facts:${materialized.relativePath}`, localId: parameter.localId, range: parameter.range }], entities: [], applicable: true, supported: true, attempted: true, state: "candidate", outputKind: "relationship", relationKind: "dependency_injection", sourceCandidates: owners.map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id })), targetCandidates: providers.map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id })) });
+      evidence.push({ evidenceId: `spring-inject:${materialized.relativePath}:${parameter.localId}`, framework: "spring", adapterId: "spring", adapterVersion: "1.2.0", strategy: "autowired.constructor", capability: "spring.injection", relativePath: materialized.relativePath, origin: "framework_inferred", confidence: "exact", refs: [{ relativePath: materialized.relativePath, inputKey: `facts:${materialized.relativePath}`, localId: parameter.localId, range: parameter.range }], entities: [], applicable: true, supported: true, attempted: true, state: "candidate", outputKind: "relationship", relationKind: "dependency_injection", sourceCandidates: owners.map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id })), targetCandidates: providers.map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id })) });
     }
   }
   return { evidence, dependencies: [] };
 }
 
 export const springAdapter: FrameworkSemanticAdapter = {
-  id: "spring", version: "1.1.0", frameworks: ["spring"], detect,
+  id: "spring", version: "1.2.0", frameworks: ["spring"], detect,
   analyze: (ctx: FrameworkAnalysisContext): FrameworkAdapterResult => {
     const beans = collectSpringBeanEvidence(ctx);
     const injection = collectSpringInjectionEvidence(ctx);

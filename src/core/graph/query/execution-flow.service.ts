@@ -317,7 +317,7 @@ export function discoverExecutionFlow(
 
   if (!framework) return unresolved(result, "not_found", result.resolution, true);
   const routeMatchesFound = framework.nodes.flatMap((item) => item.kind === "framework" && (entry.kind === "graphql"
-    ? item.entity.ref.kind === "graphql_operation" && frameworkEntityKey(item.entity.ref) === entry.id
+    ? (item.entity.ref.kind === "graphql_operation" || item.entity.ref.kind === "graphql_field") && frameworkEntityKey(item.entity.ref) === entry.id
     : routeMatches(item.entity, entry)) ? [item.entity] : [])
     .sort((left, right) => frameworkEntityKey(left.ref).localeCompare(frameworkEntityKey(right.ref)));
   const query = entry.kind === "graphql" ? entry.id : entry.path;
@@ -331,7 +331,7 @@ export function discoverExecutionFlow(
   result.resolution = { kind: entry.kind, status: "resolved", query, entity: route };
   if (entry.kind === "graphql") {
     result.mayBeIncomplete = true;
-    result.diagnostics.push({ code: "schema_unverified", message: "Resolver mapping is declared in code; GraphQL schema exposure is unverified." });
+    result.diagnostics.push({ code: "schema_unverified", message: "Resolver mapping is declared in code; GraphQL schema exposure and runtime execution are unverified; subscription transport and batch execution are not modeled." });
   }
   const routeId = addRoot(result, { kind: "framework", entity: route });
   const graphNodeById = new Map(graph.nodes.map((node) => [node.id, node]));
@@ -348,7 +348,7 @@ export function discoverExecutionFlow(
   }
   if (boundIds.length === 0) {
     result.diagnostics.push(entry.kind === "graphql"
-      ? { code: "graphql_binding_missing", message: "GraphQL operation has no unique callable resolver binding." }
+      ? { code: "graphql_binding_missing", message: "GraphQL mapping has no unique callable resolver binding." }
       : { code: "route_binding_missing", message: "Framework route has no unique callable controller binding or supported file boundary." });
     result.mayBeIncomplete = true;
     result.terminals.push({ nodeId: routeId, reason: "no_calls" });
