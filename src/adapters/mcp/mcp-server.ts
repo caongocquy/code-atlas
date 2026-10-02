@@ -988,15 +988,16 @@ export function createMcpServer(): McpServer {
     owner: z.string().min(1).nullable().optional(),
     conditions: z.array(z.string()).optional(),
   }).strict();
+  const executionFlowMessage = z.object({ kind: z.literal("message_consumer"), id: z.string().min(1) }).strict();
   const executionFlowScheduled = z.object({ kind: z.literal("scheduled"), id: z.string().min(1) }).strict();
   const executionFlowGraphql = z.object({ kind: z.literal("graphql"), id: z.string().min(1) }).strict();
-  registerJsonTool(server, "execution_flow", "Discover bounded downstream calls from a symbol or framework route, or an exact GraphQL root operation or nested field mapping; unlike trace, this does not require a target endpoint.", z.object({
+  registerJsonTool(server, "execution_flow", "Discover bounded downstream calls from a symbol or framework route, or an exact GraphQL root operation or nested field mapping; unlike trace, this does not require a target endpoint. Exact scheduled and message consumer IDs select declared callable mappings with unverified runtime registration.", z.object({
     ...commonInput,
-    entry: z.union([queryInput, executionFlowRoute, executionFlowGraphql, executionFlowScheduled]).describe("A symbol query, exact framework route selector, GraphQL entity ID, or scheduled entity ID. list_entries returns roots only; nested graphql_field IDs are available in framework intelligence."),
+    entry: z.union([queryInput, executionFlowRoute, executionFlowGraphql, executionFlowScheduled, executionFlowMessage]).describe("A symbol query, exact framework route selector, GraphQL entity ID, scheduled entity ID, or message consumer entity ID. list_entries returns roots only; nested graphql_field IDs are available in framework intelligence."),
     maxDepth: z.number().int().min(0).max(32).describe("Bound call traversal depth.").optional(),
     maxNodes: z.number().int().min(1).max(MAX_LIMIT).describe("Bound flow nodes, including a framework entry when present; limit is accepted as an alias.").optional(),
   }).strict(), async (args) => withGraph(resolveRepo(args.repoPath as string | undefined), async (context) => {
-    const rawEntry = args.entry as string | { kind: "route"; framework: "nestjs" | "spring" | "next"; path: string; method?: string | null; scope?: string; router?: string; owner?: string | null; conditions?: string[] } | { kind: "graphql" | "scheduled"; id: string };
+    const rawEntry = args.entry as string | { kind: "route"; framework: "nestjs" | "spring" | "next"; path: string; method?: string | null; scope?: string; router?: string; owner?: string | null; conditions?: string[] } | { kind: "graphql" | "scheduled" | "message_consumer"; id: string };
     const entry = typeof rawEntry === "string" ? { kind: "symbol" as const, query: rawEntry } : rawEntry;
     const detail = args.detail as McpDetail | undefined;
     const result = discoverExecutionFlow(context.graph, context.framework, entry, {
@@ -1053,17 +1054,25 @@ export function createMcpServer(): McpServer {
     return { ...projected, evidenceState: context.evidenceState };
   }));
 
-  registerJsonTool(server, "list_entries", "List framework entries. NestJS and Spring HTTP routes have callable bindings; Next web routes are file boundaries; GraphQL query/mutation/subscription roots are declared resolver mappings with unverified schema exposure. Nested fields are not external entries. Scheduled jobs are declared mappings; scheduler registration and runtime execution are unverified.", z.object({
+  registerJsonTool(server, "list_entries", "List framework entries. NestJS and Spring HTTP routes have callable bindings; Next web routes are file boundaries; GraphQL query/mutation/subscription roots are declared resolver mappings with unverified schema exposure. Nested fields are not external entries. Scheduled jobs are declared mappings; scheduler registration and runtime execution are unverified. Message consumers are statically declared inbound mappings; broker destinations, listener registration, group membership and delivery are unverified.", z.object({
     ...commonInput,
     triggerKind: z.enum(["cron", "interval", "timeout", "fixed_rate", "fixed_delay"]).describe("Exact scheduled trigger kind.").optional(),
+    protocolKind: z.enum(["unspecified", "kafka", "rabbit"]).describe("Exact declared consumer protocol; Nest transport is unspecified.").optional(),
+    consumerKind: z.enum(["request_response", "event"]).describe("Exact inbound consumer semantics.").optional(),
+    destinationKind: z.enum(["pattern", "topic", "queue"]).describe("Exact destination kind.").optional(),
+    destination: z.string().min(1).describe("Exact declared pattern/topic/queue.").optional(),
     declaredName: z.string().describe("Exact declared schedule name.").optional(),
-    kind: z.enum(["http", "web_route", "graphql", "scheduled"]).describe("Exact entry kind.").optional(),
+    kind: z.enum(["http", "web_route", "graphql", "scheduled", "message_consumer"]).describe("Exact entry kind.").optional(),
     framework: z.enum(["nestjs", "spring", "next"]).describe("Exact framework.").optional(),
     path: z.string().min(1).describe("Exact route path.").optional(),
     method: z.string().min(1).describe("Exact HTTP method, normalized to uppercase; Next file boundaries have no method.").optional(),
   }).strict(), async (args) => withGraph(resolveRepo(args.repoPath as string | undefined), async (context) => {
     const catalog = buildRepositoryEntryCatalog(context.framework);
     const projected = projectRepositoryEntryCatalogResponse(catalog, {
+      protocolKind: args.protocolKind as RepositoryEntryFilters["protocolKind"],
+      consumerKind: args.consumerKind as RepositoryEntryFilters["consumerKind"],
+      destinationKind: args.destinationKind as RepositoryEntryFilters["destinationKind"],
+      destination: args.destination as string | undefined,
       triggerKind: args.triggerKind as RepositoryEntryFilters["triggerKind"],
       declaredName: args.declaredName as string | undefined,
       kind: args.kind as RepositoryEntryFilters["kind"],

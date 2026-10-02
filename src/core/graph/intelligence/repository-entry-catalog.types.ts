@@ -1,8 +1,9 @@
+import type { MessageIdentity, MessageMetadata } from "../../framework/framework-message.js";
 import type { ScheduledTriggerKind, ScheduledSpec, ScheduledModifiers, ScheduledMetadata } from "../../framework/framework-scheduled.js";
 import type { FrameworkDiagnostic, FrameworkEntityRef, FrameworkProvenance } from "../../framework/framework.types.js";
 import type { ReliabilityProjection } from "../../reliability/reliability.types.js";
 
-export type RepositoryEntryKind = "http" | "web_route" | "graphql" | "scheduled";
+export type RepositoryEntryKind = "http" | "web_route" | "graphql" | "scheduled" | "message_consumer";
 export type RepositoryEntryFramework = "nestjs" | "spring" | "next";
 export type RepositoryEntryBindingKind = "callable" | "file_boundary";
 
@@ -50,10 +51,22 @@ export type RepositoryScheduledEntry = RepositoryEntryBase & {
   declaration: ScheduledMetadata;
   exposure: "declared_mapping";
 };
-export type RepositoryEntry = RepositoryRouteEntry | RepositoryGraphqlEntry | RepositoryScheduledEntry;
+export type RepositoryMessageConsumerEntry = RepositoryEntryBase & {
+  kind: "message_consumer";
+  framework: "nestjs" | "spring";
+  callableKey: MessageIdentity[1];
+  protocolKind: MessageIdentity[2];
+  consumerKind: MessageIdentity[3];
+  destinationKind: MessageIdentity[4];
+  destination: string;
+  identityOptions: MessageIdentity[6];
+  metadata: MessageMetadata;
+  exposure: "declared_mapping";
+};
+export type RepositoryEntry = RepositoryRouteEntry | RepositoryGraphqlEntry | RepositoryScheduledEntry | RepositoryMessageConsumerEntry;
 
 export type RepositoryEntryDiagnostic = {
-  code: "invalid_scheduled_identity" | "runtime_registration_unverified" | "invalid_route_identity" | "invalid_graphql_identity" | "binding_missing" | "unsupported_binding" | "ambiguous_binding" | "schema_unverified";
+  code: "invalid_message_identity" | "invalid_scheduled_identity" | "runtime_registration_unverified" | "invalid_route_identity" | "invalid_graphql_identity" | "binding_missing" | "unsupported_binding" | "ambiguous_binding" | "schema_unverified";
   entityId: string;
   subjectIds: readonly string[];
 };
@@ -73,4 +86,8 @@ export type RepositoryEntryFilters = {
   method?: string;
   triggerKind?: ScheduledTriggerKind;
   declaredName?: string;
+  protocolKind?: MessageIdentity[2];
+  consumerKind?: MessageIdentity[3];
+  destinationKind?: MessageIdentity[4];
+  destination?: string;
 };

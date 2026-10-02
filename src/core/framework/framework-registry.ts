@@ -74,9 +74,10 @@ function hasIncompleteDetectionInputs(
 ): boolean {
   return detections.some((item) => {
     if (!item.complete || (item.configured && !item.observed) || !item.observed) return item.configured && !item.observed;
+    const requiredCapabilities = item.capabilities.filter((capability) => !["nestjs.message_pattern", "nestjs.event_pattern", "spring.kafka_listener", "spring.rabbit_listener"].includes(capability));
     return item.capabilities.length === 0
       ? !coverage.some((entry) => entry.framework === item.framework && entry.applicable > 0)
-      : item.capabilities.some((capability) => !coverage.some((entry) => entry.framework === item.framework && entry.capability === capability && entry.applicable > 0));
+      : requiredCapabilities.some((capability) => !coverage.some((entry) => entry.framework === item.framework && entry.capability === capability && entry.applicable > 0));
   });
 }
 
@@ -133,7 +134,7 @@ export function resolveFrameworkEvidence(ctx: FrameworkAnalysisContext, evidence
     if (item.confidence !== "exact" && item.confidence !== "strong") continue;
     for (const observation of item.entities) {
       if (observation.confidence === "weak") continue;
-      const entity: FrameworkEntity = { ref: observation.ref, displayName: observation.displayName, ...(observation.scheduledMetadata ? { scheduledMetadata: observation.scheduledMetadata } : {}), provenance: provenance(item) };
+      const entity: FrameworkEntity = { ref: observation.ref, displayName: observation.displayName, ...(observation.scheduledMetadata ? { scheduledMetadata: observation.scheduledMetadata } : {}), ...(observation.messageMetadata ? { messageMetadata: observation.messageMetadata } : {}), provenance: provenance(item) };
       const key = frameworkEntityKey(entity.ref);
       const existing = entities.get(key);
       if (conflictingEntities.has(key)) continue;
@@ -193,7 +194,7 @@ export function resolveFrameworkEvidence(ctx: FrameworkAnalysisContext, evidence
     }
     if (item.state === "unsupported" || !item.supported) {
       dimension.unsupported += 1;
-      diagnostics.push(diagnostic(item, item.scheduledUnsupportedReason ? "framework_schedule_unsupported" : "framework_construct_unsupported", "unsupported", item.scheduledUnsupportedReason ?? "framework construct is unsupported"));
+      diagnostics.push(diagnostic(item, item.messageUnsupportedReason ? "framework_message_unsupported" : item.scheduledUnsupportedReason ? "framework_schedule_unsupported" : "framework_construct_unsupported", "unsupported", item.messageUnsupportedReason ?? item.scheduledUnsupportedReason ?? "framework construct is unsupported"));
       coverage.set(coverageKey, dimension);
       continue;
     }

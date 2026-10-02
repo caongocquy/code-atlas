@@ -1,4 +1,5 @@
 import { isScheduledMetadata, isPublishableScheduledDiagnostic, isScheduledCoverage } from "../../core/framework/framework-scheduled.js";
+import { decodeMessageIdentity, isMessageMetadata, isPublishableMessageDiagnostic, isMessageCoverage } from "../../core/framework/framework-message.js";
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -51,6 +52,7 @@ import type {
   ResolutionDiagnostic,
 } from "../../core/graph/resolution.types.js";
 import type { CodeGraph, GraphEdge, GraphEdgeType, GraphNode, GraphNodeType } from "../../core/graph/types.js";
+import { createGraphNodeId } from "../../core/graph/node-id.js";
 import type { RepositoryIdentity } from "../../core/repository/repository-identity.js";
 import type { IndexedFileState } from "../../core/repository/indexed-file-state.js";
 import type { VectorPoint, VectorSearchResult } from "../../core/semantic/vector-store.js";
@@ -135,6 +137,7 @@ const FRAMEWORK_RELATION_KINDS: readonly FrameworkRelationship["relationKind"][]
   "controller_route",
   "graphql_resolver",
   "scheduled_handler",
+  "message_handler",
   "module_provider",
   "dependency_injection",
   "bean_relationship",
@@ -279,7 +282,9 @@ function normalizeProvenance(value: unknown): FrameworkProvenance {
 }
 
 function normalizeEntity(value: unknown): FrameworkEntity {
-  if (!isRecord(value) || !hasExactKeys(value, value.ref && isRecord(value.ref) && value.ref.kind === "scheduled_job" ? ["ref", "displayName", "provenance", "scheduledMetadata"] : ["ref", "displayName", "provenance"]) || !isBoundedString(value.displayName)) {
+  const refValue = isRecord(value) && isRecord(value.ref) ? value.ref : undefined;
+  const extra = refValue?.kind === "scheduled_job" ? ["scheduledMetadata"] : refValue?.kind === "message_consumer" ? ["messageMetadata"] : [];
+  if (!isRecord(value) || !hasExactKeys(value, ["ref", "displayName", "provenance", ...extra]) || !isBoundedString(value.displayName)) {
     throw new TypeError("Invalid framework entity");
   }
   const ref = value.ref as FrameworkEntityRef;
@@ -288,9 +293,63 @@ function normalizeEntity(value: unknown): FrameworkEntity {
   const provenance = normalizeProvenance(value.provenance);
   if (provenance.framework !== ref.framework) throw new TypeError("Framework entity provenance does not match its framework");
   if (ref.kind === "scheduled_job" && !isScheduledMetadata(value.scheduledMetadata)) throw new TypeError("Invalid scheduled declaration metadata");
-  const result: FrameworkEntity = { ref: { framework: ref.framework, kind: ref.kind, logicalKey: ref.logicalKey }, displayName: value.displayName, provenance, ...(isScheduledMetadata(value.scheduledMetadata) ? { scheduledMetadata: { ...value.scheduledMetadata } } : {}) };
+  if (ref.kind === "message_consumer") {
+    const identity = decodeMessageIdentity(ref.framework, ref.logicalKey);
+    const metadata = value.messageMetadata;
+    if (!identity || !isMessageMetadata(metadata) || provenance.capability !== messageCapability(ref.framework, identity)) throw new TypeError("Invalid message consumer identity, metadata, or capability");
+    const [,, protocol,, , destination, options] = identity;
+    const dynamic = (text: string | null) => text !== null && /\$\{|#\{/.test(text);
+    if ((protocol !== "unspecified" && (dynamic(destination) || dynamic(options.id) || dynamic(options.groupId)
+      || dynamic(metadata.concurrency) || dynamic(metadata.containerFactory)))
+      || (protocol === "unspecified" && (options.id !== null || options.groupId !== null || metadata.groupSource !== null
+        || metadata.concurrency !== null || metadata.containerFactory !== null))) {
+      throw new TypeError("Message consumer identity and metadata are invalid or dynamic");
+    }
+    const validGroupSource = protocol === "kafka"
+      ? metadata.groupSource === "explicit" ? options.groupId !== null
+        : metadata.groupSource === "id" ? options.groupId !== null && options.id === options.groupId
+          : metadata.groupSource === "default" && options.groupId === null
+      : metadata.groupSource === null && options.groupId === null;
+    if (!validGroupSource) throw new TypeError("Message consumer group metadata does not match its identity");
+  }
+  const result: FrameworkEntity = {
+    ref: { framework: ref.framework, kind: ref.kind, logicalKey: ref.logicalKey }, displayName: value.displayName, provenance,
+    ...(isScheduledMetadata(value.scheduledMetadata) ? { scheduledMetadata: { ...value.scheduledMetadata } } : {}),
+    ...(isMessageMetadata(value.messageMetadata) ? { messageMetadata: { ...value.messageMetadata } } : {}),
+  };
   stableJson(result);
   return result;
+}
+
+function messageCapability(framework: FrameworkId, identity: ReturnType<typeof decodeMessageIdentity>): string | undefined {
+  if (!identity) return undefined;
+  if (framework === "nestjs") return identity[3] === "request_response" ? "nestjs.message_pattern" : "nestjs.event_pattern";
+  if (framework === "spring") return identity[2] === "kafka" ? "spring.kafka_listener" : identity[2] === "rabbit" ? "spring.rabbit_listener" : undefined;
+  return undefined;
+}
+
+type FrameworkLanguageNode = { type: string; name: string; qualifiedName: string | null; file: string };
+
+function messageConsumerFiles(entities: readonly FrameworkEntity[]): string[] {
+  return [...new Set(entities.flatMap((entity) => {
+    if (entity.ref.kind !== "message_consumer") return [];
+    const identity = decodeMessageIdentity(entity.ref.framework, entity.ref.logicalKey);
+    return identity ? [identity[1][0]] : [];
+  }))].sort();
+}
+
+function messageCallableKey(facts: ParsedFactsBlob, file: string, methodId: string): readonly [string, string, string] | undefined {
+  const method = facts.symbols.find((symbol) => symbol.localId === methodId && symbol.kind === "method");
+  if (!method) return undefined;
+  const scopes = new Map(facts.containmentScopes.map((scope) => [scope.localId, scope]));
+  const types: string[] = [];
+  let scopeId = method.scopeId;
+  while (scopeId) {
+    const type = facts.symbols.find((symbol) => symbol.scopeId === scopeId && (symbol.kind === "class" || symbol.kind === "interface"));
+    if (type) types.unshift(type.name);
+    scopeId = scopes.get(scopeId)?.parentId;
+  }
+  return types.length ? [file, types.join("."), method.name] : undefined;
 }
 
 function normalizeSubject(value: unknown): FrameworkSubjectRef {
@@ -391,7 +450,7 @@ function normalizeDependency(value: unknown): FrameworkDependency {
 }
 
 function normalizeDiagnostic(value: unknown): FrameworkDiagnostic {
-  const codes = ["framework_schedule_unsupported", "framework_construct_unsupported", "framework_target_ambiguous", "framework_target_unknown", "framework_budget_exhausted", "framework_config_incomplete", "framework_adapter_failed", "framework_entity_identity_collision", "framework_subject_ambiguous", "framework_subject_unknown", "framework_classification_conflict"] as const;
+  const codes = ["framework_schedule_unsupported", "framework_message_unsupported", "framework_construct_unsupported", "framework_target_ambiguous", "framework_target_unknown", "framework_budget_exhausted", "framework_config_incomplete", "framework_adapter_failed", "framework_entity_identity_collision", "framework_subject_ambiguous", "framework_subject_unknown", "framework_classification_conflict"] as const;
   const outcomes = ["ambiguous", "unknown", "unsupported", "budget_exhausted", "adapter_failed"] as const;
   if (!isRecord(value) || !hasExactKeys(value, ["code", "outcome", "framework", "capability", "relativePath", "strategy", "evidenceIds", "refs", "reason"])
     || !codes.includes(value.code as typeof codes[number]) || !outcomes.includes(value.outcome as typeof outcomes[number]) || !isFrameworkId(value.framework)
@@ -498,13 +557,27 @@ function canPublishFramework(snapshot: FrameworkSnapshot): boolean {
 
   const dynamicCounts = new Map<string, number>();
   const dynamicEvidenceIds = new Set<string>();
+  const unsupportedMessageRefs = new Set<string>();
+  const evidenceRefKeys = (ref: FrameworkProvenance["refs"][number]): string[] => [
+    ...(ref.localId ? [stableJson(["localId", ref.relativePath, ref.inputKey, ref.localId])] : []),
+    ...(ref.range ? [stableJson(["range", ref.relativePath, ref.inputKey, ref.range])] : []),
+  ];
   for (const item of snapshot.diagnostics) {
     if ((!(item.code === "framework_construct_unsupported" && item.outcome === "unsupported"
       && item.framework === "react" && item.capability === "react.component_usage"
-      && item.strategy === "jsx-dynamic-component-usage" && item.reason === "framework construct is unsupported") && !isPublishableScheduledDiagnostic(item))
+      && item.strategy === "jsx-dynamic-component-usage" && item.reason === "framework construct is unsupported") && !isPublishableScheduledDiagnostic(item) && !isPublishableMessageDiagnostic(item))
       || item.evidenceIds.length === 0
       || !item.refs.some((ref) => ref.relativePath === item.relativePath && ref.inputKey === `facts:${item.relativePath}`)) return false;
-    if (isPublishableScheduledDiagnostic(item) && !snapshot.detections.some((d) => d.framework === item.framework && d.observed && d.capabilities.includes(item.capability))) return false;
+    if (isPublishableMessageDiagnostic(item) && item.evidenceIds.length !== 1) return false;
+    if (isPublishableMessageDiagnostic(item)) {
+      const sourceRefs = item.refs.filter((ref) => ref.relativePath === item.relativePath && ref.inputKey === `facts:${item.relativePath}`);
+      if (sourceRefs.length !== 1 || (!sourceRefs[0]!.localId && !sourceRefs[0]!.range)) return false;
+      for (const key of evidenceRefKeys(sourceRefs[0]!)) {
+        if (unsupportedMessageRefs.has(key)) return false;
+        unsupportedMessageRefs.add(key);
+      }
+    }
+    if ((isPublishableScheduledDiagnostic(item) || isPublishableMessageDiagnostic(item)) && !snapshot.detections.some((d) => d.framework === item.framework && d.observed && d.capabilities.includes(item.capability))) return false;
     const key = stableJson([item.framework, item.capability, item.relativePath, item.strategy]);
     dynamicCounts.set(key, (dynamicCounts.get(key) ?? 0) + item.evidenceIds.length);
     for (const evidenceId of item.evidenceIds) {
@@ -513,13 +586,15 @@ function canPublishFramework(snapshot: FrameworkSnapshot): boolean {
     }
   }
   if ([...snapshot.entities, ...snapshot.relationships, ...snapshot.classifications].some((item) => item.provenance.evidenceIds.some((id) => dynamicEvidenceIds.has(id)))) return false;
+  if ([...snapshot.entities, ...snapshot.relationships, ...snapshot.classifications]
+    .some((item) => item.provenance.refs.some((ref) => evidenceRefKeys(ref).some((key) => unsupportedMessageRefs.has(key))))) return false;
 
   for (const item of snapshot.coverage) {
     if (item.attempted !== item.applicable || item.ambiguous || item.unknown || item.budgetExhausted || item.weakDropped) return false;
     const key = stableJson([item.framework, item.capability, item.relativePath, item.strategy]);
     if (item.unsupported || item.supported !== item.applicable) {
       if ((!(item.framework === "react" && item.capability === "react.component_usage" && item.strategy === "jsx-dynamic-component-usage"
-        && item.kind === "component_usage") && !isScheduledCoverage(item.framework, item.capability, item.strategy, item.kind))
+        && item.kind === "component_usage") && !isScheduledCoverage(item.framework, item.capability, item.strategy, item.kind) && !isMessageCoverage(item.framework, item.capability, item.strategy, item.kind))
         || item.outputKind !== "relationship"
         || item.supported !== 0 || item.unsupported !== item.applicable || item.resolved !== 0
         || dynamicCounts.get(key) !== item.unsupported) return false;
@@ -529,12 +604,13 @@ function canPublishFramework(snapshot: FrameworkSnapshot): boolean {
   return dynamicCounts.size === 0 && snapshot.complete === (snapshot.diagnostics.length === 0);
 }
 
-function normalizeMaterialization(value: unknown, languageNodeTypes: ReadonlyMap<string, string>): FrameworkMaterialization {
+function normalizeMaterialization(value: unknown, languageNodes: ReadonlyMap<string, FrameworkLanguageNode>, repositoryId: string, sourceFacts: ReadonlyMap<string, ParsedFactsBlob>): FrameworkMaterialization {
   if (!isRecord(value) || !hasExactKeys(value, ["frameworkResolutionVersion", "entities", "relationships", "classifications", "diagnostics", "coverage", "config", "detections", "dependencies", "complete"])
     || !isBoundedString(value.frameworkResolutionVersion) || typeof value.complete !== "boolean") throw new TypeError("Invalid framework materialization");
   const arrays = ["entities", "relationships", "classifications", "diagnostics", "coverage", "config", "detections", "dependencies"] as const;
   for (const name of arrays) if (!Array.isArray(value[name]) || value[name].length > MAX_FRAMEWORK_ITEMS) throw new RangeError("Framework materialization has too many records");
 
+  const detections = dedupeRecords((value.detections as unknown[]).map(normalizeDetection), (record) => stableJson([record.framework, record.scope]), "detections");
   const entities = dedupeRecords((value.entities as unknown[]).map(normalizeEntity), (record) => frameworkEntityKey(record.ref), "entities");
   const entityKeys = new Set(entities.map((record) => frameworkEntityKey(record.ref)));
   const relationshipOutputs = (value.relationships as unknown[]).map(normalizeAcceptedOutput);
@@ -544,27 +620,77 @@ function normalizeMaterialization(value: unknown, languageNodeTypes: ReadonlyMap
   if (classificationOutputs.some((record) => record.outputKind !== "classification")) throw new TypeError("Framework classifications contain a relationship");
   const classifications = dedupeRecords(classificationOutputs as FrameworkClassification[], (record) => stableJson([frameworkSubjectKey(record.subject), record.classificationKind]), "classifications");
   const checkSubject = (subject: FrameworkSubjectRef): void => {
-    if (subject.kind === "language" && !languageNodeTypes.has(subject.nodeId)) throw new TypeError("Framework output has a dangling language node");
+    if (subject.kind === "language" && !languageNodes.has(subject.nodeId)) throw new TypeError("Framework output has a dangling language node");
     if (subject.kind === "framework" && !entityKeys.has(frameworkEntityKey(subject.entity))) throw new TypeError("Framework output has a dangling framework entity");
   };
   for (const relationship of relationships) {
     checkSubject(relationship.source); checkSubject(relationship.target);
+    const touchesMessageConsumer = (relationship.source.kind === "framework" && relationship.source.entity.kind === "message_consumer")
+      || (relationship.target.kind === "framework" && relationship.target.entity.kind === "message_consumer");
+    if (touchesMessageConsumer && relationship.relationKind !== "message_handler") {
+      throw new TypeError("Message consumers may only use message_handler relationships");
+    }
     if (relationship.relationKind === "scheduled_handler" && (relationship.source.kind !== "language"
-      || !["function", "method"].includes(languageNodeTypes.get(relationship.source.nodeId) ?? ""))) {
+      || !["function", "method"].includes(languageNodes.get(relationship.source.nodeId)?.type ?? ""))) {
       throw new TypeError("Scheduled handler source must be callable");
+    }
+    if (relationship.relationKind === "message_handler" && (relationship.source.kind !== "language"
+      || !["function", "method"].includes(languageNodes.get(relationship.source.nodeId)?.type ?? "")
+      || relationship.target.kind !== "framework" || relationship.target.entity.kind !== "message_consumer")) {
+      throw new TypeError("Message handler must connect a callable to a message consumer");
+    }
+    if (relationship.relationKind === "message_handler" && relationship.target.kind === "framework") {
+      const identity = decodeMessageIdentity(relationship.target.entity.framework, relationship.target.entity.logicalKey);
+      if (!identity || relationship.provenance.capability !== messageCapability(relationship.target.entity.framework, identity)) {
+        throw new TypeError("Message handler capability does not match its consumer identity");
+      }
     }
   }
   for (const classification of classifications) checkSubject(classification.subject);
   for (const entity of entities) {
-    if (entity.ref.kind !== "scheduled_job") continue;
-    const handlers = relationships.filter((r) => r.relationKind === "scheduled_handler" && r.target.kind === "framework" && frameworkEntityKey(r.target.entity) === frameworkEntityKey(entity.ref));
-    if (handlers.length !== 1) throw new TypeError("Scheduled entity must have exactly one handler");
+    if (entity.ref.kind === "scheduled_job") {
+      const handlers = relationships.filter((r) => r.relationKind === "scheduled_handler" && r.target.kind === "framework" && frameworkEntityKey(r.target.entity) === frameworkEntityKey(entity.ref));
+      if (handlers.length !== 1) throw new TypeError("Scheduled entity must have exactly one handler");
+    }
+    if (entity.ref.kind === "message_consumer") {
+      const handlers = relationships.filter((r) => r.relationKind === "message_handler" && r.target.kind === "framework" && frameworkEntityKey(r.target.entity) === frameworkEntityKey(entity.ref));
+      if (handlers.length !== 1) throw new TypeError("Message consumer must have exactly one handler");
+      const identity = decodeMessageIdentity(entity.ref.framework, entity.ref.logicalKey)!;
+      const callable = identity[1];
+      const qualifiedName = `${callable[1]}.${callable[2]}`;
+      const callableNodes = [...languageNodes.entries()].filter(([, node]) => node.file === callable[0] && ["function", "method"].includes(node.type)
+        && node.name === callable[2]);
+      const handler = handlers[0]!;
+      const sourceId = handler.source.kind === "language" ? handler.source.nodeId : "";
+      const node = languageNodes.get(sourceId);
+      if (callableNodes.length !== 1 || callableNodes[0]![0] !== sourceId || !node || node.file !== callable[0] || node.name !== callable[2]) {
+        throw new TypeError("Message consumer callable identity does not match its handler");
+      }
+      const qualifiedProof = node.qualifiedName === qualifiedName || node.qualifiedName?.endsWith(`.${qualifiedName}`);
+      if (!qualifiedProof) {
+        const sourceRef = entity.provenance.refs.find((ref) => ref.relativePath === callable[0] && ref.inputKey === `facts:${callable[0]}` && ref.localId);
+        const facts = sourceFacts.get(callable[0]);
+        const annotation = sourceRef?.localId && facts?.frameworkSyntax?.nodes.find((item) => item.id === sourceRef.localId && item.kind === "annotation");
+        const ownerId = annotation ? annotation.ownerSymbolId : undefined;
+        const owner = ownerId && facts?.symbols.find((item) => item.localId === ownerId && item.kind === "method");
+        const proof = facts && ownerId ? messageCallableKey(facts, callable[0], ownerId) : undefined;
+        const matchingOwners = facts?.symbols.filter((item) => item.kind === "method" && messageCallableKey(facts, callable[0], item.localId)?.join("\0") === callable.join("\0")) ?? [];
+        const ownerGraphId = owner && createGraphNodeId(repositoryId, callable[0], "method", owner.declaredQualifiedName ?? owner.name);
+        if (!sourceRef || !proof || proof.join("\0") !== callable.join("\0") || matchingOwners.length !== 1 || matchingOwners[0]?.localId !== ownerId || ownerGraphId !== sourceId) {
+          throw new TypeError("Message consumer has no matching persisted callable scope proof");
+        }
+      }
+      const capability = messageCapability(entity.ref.framework, identity);
+      if (!capability || !detections.some((detection) => detection.framework === entity.ref.framework && detection.scope === identity[0]
+        && detection.observed && detection.capabilities.includes(capability))) {
+        throw new TypeError("Message consumer has no matching observed capability detection");
+      }
+    }
   }
 
   const diagnostics = dedupeRecords((value.diagnostics as unknown[]).map(normalizeDiagnostic), frameworkDiagnosticKey, "diagnostics");
   const coverage = dedupeRecords((value.coverage as unknown[]).map(normalizeCoverage), (record) => stableJson([record.framework, record.capability, record.relativePath, record.strategy, record.outputKind, record.kind]), "coverage");
   const config = dedupeRecords((value.config as unknown[]).map(normalizeConfig), (record) => stableJson([record.relativePath, record.scope, record.inputKey, record.kind]), "config");
-  const detections = dedupeRecords((value.detections as unknown[]).map(normalizeDetection), (record) => stableJson([record.framework, record.scope]), "detections");
   const dependencies = dedupeRecords((value.dependencies as unknown[]).map(normalizeDependency), (record) => stableJson([record.framework, record.scope, record.ownerPath, ...(record.framework === "react" ? record.lookupKeys : [])]), "dependencies");
   const result: FrameworkMaterialization = { frameworkResolutionVersion: value.frameworkResolutionVersion, entities, relationships, classifications, diagnostics, coverage, config, detections, dependencies, complete: value.complete };
   stableJson(result, MAX_FRAMEWORK_STATE_JSON_LENGTH);
@@ -1468,15 +1594,33 @@ export class AtlasStore {
     }
   }
 
+  private loadMessageSourceFacts(repositoryId: string, generationId: string, paths: readonly string[]): ReadonlyMap<string, ParsedFactsBlob> {
+    if (paths.length === 0) return new Map();
+    const rows = this.database.prepare(
+      `SELECT relative_path, fact_blob_key FROM file_fact_bindings
+       WHERE repository_id = ? AND generation_id = ? AND relative_path IN (${paths.map(() => "?").join(", ")})`,
+    ).all(repositoryId, generationId, ...paths) as Array<{ relative_path: string; fact_blob_key: FactBlobKey }>;
+    const result = new Map<string, ParsedFactsBlob>();
+    for (const row of rows) {
+      const payload = this.getFactBlob(row.fact_blob_key);
+      if (!payload) continue;
+      try { result.set(row.relative_path, JSON.parse(payload) as ParsedFactsBlob); }
+      catch { /* A missing or corrupt proof fails closed when the callable is validated. */ }
+    }
+    return result;
+  }
+
   writeCandidateFramework(generationId: string, materialization: FrameworkMaterialization): void {
     if (this.readOnly) throw new Error("AtlasStore is read-only");
     this.database.exec("BEGIN IMMEDIATE;");
     try {
       const generation = this.generationRepository(generationId);
       const languageNodeRows = this.database.prepare(
-        "SELECT id, type FROM generation_symbols WHERE repository_id = ? AND generation_id = ?",
-      ).all(generation.repository_id, generationId) as Array<{ id: string; type: string }>;
-      const normalized = normalizeMaterialization(materialization, new Map(languageNodeRows.map((row) => [row.id, row.type])));
+        "SELECT id, type, name, qualified_name, file_path FROM generation_symbols WHERE repository_id = ? AND generation_id = ?",
+      ).all(generation.repository_id, generationId) as Array<{ id: string; type: string; name: string; qualified_name: string | null; file_path: string }>;
+      const languageNodes = new Map(languageNodeRows.map((row) => [row.id, { type: row.type, name: row.name, qualifiedName: row.qualified_name, file: row.file_path }]));
+      const sourceFacts = this.loadMessageSourceFacts(generation.repository_id, generationId, messageConsumerFiles(materialization.entities));
+      const normalized = normalizeMaterialization(materialization, languageNodes, generation.repository_id, sourceFacts);
 
       for (const table of [
         "generation_framework_entities",
@@ -2794,10 +2938,11 @@ export class AtlasStore {
       const config = parseJson(state.config_json, MAX_FRAMEWORK_STATE_JSON_LENGTH);
       const detections = parseJson(state.detections_json, MAX_FRAMEWORK_STATE_JSON_LENGTH);
       const dependencies = parseJson(state.dependencies_json, MAX_FRAMEWORK_STATE_JSON_LENGTH);
-      const languageNodeTypes = new Map((this.database.prepare(
-        "SELECT id, type FROM generation_symbols WHERE repository_id = ? AND generation_id = ?",
-      ).all(repositoryId, generationId) as Array<{ id: string; type: string }>).map((row) => [row.id, row.type]));
-      const normalized = normalizeMaterialization({ frameworkResolutionVersion: state.framework_resolution_version, entities, relationships, classifications, diagnostics, coverage, config, detections, dependencies, complete: state.complete === 1 && (!expectedFrameworkVersion || expectedFrameworkVersion === state.framework_resolution_version) }, languageNodeTypes);
+      const languageNodes = new Map((this.database.prepare(
+        "SELECT id, type, name, qualified_name, file_path FROM generation_symbols WHERE repository_id = ? AND generation_id = ?",
+      ).all(repositoryId, generationId) as Array<{ id: string; type: string; name: string; qualified_name: string | null; file_path: string }>).map((row) => [row.id, { type: row.type, name: row.name, qualifiedName: row.qualified_name, file: row.file_path }]));
+      const sourceFacts = this.loadMessageSourceFacts(repositoryId, generationId, messageConsumerFiles(entities));
+      const normalized = normalizeMaterialization({ frameworkResolutionVersion: state.framework_resolution_version, entities, relationships, classifications, diagnostics, coverage, config, detections, dependencies, complete: state.complete === 1 && (!expectedFrameworkVersion || expectedFrameworkVersion === state.framework_resolution_version) }, languageNodes, repositoryId, sourceFacts);
       return { repositoryId, generationId, ...normalized };
     } catch {
       return undefined;

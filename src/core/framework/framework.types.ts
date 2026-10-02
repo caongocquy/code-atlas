@@ -1,4 +1,5 @@
 import type { ScheduledMetadata, ScheduledUnsupportedReason } from "./framework-scheduled.js";
+import type { MessageMetadata, MessageUnsupportedReason } from "./framework-message.js";
 import type {
   MaterializedFileFacts,
   SourceRangeFact,
@@ -7,7 +8,7 @@ import type { CodeGraph } from "../graph/types.js";
 
 export type FrameworkId = "react" | "next" | "nestjs" | "spring" | "flutter";
 
-export type FrameworkEntityKind = "route" | "layout" | "graphql_operation" | "graphql_field" | "scheduled_job";
+export type FrameworkEntityKind = "route" | "layout" | "graphql_operation" | "graphql_field" | "scheduled_job" | "message_consumer";
 
 export interface FrameworkEntityRef {
   framework: FrameworkId;
@@ -25,6 +26,7 @@ export type FrameworkRelationKind =
   | "layout_binding"
   | "controller_route"
   | "scheduled_handler"
+  | "message_handler"
   | "graphql_resolver"
   | "module_provider"
   | "dependency_injection"
@@ -36,6 +38,7 @@ export type FrameworkClassificationKind = "execution_boundary";
 
 export type FrameworkDiagnosticCode =
   | "framework_schedule_unsupported"
+  | "framework_message_unsupported"
   | "framework_construct_unsupported"
   | "framework_target_ambiguous"
   | "framework_target_unknown"
@@ -83,6 +86,7 @@ export interface FrameworkEntity {
   ref: FrameworkEntityRef;
   displayName: string;
   scheduledMetadata?: ScheduledMetadata;
+  messageMetadata?: MessageMetadata;
   provenance: FrameworkProvenance;
 }
 
@@ -108,6 +112,7 @@ export interface FrameworkEntityObservation {
   ref: FrameworkEntityRef;
   displayName: string;
   scheduledMetadata?: ScheduledMetadata;
+  messageMetadata?: MessageMetadata;
   declarationKey: string;
   confidence: "exact" | "strong" | "weak";
   refs: readonly FrameworkEvidenceRef[];
@@ -115,6 +120,7 @@ export interface FrameworkEntityObservation {
 
 export interface FrameworkEvidenceBase {
   scheduledUnsupportedReason?: ScheduledUnsupportedReason;
+  messageUnsupportedReason?: MessageUnsupportedReason;
   evidenceId: string;
   framework: FrameworkId;
   adapterId: string;
