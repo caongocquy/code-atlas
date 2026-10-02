@@ -1,3 +1,4 @@
+import { collectScheduledEvidence } from "../framework-scheduled.js";
 import type { ParsedFactsBlob } from "../../facts/facts.types.js";
 import type { SyntaxObservation } from "../../facts/objective-syntax.types.js";
 import { frameworkEntityKey } from "../framework-identity.js";
@@ -24,11 +25,13 @@ function detect(ctx: Parameters<FrameworkSemanticAdapter["detect"]>[0]): readonl
   if (!configured && !observed) return [];
   const graphql = ctx.facts.some((item) => item.facts.imports.some((value) => value.moduleSpecifier.startsWith("org.springframework.graphql.data.method.annotation.")));
   const annotations = ctx.facts.flatMap((item) => item.facts.frameworkSyntax?.nodes.filter((node) => node.kind === "annotation").map((node) => node.name) ?? []);
+  const scheduling = ctx.facts.some((item) => item.facts.imports.some((value) => value.moduleSpecifier === "org.springframework.scheduling.annotation.Scheduled"));
   const capabilities = [
     ...(["RequestMapping", "GetMapping", "PostMapping", "PutMapping", "PatchMapping", "DeleteMapping"].some((name) => annotations.includes(name)) ? ["spring.routes"] : []),
     ...(ctx.facts.some((item) => item.facts.parameters?.some((parameter) => !!parameter.typeText)) ? ["spring.injection"] : []),
     ...(annotations.includes("Bean") ? ["spring.beans"] : []),
     ...(graphql ? ["spring.graphql"] : []),
+    ...(scheduling ? ["spring.scheduling"] : []),
   ];
   const refs = ctx.config.filter((item) => item.kind === "maven" || item.kind === "gradle").map((item) => ({ relativePath: item.relativePath, inputKey: item.inputKey }));
   return [{ framework: "spring", scope: "root", configured, observed, capabilities, refs, complete: ctx.config.every((item) => item.complete) }];
@@ -97,7 +100,7 @@ function collectSpringGraphqlEvidence(ctx: FrameworkAnalysisContext): FrameworkA
         : imported === "SubscriptionMapping" ? "subscription" : imported === "SchemaMapping" || imported === "BatchMapping" ? "field" : undefined;
       if (!operationKind) {
         const imported = imports.find((item) => item.localName === annotation.name && item.moduleSpecifier.startsWith("org.springframework.graphql.data.method.annotation."));
-        if (imported) evidence.push({ evidenceId: `spring-graphql:${materialized.relativePath}:${annotation.id}`, framework: "spring", adapterId: "spring", adapterVersion: "1.2.0",
+        if (imported) evidence.push({ evidenceId: `spring-graphql:${materialized.relativePath}:${annotation.id}`, framework: "spring", adapterId: "spring", adapterVersion: "1.3.0",
           strategy: "controller.import-unsupported", capability: "spring.graphql", relativePath: materialized.relativePath, origin: "framework_inferred", confidence: "exact",
           refs: [{ relativePath: materialized.relativePath, inputKey: `facts:${materialized.relativePath}`, localId: annotation.id, range: annotation.range }],
           entities: [], applicable: true, supported: false, attempted: true, state: "unsupported", outputKind: "relationship", relationKind: "graphql_resolver", sourceCandidates: [], targetCandidates: [] });
@@ -127,7 +130,7 @@ function collectSpringGraphqlEvidence(ctx: FrameworkAnalysisContext): FrameworkA
       const refs = [{ relativePath: materialized.relativePath, inputKey: `facts:${materialized.relativePath}`, localId: annotation.id, range: annotation.range },
         ...classMappings.map((item) => ({ relativePath: materialized.relativePath, inputKey: `facts:${materialized.relativePath}`, localId: item.id, range: item.range }))];
       evidence.push({
-        evidenceId: `spring-graphql:${materialized.relativePath}:${annotation.id}`, framework: "spring", adapterId: "spring", adapterVersion: "1.2.0",
+        evidenceId: `spring-graphql:${materialized.relativePath}:${annotation.id}`, framework: "spring", adapterId: "spring", adapterVersion: "1.3.0",
         strategy: imported === "BatchMapping" ? "controller.batch-mapping" : imported === "SchemaMapping" ? "controller.schema-mapping"
           : imported === "SubscriptionMapping" ? "controller.subscription-mapping" : "controller.graphql-mapping", capability: "spring.graphql", relativePath: materialized.relativePath, origin: "framework_inferred", confidence: "exact", refs,
         entities: accepted && ref && ownerClass ? [{ ref, displayName: `${operationKind}.${fieldName} (${ownerClass.qualifiedName ?? ownerClass.name})`, declarationKey: `graphql:${materialized.relativePath}:${annotation.id}`, confidence: "exact", refs }] : [],
@@ -151,7 +154,7 @@ export function collectSpringBeanEvidence(ctx: FrameworkAnalysisContext): Framew
         const methods = annotation.ownerSymbolId ? graphNodes.filter((node) => node.id === annotation.ownerSymbolId && node.type === "method") : [];
         for (const method of methods) {
           const owners = graphNodes.filter((node) => node.type === "class" && ctx.graph.edges.some((edge) => edge.type === "contains" && edge.from === node.id && edge.to === method.id));
-          evidence.push({ evidenceId: `spring-bean:${materialized.relativePath}:${annotation.id}`, framework: "spring", adapterId: "spring", adapterVersion: "1.2.0", strategy: "bean.factory-method", capability: "spring.beans", relativePath: materialized.relativePath, origin: "framework_inferred", confidence: "exact", refs: [{ relativePath: materialized.relativePath, inputKey: `facts:${materialized.relativePath}`, localId: annotation.id, range: annotation.range }], entities: [], applicable: true, supported: true, attempted: true, state: "candidate", outputKind: "relationship", relationKind: "bean_relationship", sourceCandidates: owners.map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id })), targetCandidates: [{ kind: "language", nodeId: method.id }] });
+          evidence.push({ evidenceId: `spring-bean:${materialized.relativePath}:${annotation.id}`, framework: "spring", adapterId: "spring", adapterVersion: "1.3.0", strategy: "bean.factory-method", capability: "spring.beans", relativePath: materialized.relativePath, origin: "framework_inferred", confidence: "exact", refs: [{ relativePath: materialized.relativePath, inputKey: `facts:${materialized.relativePath}`, localId: annotation.id, range: annotation.range }], entities: [], applicable: true, supported: true, attempted: true, state: "candidate", outputKind: "relationship", relationKind: "bean_relationship", sourceCandidates: owners.map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id })), targetCandidates: [{ kind: "language", nodeId: method.id }] });
         }
       }
       const syntax = materialized.facts.frameworkSyntax;
@@ -178,7 +181,7 @@ export function collectSpringBeanEvidence(ctx: FrameworkAnalysisContext): Framew
         if (canonical.kind !== "canonical") continue;
         const refs = [{ relativePath: materialized.relativePath, inputKey: `facts:${materialized.relativePath}`, localId: annotation.id, range: annotation.range }];
         const entity = { ref: canonical.ref, displayName: canonical.ref.logicalKey, declarationKey: `route:${materialized.relativePath}:${annotation.id}`, confidence: "exact" as const, refs };
-        evidence.push({ evidenceId: `spring-route:${materialized.relativePath}:${annotation.id}`, framework: "spring", adapterId: "spring", adapterVersion: "1.2.0", strategy: "request-mapping", capability: "spring.routes", relativePath: materialized.relativePath, origin: "framework_inferred", confidence: "exact", refs, entities: [entity], applicable: true, supported: true, attempted: true, state: "candidate", outputKind: "relationship", relationKind: "controller_route", sourceCandidates: [{ kind: "language", nodeId: owner.id }], targetCandidates: [{ kind: "framework", entity: canonical.ref }] });
+        evidence.push({ evidenceId: `spring-route:${materialized.relativePath}:${annotation.id}`, framework: "spring", adapterId: "spring", adapterVersion: "1.3.0", strategy: "request-mapping", capability: "spring.routes", relativePath: materialized.relativePath, origin: "framework_inferred", confidence: "exact", refs, entities: [entity], applicable: true, supported: true, attempted: true, state: "candidate", outputKind: "relationship", relationKind: "controller_route", sourceCandidates: [{ kind: "language", nodeId: owner.id }], targetCandidates: [{ kind: "framework", entity: canonical.ref }] });
       }
   }
   return { evidence, dependencies: [] };
@@ -193,18 +196,18 @@ export function collectSpringInjectionEvidence(ctx: FrameworkAnalysisContext): F
       if (!parameter.typeText || !parameter.ownerSymbolId) continue;
       const owners = graphNodes.filter((node) => node.id === parameter.ownerSymbolId);
       const providers = ctx.graph.nodes.filter((node) => node.type !== "file" && node.name === parameter.typeText);
-      evidence.push({ evidenceId: `spring-inject:${materialized.relativePath}:${parameter.localId}`, framework: "spring", adapterId: "spring", adapterVersion: "1.2.0", strategy: "autowired.constructor", capability: "spring.injection", relativePath: materialized.relativePath, origin: "framework_inferred", confidence: "exact", refs: [{ relativePath: materialized.relativePath, inputKey: `facts:${materialized.relativePath}`, localId: parameter.localId, range: parameter.range }], entities: [], applicable: true, supported: true, attempted: true, state: "candidate", outputKind: "relationship", relationKind: "dependency_injection", sourceCandidates: owners.map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id })), targetCandidates: providers.map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id })) });
+      evidence.push({ evidenceId: `spring-inject:${materialized.relativePath}:${parameter.localId}`, framework: "spring", adapterId: "spring", adapterVersion: "1.3.0", strategy: "autowired.constructor", capability: "spring.injection", relativePath: materialized.relativePath, origin: "framework_inferred", confidence: "exact", refs: [{ relativePath: materialized.relativePath, inputKey: `facts:${materialized.relativePath}`, localId: parameter.localId, range: parameter.range }], entities: [], applicable: true, supported: true, attempted: true, state: "candidate", outputKind: "relationship", relationKind: "dependency_injection", sourceCandidates: owners.map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id })), targetCandidates: providers.map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id })) });
     }
   }
   return { evidence, dependencies: [] };
 }
 
 export const springAdapter: FrameworkSemanticAdapter = {
-  id: "spring", version: "1.2.0", frameworks: ["spring"], detect,
+  id: "spring", version: "1.3.0", frameworks: ["spring"], detect,
   analyze: (ctx: FrameworkAnalysisContext): FrameworkAdapterResult => {
     const beans = collectSpringBeanEvidence(ctx);
     const injection = collectSpringInjectionEvidence(ctx);
     const graphql = collectSpringGraphqlEvidence(ctx);
-    return { evidence: [...beans.evidence, ...injection.evidence, ...graphql.evidence], dependencies: [...beans.dependencies, ...injection.dependencies, ...graphql.dependencies] };
+    return { evidence: [...beans.evidence, ...injection.evidence, ...graphql.evidence, ...collectScheduledEvidence(ctx, "spring")], dependencies: [...beans.dependencies, ...injection.dependencies, ...graphql.dependencies, ...ctx.facts.filter((f) => ctx.analyzePaths.has(f.relativePath) && f.facts.imports.some((i) => i.moduleSpecifier === "org.springframework.scheduling.annotation.Scheduled")).map((f) => ({ framework: "spring" as const, scope: "root", ownerPath: f.relativePath, inputKeys: [`facts:${f.relativePath}`], lookupKeys: [], complete: f.facts.frameworkSyntax?.complete === true }))] };
   },
 };

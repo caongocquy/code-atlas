@@ -1,3 +1,4 @@
+import type { ScheduledMetadata, ScheduledUnsupportedReason } from "./framework-scheduled.js";
 import type {
   MaterializedFileFacts,
   SourceRangeFact,
@@ -6,7 +7,7 @@ import type { CodeGraph } from "../graph/types.js";
 
 export type FrameworkId = "react" | "next" | "nestjs" | "spring" | "flutter";
 
-export type FrameworkEntityKind = "route" | "layout" | "graphql_operation" | "graphql_field";
+export type FrameworkEntityKind = "route" | "layout" | "graphql_operation" | "graphql_field" | "scheduled_job";
 
 export interface FrameworkEntityRef {
   framework: FrameworkId;
@@ -23,6 +24,7 @@ export type FrameworkRelationKind =
   | "route_binding"
   | "layout_binding"
   | "controller_route"
+  | "scheduled_handler"
   | "graphql_resolver"
   | "module_provider"
   | "dependency_injection"
@@ -33,6 +35,7 @@ export type FrameworkRelationKind =
 export type FrameworkClassificationKind = "execution_boundary";
 
 export type FrameworkDiagnosticCode =
+  | "framework_schedule_unsupported"
   | "framework_construct_unsupported"
   | "framework_target_ambiguous"
   | "framework_target_unknown"
@@ -79,6 +82,7 @@ export interface FrameworkProvenance {
 export interface FrameworkEntity {
   ref: FrameworkEntityRef;
   displayName: string;
+  scheduledMetadata?: ScheduledMetadata;
   provenance: FrameworkProvenance;
 }
 
@@ -103,12 +107,14 @@ export type FrameworkAcceptedOutput = FrameworkRelationship | FrameworkClassific
 export interface FrameworkEntityObservation {
   ref: FrameworkEntityRef;
   displayName: string;
+  scheduledMetadata?: ScheduledMetadata;
   declarationKey: string;
   confidence: "exact" | "strong" | "weak";
   refs: readonly FrameworkEvidenceRef[];
 }
 
 export interface FrameworkEvidenceBase {
+  scheduledUnsupportedReason?: ScheduledUnsupportedReason;
   evidenceId: string;
   framework: FrameworkId;
   adapterId: string;

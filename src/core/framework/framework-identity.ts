@@ -1,3 +1,4 @@
+import { decodeScheduledIdentity } from "./framework-scheduled.js";
 import type {
   FrameworkAcceptedOutput,
   FrameworkClassification,
@@ -23,6 +24,7 @@ const RELATION_KINDS: readonly FrameworkRelationKind[] = [
   "layout_binding",
   "controller_route",
   "graphql_resolver",
+  "scheduled_handler",
   "module_provider",
   "dependency_injection",
   "bean_relationship",
@@ -136,7 +138,8 @@ function isFrameworkEntityRef(value: unknown): value is FrameworkEntityRef {
   return isRecord(value)
     && hasOnlyKeys(value, ["framework", "kind", "logicalKey"])
     && FRAMEWORK_IDS.includes(value.framework as FrameworkId)
-    && ((value.kind === "graphql_operation"
+    && ((value.kind === "scheduled_job" && decodeScheduledIdentity(value.framework as FrameworkId, value.logicalKey) !== undefined)
+      || (value.kind === "graphql_operation"
       && (value.framework === "nestjs" || value.framework === "spring")
       && isCanonicalGraphqlOperationKey(value.logicalKey))
       || (value.kind === "graphql_field"
@@ -290,6 +293,9 @@ export function decodeFrameworkAcceptedOutput(payload: unknown): FrameworkAccept
       && isSubjectRef(value.source)
       && isSubjectRef(value.target)
       && RELATION_KINDS.includes(value.relationKind as FrameworkRelationKind)
+      && (value.relationKind !== "scheduled_handler"
+        || (value.source.kind === "language" && value.target.kind === "framework"
+          && value.target.entity.kind === "scheduled_job" && value.target.entity.framework === value.provenance.framework))
       && (value.relationKind !== "graphql_resolver"
         || (value.source.kind === "language"
           && value.target.kind === "framework"
