@@ -27,6 +27,11 @@ async function main(): Promise<void> {
     return;
   }
   switch (command) {
+    case "workspace": {
+      const { runWorkspaceCommand } = await import("./adapters/cli/workspace.command.js");
+      await runWorkspaceCommand(args);
+      return;
+    }
     case "mcp": {
       const { runMcpServer } = await import("./adapters/mcp/mcp-server.js");
       await runMcpServer();
