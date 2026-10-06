@@ -16,14 +16,14 @@ export function reserveWorkspaceRead(budget: WorkspaceReadBudget, records: numbe
   budget.materializedBytes += bytes; budget.inspectedRecords += records;
 }
 
-type Snapshot = { generationId: string; updatedAt: string; versions: IndexVersionDomains; mayBeIncomplete: boolean; complete: boolean; diagnostics: string[]; evidence: WorkspaceEvidenceRef[] };
+export type WorkspaceSnapshot = { generationId: string; updatedAt: string; versions: IndexVersionDomains; mayBeIncomplete: boolean; complete: boolean; diagnostics: string[]; evidence: WorkspaceEvidenceRef[] };
 
-export function readWorkspaceMetadata(databasePath: string, identity: RepositoryIdentity, budget: WorkspaceReadBudget): Snapshot {
+export function readWorkspaceMetadata(databasePath: string, identity: RepositoryIdentity, budget: WorkspaceReadBudget, options?: { profile: "messaging"; read: (database: DatabaseSync, snapshot: WorkspaceSnapshot, inspectedRecords: number) => void }): WorkspaceSnapshot {
   checkWorkspaceDeadline(budget);
   // Always use a live read-only connection: immutable=1 is unsafe if a writer creates WAL after open.
   const database = new DatabaseSync(`${pathToFileURL(databasePath).href}?mode=ro`, { readOnly: true });
   let transaction = false;
-  let validated: Snapshot | undefined;
+  let validated: WorkspaceSnapshot | undefined;
   let records = 0;
   const row = <T>(sql: string, params: SQLInputValue[], textFields: string[]): T | undefined => {
     checkWorkspaceDeadline(budget);
@@ -59,12 +59,18 @@ export function readWorkspaceMetadata(databasePath: string, identity: Repository
     let versions: IndexVersionDomains;
     try { versions = JSON.parse(generation.versions_json) as IndexVersionDomains; } catch { throw new WorkspaceReadError("generation_versions_invalid", "incompatible"); }
     if (!versions || typeof versions !== "object" || Array.isArray(versions)) throw new WorkspaceReadError("generation_versions_invalid", "incompatible");
-    for (const [domain, supported] of Object.entries({ ...CURRENT_INDEX_VERSION_DOMAINS, reliabilityVersion: RELIABILITY_VERSION })) {
+    if (!options) for (const [domain, supported] of Object.entries({ ...CURRENT_INDEX_VERSION_DOMAINS, reliabilityVersion: RELIABILITY_VERSION })) {
       if (versions[domain as keyof IndexVersionDomains] !== supported) throw new WorkspaceReadError("semantic_domain_unsupported", "incompatible");
     }
     // Expose only supported semantic metadata, never arbitrary JSON fields from an index.
-    versions = { ...CURRENT_INDEX_VERSION_DOMAINS, reliabilityVersion: RELIABILITY_VERSION };
+    versions = options ? Object.fromEntries(Object.keys({ ...CURRENT_INDEX_VERSION_DOMAINS, reliabilityVersion: RELIABILITY_VERSION }).map(key => [key, versions[key as keyof IndexVersionDomains]])) as IndexVersionDomains : { ...CURRENT_INDEX_VERSION_DOMAINS, reliabilityVersion: RELIABILITY_VERSION };
     validated = { generationId, updatedAt: generation.created_at, versions, mayBeIncomplete: true, complete: false, diagnostics: [], evidence: [] };
+    if (options) {
+      options.read(database, validated, records);
+      checkWorkspaceDeadline(budget);
+      database.exec("COMMIT;"); transaction = false;
+      return { ...validated, complete: true };
+    }
     const remaining = Math.min(WORKSPACE_BOUNDS.maxRecordsPerRepository - records, budget.remainingRecords);
     const scope = [identity.id, generationId];
     const size = database.prepare(`SELECT count(*) AS count, coalesce(sum(length(CAST(file_path AS BLOB))), 0) AS bytes FROM (SELECT file_path FROM generation_graph_resolution_files WHERE repository_id = ? AND generation_id = ? ORDER BY file_path LIMIT ?)`).get(...scope, remaining + 1) as { count: number; bytes: number };

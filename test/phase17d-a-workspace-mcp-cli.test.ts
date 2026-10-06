@@ -27,7 +27,7 @@ test("workspace_map tools/list and real MCP calls preserve explicit membership, 
     const tools = (await client.listTools()).tools;
     const tool = tools.find(tool => tool.name === "workspace_map"); assert.ok(tool);
     assert.deepEqual(tool.annotations, { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
-    assert.equal(tools.some(tool => ["workspace_links", "workspace_message_links"].includes(tool.name)), false);
+    assert.equal(tools.some(tool => ["workspace_links"].includes(tool.name)), false);
     for (const args of [{}, { repositories: [repo], workspacePath: "x" }]) {
       assert.equal((await client.callTool({ name: "workspace_map", arguments: args })).isError, true);
     }

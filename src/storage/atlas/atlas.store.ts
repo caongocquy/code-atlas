@@ -3066,3 +3066,22 @@ export class AtlasStore {
     this.database.close();
   }
 }
+
+// Read-only compact messaging readers share the persisted C-D validators.
+export function decodeMessageConsumerRecord(payload: string, key: string): FrameworkEntity {
+  const entity = normalizeEntity(parseJson(payload));
+  if (entity.ref.kind !== "message_consumer" || frameworkEntityKey(entity.ref) !== key) throw new TypeError("Corrupt message consumer key");
+  return entity;
+}
+
+export function decodeMessageRelationshipRecord(payload: string, key: string): FrameworkRelationship {
+  const output = normalizeAcceptedOutput(parseJson(payload));
+  if (output.outputKind !== "relationship" || stableJson([frameworkSubjectKey(output.source), frameworkSubjectKey(output.target), output.relationKind]) !== key) throw new TypeError("Corrupt framework relationship key");
+  return output;
+}
+
+export function validateMessageConsumerSlice(repositoryId: string, frameworkResolutionVersion: string,
+  entities: FrameworkEntity[], relationships: FrameworkRelationship[], nodes: GraphNode[], detections: unknown[], sourceFacts: ReadonlyMap<string, ParsedFactsBlob>): FrameworkMaterialization {
+  return normalizeMaterialization({ frameworkResolutionVersion, entities, relationships, classifications: [], diagnostics: [], coverage: [], config: [], detections, dependencies: [], complete: false },
+    new Map(nodes.map(node => [node.id, { type: node.type, name: node.name, qualifiedName: node.qualifiedName ?? null, file: node.file }])), repositoryId, sourceFacts);
+}
