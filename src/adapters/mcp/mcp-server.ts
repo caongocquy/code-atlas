@@ -1,3 +1,5 @@
+import { queryWorkspaceMessageLinks } from "../../core/workspace/workspace-message-links.service.js";
+import type { WorkspaceMessageLinksInput } from "../../core/workspace/workspace-message-links.types.js";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -143,6 +145,7 @@ const toolAnnotations: Record<string, McpToolAnnotations> = {
   list_communities: readOnlyAnnotations,
   repository_map: readOnlyAnnotations,
   workspace_map: readOnlyAnnotations,
+  workspace_message_links: readOnlyAnnotations,
   list_entries: readOnlyAnnotations,
   message_links: readOnlyAnnotations,
   get_community: readOnlyAnnotations,
@@ -1051,6 +1054,24 @@ export function createMcpServer(): McpServer {
   }).strict().refine(args => (args.repositories !== undefined) !== (args.workspacePath !== undefined), { message: "Choose exactly one of repositories or workspacePath." }), async args => {
     try { return await queryWorkspaceMap(args as WorkspaceMapInput); }
     catch (error) { if (error instanceof WorkspaceMapError) throw new McpToolError(error.code, error.message); throw error; }
+  });
+
+  registerJsonTool(server, "workspace_message_links", "Read statically compatible declared producer/consumer mappings across explicit workspace repositories. Cross-repository only; freshness, delivery, broker/cluster, transport and deployment connectivity are unverified. Compare target generation with a later execution_flow response.", z.object({
+    repositories: z.array(z.string().min(1).max(WORKSPACE_BOUNDS.maxPathLength)).min(1).max(WORKSPACE_BOUNDS.maxRepositories).optional(),
+    workspacePath: z.string().min(1).max(WORKSPACE_BOUNDS.maxPathLength).optional(),
+    sourceRepositoryId: z.string().min(1).max(WORKSPACE_BOUNDS.maxPathLength).optional(),
+    targetRepositoryId: z.string().min(1).max(WORKSPACE_BOUNDS.maxPathLength).optional(),
+    producerSymbol: queryInput.optional(), consumerId: queryInput.optional(),
+    protocolKind: z.enum(["unspecified", "kafka"]).optional(),
+    destination: z.string().min(1).max(WORKSPACE_BOUNDS.maxPathLength).optional(),
+    limit: z.number().int().min(1).max(WORKSPACE_BOUNDS.maxDetailLimit).optional(),
+    detail: z.enum(["compact", "full"]).optional(),
+  }).strict(), async args => {
+    try { return await queryWorkspaceMessageLinks(args as WorkspaceMessageLinksInput); }
+    catch (error) {
+      if (error instanceof WorkspaceMapError || error instanceof MessageLinksError) throw new McpToolError(error.code, error.message);
+      throw error;
+    }
   });
 
   registerJsonTool(server, "repository_map", "Summarize configured architecture areas or inferred graph communities, directed dependencies, framework entry facets, and incomplete evidence.", z.object({
