@@ -11,6 +11,7 @@ const groups: HelpGroup[] = [
       ["index [path]", "Build the graph and lexical indexes"],
       ["sync [path]", "Update indexes from repository changes"],
       ["status [path]", "Show repository and capability status"],
+      ["workspace map", "Read explicit workspace index membership and health"],
       ["semantic <setup|status|test|upgrade|disable|clean>", "Manage optional semantic search"],
       ["context-read [path]", "Read a file with explicit context reuse"],
       ["context-compile [path]", "Compile bounded task context subjects"],
@@ -56,6 +57,15 @@ const groups: HelpGroup[] = [
 ];
 
 const details: Record<string, string[]> = {
+  workspace: [
+    "Usage: code-atlas workspace map --repo <path> [--repo <path>] | --workspace <config>",
+    "", "Read existing indexes only; source freshness remains unknown. No repository discovery.",
+    "", "Options:", "  --repo <path>       Select an indexed root (repeatable, maximum 16)",
+    "  --workspace <path>  Explicit workspace config v1; members relative to its directory",
+    "  --limit <n>         Global returned detail budget, 1 to 1000 (default 100)",
+    "  --full              Include bounded namespaced evidence details", "  --json              Print machine-readable output",
+    "", "Exit: 0 for available/partial results; 1 for invalid requests or all-unavailable results.",
+  ],
   init: [
     "Usage: code-atlas init [path] [options]",
     "",

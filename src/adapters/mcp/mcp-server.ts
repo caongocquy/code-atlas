@@ -33,6 +33,8 @@ import { traceGraph } from "../../core/graph/query/trace.service.js";
 import { discoverExecutionFlow } from "../../core/graph/query/execution-flow.service.js";
 import { loadArchitecturePolicy } from "../../core/architecture/architecture-policy.js";
 import { queryMessageLinks, MessageLinksError, type MessageLinksInput } from "../../core/graph/intelligence/message-links.service.js";
+import { queryWorkspaceMap, WorkspaceMapError } from "../../core/workspace/workspace-map.service.js";
+import { WORKSPACE_BOUNDS, type WorkspaceMapInput } from "../../core/workspace/workspace.types.js";
 import { buildRepositoryMap } from "../../core/graph/intelligence/repository-map.service.js";
 import type { RepositoryMap } from "../../core/graph/intelligence/repository-map.types.js";
 import { buildRepositoryEntryCatalog, filterRepositoryEntries } from "../../core/graph/intelligence/repository-entry-catalog.service.js";
@@ -140,6 +142,7 @@ const toolAnnotations: Record<string, McpToolAnnotations> = {
   inspect_retrieval: localWriteAnnotations,
   list_communities: readOnlyAnnotations,
   repository_map: readOnlyAnnotations,
+  workspace_map: readOnlyAnnotations,
   list_entries: readOnlyAnnotations,
   message_links: readOnlyAnnotations,
   get_community: readOnlyAnnotations,
@@ -1038,6 +1041,16 @@ export function createMcpServer(): McpServer {
     } finally {
       await closeProviders(providers);
     }
+  });
+
+  registerJsonTool(server, "workspace_map", "Read repository membership, pinned generations and health from explicitly selected local indexes. No source scan, automatic discovery or cross-repository semantic links; source freshness is unknown. Per-repository snapshots are consistent; the workspace is not atomic across repositories.", z.object({
+    repositories: z.array(z.string().min(1).max(WORKSPACE_BOUNDS.maxPathLength)).min(1).max(WORKSPACE_BOUNDS.maxRepositories).describe("Explicit repository roots; relative paths use the server working directory.").optional(),
+    workspacePath: z.string().min(1).max(WORKSPACE_BOUNDS.maxPathLength).describe("Explicit workspace config v1; members resolve relative to the config directory.").optional(),
+    limit: z.number().int().min(1).max(WORKSPACE_BOUNDS.maxDetailLimit).describe("One global returned detail budget; defaults to 100.").optional(),
+    detail: z.enum(["compact", "full"]).describe("compact keeps member health; full adds bounded namespaced evidence details.").optional(),
+  }).strict().refine(args => (args.repositories !== undefined) !== (args.workspacePath !== undefined), { message: "Choose exactly one of repositories or workspacePath." }), async args => {
+    try { return await queryWorkspaceMap(args as WorkspaceMapInput); }
+    catch (error) { if (error instanceof WorkspaceMapError) throw new McpToolError(error.code, error.message); throw error; }
   });
 
   registerJsonTool(server, "repository_map", "Summarize configured architecture areas or inferred graph communities, directed dependencies, framework entry facets, and incomplete evidence.", z.object({
