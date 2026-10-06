@@ -1,7 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { parse as parseJsonc, type ParseError } from "jsonc-parser";
 
 import { GRAPH_INDEX_VERSION, LEXICAL_INDEX_VERSION, VECTOR_INDEX_VERSION } from "../../config/constants.js";
 import { decodeFacts } from "../facts/facts-codec.js";
@@ -30,6 +29,7 @@ import type { ParsedFactsBlob } from "../facts/facts.types.js";
 import type { SupportedLanguage } from "../graph/parsers/types.js";
 import { AtlasStore } from "../../storage/atlas/atlas.store.js";
 import { getRepositoryIdentity, canonicalRepositoryPath } from "../repository/repository-identity.js";
+import { acquireFrameworkConfig } from "./framework-config-acquisition.js";
 import { createFileHash } from "../repository/file-hash.js";
 import { toLexicalDocumentsFromFacts } from "../lexical/lexical-index.service.js";
 import { CURRENT_INDEX_VERSION_DOMAINS, RELIABILITY_VERSION } from "../repository/index-version.js";
@@ -45,7 +45,7 @@ import type { IndexPipelineOptions, IndexingChanges, IndexRunOutcome, IndexFailu
 import { materializeFrameworkConfig, type FrameworkConfigInput } from "../framework/framework-config.js";
 import { analyzeFramework, builtinFrameworkAdapters, detectFrameworks, expandFrameworkAnalyzePaths } from "../framework/framework-registry.js";
 import { planFrameworkInvalidation } from "../framework/framework-invalidation.js";
-import type { FrameworkAnalysisContext, FrameworkConfigFact, FrameworkConfigValue } from "../framework/framework.types.js";
+import type { FrameworkAnalysisContext, FrameworkConfigFact } from "../framework/framework.types.js";
 import { frameworkMaterializationContributions } from "../reliability/reliability-incremental.js";
 import { semanticGenerationIdentity } from "../semantic/provider-identity.js";
 import type { ScipBindingEvidence } from "../graph/resolver/scip-evidence.js";
@@ -312,14 +312,6 @@ const frameworkConfigKind = (relativePath: string): FrameworkConfigInput["kind"]
   return undefined;
 };
 
-function packageObjectiveValues(source: string): { values: Readonly<Record<string, FrameworkConfigValue>>; complete: boolean } {
-  const errors: ParseError[] = [];
-  const parsed = parseJsonc(source, errors, { allowTrailingComma: true }) as unknown;
-  return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
-    ? { values: parsed as Readonly<Record<string, FrameworkConfigValue>>, complete: errors.length === 0 }
-    : { values: {}, complete: false };
-}
-
 class CacheWriteFailure extends Error {
   constructor(message: string) {
     super(message);
@@ -473,15 +465,7 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
     for (const [relativePath, contentHash] of changes.fileHashes) {
       const kind = frameworkConfigKind(relativePath);
       if (!kind) continue;
-      let values: Readonly<Record<string, FrameworkConfigValue>> = {};
-      let complete = false;
-      try {
-        const source = await fs.readFile(path.join(repoPath, relativePath), "utf8");
-        if (kind === "package" || kind === "tsconfig" || kind === "jsconfig") ({ values, complete } = packageObjectiveValues(source));
-      } catch {
-        complete = false;
-      }
-      frameworkConfigInputs.push({ relativePath, contentHash, kind, objectiveValues: values, complete });
+      frameworkConfigInputs.push(await acquireFrameworkConfig(repoPath, relativePath, kind, contentHash));
     }
     const frameworkConfig = materializeFrameworkConfig(frameworkConfigInputs);
 

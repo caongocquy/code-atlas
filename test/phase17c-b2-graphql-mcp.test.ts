@@ -202,5 +202,5 @@ for (const framework of ["nestjs", "spring"] as const) test(`B2 real ${framework
 test("B2 changes only framework materialization version", () => {
   assert.equal(FACTS_VERSION, "3.1.0");
   assert.equal(RESOLUTION_VERSION, "1.2.0");
-  assert.equal(FRAMEWORK_RESOLUTION_VERSION, "1.6.0");
+  assert.equal(FRAMEWORK_RESOLUTION_VERSION, "1.7.0");
 });
