@@ -1,3 +1,5 @@
+import { queryWorkspacePackageLinks } from "../../core/workspace/workspace-package-links.service.js";
+import { DEPENDENCY_KINDS, type WorkspacePackageLinksInput } from "../../core/workspace/workspace-package-links.types.js";
 import { queryWorkspaceMessageLinks } from "../../core/workspace/workspace-message-links.service.js";
 import type { WorkspaceMessageLinksInput } from "../../core/workspace/workspace-message-links.types.js";
 import path from "node:path";
@@ -146,6 +148,7 @@ const toolAnnotations: Record<string, McpToolAnnotations> = {
   repository_map: readOnlyAnnotations,
   workspace_map: readOnlyAnnotations,
   workspace_message_links: readOnlyAnnotations,
+  workspace_package_links: readOnlyAnnotations,
   list_entries: readOnlyAnnotations,
   message_links: readOnlyAnnotations,
   get_community: readOnlyAnnotations,
@@ -1072,6 +1075,18 @@ export function createMcpServer(): McpServer {
       if (error instanceof WorkspaceMapError || error instanceof MessageLinksError) throw new McpToolError(error.code, error.message);
       throw error;
     }
+  });
+
+  registerJsonTool(server, "workspace_package_links", "Read exact declared npm package dependency candidates across explicit workspace repositories. Certified indexed root manifests only; no installation, semver satisfaction or runtime resolution proof.", z.object({
+    repositories: z.array(z.string().min(1).max(WORKSPACE_BOUNDS.maxPathLength)).min(1).max(WORKSPACE_BOUNDS.maxRepositories).optional(),
+    workspacePath: z.string().min(1).max(WORKSPACE_BOUNDS.maxPathLength).optional(),
+    sourceRepositoryId: z.string().min(1).max(WORKSPACE_BOUNDS.maxPathLength).optional(),
+    targetRepositoryId: z.string().min(1).max(WORKSPACE_BOUNDS.maxPathLength).optional(),
+    packageName: z.string().min(1).max(214).optional(), dependencyKind: z.enum(DEPENDENCY_KINDS).optional(),
+    limit: z.number().int().min(1).max(WORKSPACE_BOUNDS.maxDetailLimit).optional(), detail: z.enum(["compact", "full"]).optional(),
+  }).strict(), async args => {
+    try { return await queryWorkspacePackageLinks(args as WorkspacePackageLinksInput); }
+    catch (error) { if (error instanceof WorkspaceMapError) throw new McpToolError(error.code, error.message); throw error; }
   });
 
   registerJsonTool(server, "repository_map", "Summarize configured architecture areas or inferred graph communities, directed dependencies, framework entry facets, and incomplete evidence.", z.object({
