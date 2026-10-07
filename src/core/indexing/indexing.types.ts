@@ -81,6 +81,27 @@ export type ChangeDetectionMode = "git" | "filesystem";
 
 export type IndexCapability = "graph" | "lexical" | "semantic";
 
+export type IndexDiagnosticPhase =
+  | "total"
+  | "unattributed"
+  | "scan"
+  | "hash"
+  | "parseFacts"
+  | "resolutionPreparation"
+  | "scipEnrichment"
+  | "resolveIndexedUnits"
+  | "graphAssembly"
+  | "graphPersistence"
+  | "frameworkDetection"
+  | "frameworkMaterialization"
+  | "frameworkPersistence"
+  | "lexicalBuild"
+  | "lexicalPersistence"
+  | "semanticBuild"
+  | "publishFinalize";
+
+export type IndexDiagnosticTimings = Partial<Record<IndexDiagnosticPhase, number>>;
+
 export type IndexingChanges = {
   changeDetection: ChangeDetectionMode;
   files: string[];
@@ -102,6 +123,7 @@ export type IndexPipelineOptions = {
     vectorStore: VectorStore;
   };
   scipIndexer?: ScipIndexer;
+  diagnosticTimings?: boolean;
 };
 
 export type IndexFailure = {
@@ -117,6 +139,7 @@ export type PublishedIndexRun = {
   plan: InvalidationPlan;
   published: true;
   counters: Readonly<IndexWorkCounters>;
+  phaseTimingsMs?: Readonly<IndexDiagnosticTimings>;
 };
 
 export type FailedIndexRun = {
@@ -125,6 +148,7 @@ export type FailedIndexRun = {
   activeGenerationId?: string;
   published: false;
   failure: IndexFailure;
+  phaseTimingsMs?: Readonly<IndexDiagnosticTimings>;
 };
 
 export type IndexRunOutcome = PublishedIndexRun | FailedIndexRun;

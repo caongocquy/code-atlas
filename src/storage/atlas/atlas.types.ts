@@ -4,6 +4,7 @@ import type { RepositoryIdentity } from "../../core/repository/repository-identi
 import type {
   FactBlobKey,
   FileFactBinding,
+  MaterializedFileFacts,
   ParsedFactsBlob,
 } from "../../core/facts/facts.types.js";
 import type { IndexGeneration, IndexManifest } from "../../core/indexing/index-manifest.js";
@@ -133,7 +134,14 @@ export type AtlasIndexGeneration = IndexGeneration;
 export type AtlasIndexManifest = IndexManifest;
 
 export type FrameworkQueryInputs = {
+  generationId?: string;
   graph: import("../../core/graph/types.js").CodeGraph;
   framework: FrameworkSnapshot | undefined;
   reliability: readonly ReliabilityContribution[];
+};
+
+export type AtlasMessageGraphQueryInputs = FrameworkQueryInputs & {
+  sourceFacts: MaterializedFileFacts[];
+  factDiagnostics: Array<{ file?: string; code: string }>;
+  generationManifest?: IndexManifest;
 };

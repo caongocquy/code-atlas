@@ -36,7 +36,8 @@ export type CliCommand =
   | "integrations"
   | "status"
   | "semantic"
-  | "sync";
+  | "sync"
+  | "workspace";
 
 const commandSubtitles: Record<CliCommand, string> = {
   "context-compile": "Task context compilation",
@@ -59,6 +60,7 @@ const commandSubtitles: Record<CliCommand, string> = {
   status: "Repository status",
   semantic: "Semantic provider lifecycle",
   sync: "Repository indexing",
+  workspace: "Workspace federation",
 };
 
 export function createCliCommandReporter(options: { command?: CliCommand; json?: boolean; quiet?: boolean } = {}): CliCommandReporter {

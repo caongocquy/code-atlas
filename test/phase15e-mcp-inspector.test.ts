@@ -21,7 +21,7 @@ const expectedTools = [
   "repository_status", "search_code", "get_symbol", "context_read", "compile_task_context",
   "start_task_context", "refresh_task_context", "close_task_context", "find_callers", "find_callees",
   "find_imports", "find_imported_by", "impact", "inspect_change", "affected_tests", "explain_incomplete",
-  "graph_delta", "architecture_drift", "change_gate", "trace", "inspect_retrieval", "list_communities",
+  "graph_delta", "architecture_drift", "change_gate", "trace", "execution_flow", "inspect_retrieval", "list_communities", "repository_map", "workspace_map", "workspace_message_links", "workspace_package_links", "list_entries", "message_links",
   "get_community", "important_symbols", "architectural_bridges", "find_cycles", "index_repository", "sync_repository",
   "semantic_setup", "semantic_status", "semantic_test", "semantic_upgrade", "semantic_disable", "semantic_clean",
 ] as const;
@@ -47,8 +47,15 @@ const expectedAnnotations: Record<string, Record<string, boolean>> = {
   architecture_drift: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   change_gate: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   trace: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  execution_flow: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   inspect_retrieval: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   list_communities: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  repository_map: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  workspace_map: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  workspace_message_links: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  workspace_package_links: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  list_entries: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  message_links: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   get_community: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   important_symbols: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   architectural_bridges: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -133,6 +140,24 @@ test("MCP Inspector v2 verifies the actual stdio server contract", { skip: inspe
     const semanticSetup = tools.find((tool) => tool.name === "semantic_setup");
     assert.equal((semanticSetup?.inputSchema as { properties?: Record<string, unknown> }).properties?.provider !== undefined, true);
     assert.equal(JSON.stringify(semanticSetup?.inputSchema).includes('"apiKey"'), false, "MCP setup must not accept a raw API key");
+
+    const workspace = runInspector("tools/call", { homePath, toolName: "workspace_map", toolArgs: { repositories: [repoPath], detail: "full" } });
+    assert.equal(workspace.status, 0, workspace.stderr);
+    const workspaceResult = jsonOutput(workspace).result as { structuredContent: { repositories: unknown[]; generationVector: unknown[] } };
+    assert.equal(workspaceResult.structuredContent.repositories.length, 1);
+    assert.equal(workspaceResult.structuredContent.generationVector.length, 1);
+
+    const messaging = runInspector("tools/call", { homePath, toolName: "workspace_message_links", toolArgs: { repositories: [repoPath], detail: "compact" } });
+    assert.equal(messaging.status, 0, messaging.stderr);
+    const messagingResult = jsonOutput(messaging).result as { structuredContent: { links: unknown[]; generationVector: unknown[] } };
+    assert.equal(messagingResult.structuredContent.links.length, 0);
+    assert.equal(messagingResult.structuredContent.generationVector.length, 1);
+
+    const packages = runInspector("tools/call", { homePath, toolName: "workspace_package_links", toolArgs: { repositories: [repoPath], detail: "compact" } });
+    assert.equal(packages.status, 0, packages.stderr);
+    const packageResult = jsonOutput(packages).result as { structuredContent: { links: unknown[]; generationVector: unknown[] } };
+    assert.equal(packageResult.structuredContent.links.length, 0);
+    assert.equal(packageResult.structuredContent.generationVector.length, 1);
 
     const status = runInspector("tools/call", { homePath, toolName: "repository_status", toolArgs: { repoPath } });
     assert.equal(status.status, 0, status.stderr);

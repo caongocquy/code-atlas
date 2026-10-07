@@ -232,6 +232,14 @@ export function resolveIndexedUnits(input: {
   reporter?: ProgressReporter;
 }): Map<string, GraphResolutionFile> {
   const result = new Map<string, GraphResolutionFile>();
+  const sourceUnitKey = (unit: SourceUnitIdentity) => JSON.stringify([unit.repositoryId, unit.relativePath, unit.language]);
+  const priorTrace = new Map<string, ResolverTraceEvent[]>();
+  for (const event of input.context.diagnostics.snapshot()) {
+    const key = sourceUnitKey(event.site.sourceUnit);
+    const bucket = priorTrace.get(key) ?? [];
+    bucket.push(event);
+    priorTrace.set(key, bucket);
+  }
   for (let index = 0; index < input.allUnits.length; index += 1) {
     const unit = input.allUnits[index];
     if (!unit) continue;
@@ -241,13 +249,23 @@ export function resolveIndexedUnits(input: {
     const decisions: ResolutionDecision[] = [];
     const sites = factsSites(unit.facts, sourceUnit);
     const siteIds = new Set(sites.map((site) => site.localId));
-    const existingTrace = input.context.diagnostics.snapshot().filter((event) => siteIds.has(event.site.localId));
-    const before = input.context.diagnostics.snapshot().length;
+    const existingTrace = (priorTrace.get(sourceUnitKey(sourceUnit)) ?? []).filter((event) => siteIds.has(event.site.localId));
+    const newTrace: ResolverTraceEvent[] = [];
+    const fileContext = {
+      ...input.context,
+      diagnostics: {
+        add(event: ResolverTraceEvent) {
+          input.context.diagnostics.add(event);
+          newTrace.push(event);
+        },
+        snapshot: () => input.context.diagnostics.snapshot(),
+      },
+    };
     const adapterRegistered = input.context.languageRegistry.some((adapter) => adapter.languages.includes(unit.facts.language));
     if (!adapterRegistered) {
       for (const site of sites) {
-        if (!input.context.diagnostics.snapshot().some((event) => event.site.localId === site.localId && event.status === "unsupported")) {
-          input.context.diagnostics.add({ site, status: "unsupported", reason: "language_capability_unsupported" });
+        if (![...existingTrace, ...newTrace].some((event) => event.site.localId === site.localId && event.status === "unsupported")) {
+          fileContext.diagnostics.add({ site, status: "unsupported", reason: "language_capability_unsupported" });
         }
         const edgeKind = unit.facts.implementations.some((item) => item.localId === site.localId) ? "implements"
           : unit.facts.inheritances.some((item) => item.localId === site.localId) ? "extends"
@@ -256,13 +274,13 @@ export function resolveIndexedUnits(input: {
       }
     } else {
       for (const site of sites) {
-        decisions.push(resolveSite({ facts: unit.facts, evidence, environment: input.context.typeEnvironment, context: input.context }, site));
+        decisions.push(resolveSite({ facts: unit.facts, evidence, environment: input.context.typeEnvironment, context: fileContext }, site));
       }
     }
     result.set(unit.relativePath, canonicalResolution({
       relativePath: unit.relativePath,
       decisions,
-      trace: [...existingTrace, ...input.context.diagnostics.snapshot().slice(before)],
+      trace: [...existingTrace, ...newTrace],
     }));
     input.reporter?.setProgress(index + 1, input.allUnits.length);
   }
@@ -495,6 +513,7 @@ export function buildCodeGraphWithResolutionFromFacts(
   repositoryId: string | undefined,
   resolutionPaths: readonly string[] | undefined,
   context: GenerationResolverContext,
+  onPhaseTiming?: (phase: "resolveIndexedUnits" | "graphAssembly", elapsedMs: number) => void,
 ): Promise<FactsGraphBuildResult>;
 export function buildCodeGraphWithResolutionFromFacts(
   repoPath: string,
@@ -509,6 +528,7 @@ export async function buildCodeGraphWithResolutionFromFacts(
   repositoryId?: string,
   resolutionPaths?: readonly string[],
   context?: GenerationResolverContext,
+  onPhaseTiming?: (phase: "resolveIndexedUnits" | "graphAssembly", elapsedMs: number) => void,
 ): Promise<GraphBuildResult | FactsGraphBuildResult> {
   if (!context) return buildCodeGraphWithResolutionFromFactsLegacy(repoPath, units, reporter, repositoryId);
   const canonical = canonicalUnits(units);
@@ -516,6 +536,7 @@ export async function buildCodeGraphWithResolutionFromFacts(
     facts: unit.facts,
     sourceUnit: sourceUnitForFacts(context.repositoryIdentity.id, unit.relativePath, unit.facts),
   })), context);
+  const resolutionStartedAt = onPhaseTiming ? performance.now() : undefined;
   const resolutionByFile = resolveIndexedUnits({
     allUnits: canonical,
     resolvePaths: new Set(resolutionPaths ?? canonical.map((unit) => unit.relativePath)),
@@ -523,7 +544,10 @@ export async function buildCodeGraphWithResolutionFromFacts(
     context,
     reporter,
   });
+  if (resolutionStartedAt !== undefined) onPhaseTiming?.("resolveIndexedUnits", performance.now() - resolutionStartedAt);
+  const assemblyStartedAt = onPhaseTiming ? performance.now() : undefined;
   const graph = assembleFactsGraph(repoPath, canonical, resolutionByFile, reporter, repositoryId);
+  if (assemblyStartedAt !== undefined) onPhaseTiming?.("graphAssembly", performance.now() - assemblyStartedAt);
   return { graph, resolutionByFile };
 }
 

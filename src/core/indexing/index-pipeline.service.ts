@@ -1,7 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { parse as parseJsonc, type ParseError } from "jsonc-parser";
 
 import { GRAPH_INDEX_VERSION, LEXICAL_INDEX_VERSION, VECTOR_INDEX_VERSION } from "../../config/constants.js";
 import { decodeFacts } from "../facts/facts-codec.js";
@@ -30,6 +29,7 @@ import type { ParsedFactsBlob } from "../facts/facts.types.js";
 import type { SupportedLanguage } from "../graph/parsers/types.js";
 import { AtlasStore } from "../../storage/atlas/atlas.store.js";
 import { getRepositoryIdentity, canonicalRepositoryPath } from "../repository/repository-identity.js";
+import { acquireFrameworkConfig } from "./framework-config-acquisition.js";
 import { createFileHash } from "../repository/file-hash.js";
 import { toLexicalDocumentsFromFacts } from "../lexical/lexical-index.service.js";
 import { CURRENT_INDEX_VERSION_DOMAINS, RELIABILITY_VERSION } from "../repository/index-version.js";
@@ -41,11 +41,11 @@ import { extractStableFacts, isModuleConfigPath, SourceRaceError, type SourceRea
 import { createIndexWorkCounters, freezeIndexWorkCounters, recordIndexWork } from "./index-work-counters.js";
 import { createCandidateResolutionInput } from "./resolution-scope.js";
 import { createResolutionScope } from "./invalidation-planner.js";
-import type { IndexPipelineOptions, IndexingChanges, IndexRunOutcome, IndexFailure, IndexedSourceUnit, PublishedIndexRun } from "./indexing.types.js";
+import type { IndexPipelineOptions, IndexingChanges, IndexRunOutcome, IndexFailure, IndexedSourceUnit, IndexDiagnosticPhase, IndexDiagnosticTimings, PublishedIndexRun } from "./indexing.types.js";
 import { materializeFrameworkConfig, type FrameworkConfigInput } from "../framework/framework-config.js";
 import { analyzeFramework, builtinFrameworkAdapters, detectFrameworks, expandFrameworkAnalyzePaths } from "../framework/framework-registry.js";
 import { planFrameworkInvalidation } from "../framework/framework-invalidation.js";
-import type { FrameworkAnalysisContext, FrameworkConfigFact, FrameworkConfigValue } from "../framework/framework.types.js";
+import type { FrameworkAnalysisContext, FrameworkConfigFact } from "../framework/framework.types.js";
 import { frameworkMaterializationContributions } from "../reliability/reliability-incremental.js";
 import { semanticGenerationIdentity } from "../semantic/provider-identity.js";
 import type { ScipBindingEvidence } from "../graph/resolver/scip-evidence.js";
@@ -303,20 +303,14 @@ export type IndexPipelineResult = PublishedIndexRun & LegacyIndexResult & {
 const frameworkConfigKind = (relativePath: string): FrameworkConfigInput["kind"] | undefined => {
   const name = path.posix.basename(relativePath);
   if (name === "package.json") return "package";
+  if (/^tsconfig(?:\.[^/]+)?\.json$/i.test(name)) return "tsconfig";
+  if (/^jsconfig(?:\.[^/]+)?\.json$/i.test(name)) return "jsconfig";
   if (/^next\.config\.(js|mjs|ts)$/.test(name)) return "next";
   if (name === "pom.xml") return "maven";
   if (name === "build.gradle" || name === "build.gradle.kts") return "gradle";
   if (name === "pubspec.yaml") return "pubspec";
   return undefined;
 };
-
-function packageObjectiveValues(source: string): { values: Readonly<Record<string, FrameworkConfigValue>>; complete: boolean } {
-  const errors: ParseError[] = [];
-  const parsed = parseJsonc(source, errors, { allowTrailingComma: true }) as unknown;
-  return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
-    ? { values: parsed as Readonly<Record<string, FrameworkConfigValue>>, complete: errors.length === 0 }
-    : { values: {}, complete: false };
-}
 
 class CacheWriteFailure extends Error {
   constructor(message: string) {
@@ -404,12 +398,40 @@ function semanticResult(
   };
 }
 
+function createPhaseTimer(enabled: boolean, pipelineStartedAt: number): {
+  start(phase: IndexDiagnosticPhase): void;
+  finish(): void;
+  record(phase: IndexDiagnosticPhase, elapsedMs: number): void;
+  snapshot(): Readonly<IndexDiagnosticTimings> | undefined;
+} {
+  if (!enabled) return { start() {}, finish() {}, record() {}, snapshot: () => undefined };
+  const timings: IndexDiagnosticTimings = {};
+  let current: IndexDiagnosticPhase | undefined;
+  let startedAt = 0;
+  const finish = () => {
+    if (current) timings[current] = (timings[current] ?? 0) + performance.now() - startedAt;
+    current = undefined;
+  };
+  return {
+    start(phase) { finish(); current = phase; startedAt = performance.now(); },
+    finish,
+    record(phase, elapsedMs) { timings[phase] = (timings[phase] ?? 0) + elapsedMs; },
+    snapshot() {
+      finish();
+      const total = performance.now() - pipelineStartedAt;
+      const measured = Object.values(timings).reduce((sum, value) => sum + value, 0);
+      return { ...timings, total, unattributed: Math.max(0, total - measured) };
+    },
+  };
+}
+
 async function runPipeline(inputPath: string, operation: "index" | "sync", options: IndexPipelineOptions): Promise<IndexRunOutcome> {
   const startedAt = performance.now();
   const repoPath = canonicalRepositoryPath(path.resolve(inputPath));
   const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
   const repoId = store.ensureRepository(getRepositoryIdentity(repoPath)).id;
   const counters = createIndexWorkCounters();
+  const phaseTimer = createPhaseTimer(options.diagnosticTimings === true, startedAt);
   const readSource: SourceReader = async (relativePath) => {
     const source = await fs.readFile(path.join(repoPath, relativePath), "utf8");
     return { source, contentHash: createFileHash(source) };
@@ -422,7 +444,7 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
   try {
     const storedLexicalVersion = store.getVersion(repoId, "lexical");
     const capabilities = options.includeSemantic ? ["graph", "lexical", "semantic"] as const : ["graph", "lexical"] as const;
-    const changes = await detectRepositoryChanges(repoPath, { store, repoId, capabilities: [...capabilities], versions: { graph: GRAPH_INDEX_VERSION, lexical: LEXICAL_INDEX_VERSION, semantic: VECTOR_INDEX_VERSION }, skipGit: options.skipGit, progress: options.progress, forceFullScan: operation === "index" || legacyRepository });
+    const changes = await detectRepositoryChanges(repoPath, { store, repoId, capabilities: [...capabilities], versions: { graph: GRAPH_INDEX_VERSION, lexical: LEXICAL_INDEX_VERSION, semantic: VECTOR_INDEX_VERSION }, skipGit: options.skipGit, progress: options.progress, forceFullScan: operation === "index" || legacyRepository, onPhaseTiming: options.diagnosticTimings ? (phase, elapsedMs) => phaseTimer.record(phase, elapsedMs) : undefined });
     recordIndexWork(counters, "filesScanned", changes.relativeFiles.length);
     recordIndexWork(counters, "filesHashed", changes.fileHashes.size);
     const previousManifest = store.getGenerationManifest(repoId);
@@ -430,6 +452,7 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
     const currentFiles = new Map<string, { contentHash: string; language: SupportedLanguage }>();
     const sources = new Map<string, string>();
 
+    phaseTimer.start("parseFacts");
     for (const relativePath of changes.relativeFiles) {
       const adapter = getLanguageAdapter(relativePath);
       const contentHash = changes.fileHashes.get(relativePath);
@@ -442,15 +465,7 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
     for (const [relativePath, contentHash] of changes.fileHashes) {
       const kind = frameworkConfigKind(relativePath);
       if (!kind) continue;
-      let values: Readonly<Record<string, FrameworkConfigValue>> = {};
-      let complete = false;
-      try {
-        const source = await fs.readFile(path.join(repoPath, relativePath), "utf8");
-        if (kind === "package") ({ values, complete } = packageObjectiveValues(source));
-      } catch {
-        complete = false;
-      }
-      frameworkConfigInputs.push({ relativePath, contentHash, kind, objectiveValues: values, complete });
+      frameworkConfigInputs.push(await acquireFrameworkConfig(repoPath, relativePath, kind, contentHash));
     }
     const frameworkConfig = materializeFrameworkConfig(frameworkConfigInputs);
 
@@ -509,7 +524,9 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       parsedFiles += 1;
       options.progress?.update?.(`Parsing repository — ${parsedFiles}/${currentFiles.size}`);
     }
+    phaseTimer.finish();
 
+    phaseTimer.start("resolutionPreparation");
     const directImporters = new Map<string, Set<string>>();
     const addImporter = (target: string, importer: string) => {
       const importers = directImporters.get(target) ?? new Set<string>();
@@ -597,6 +614,7 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       || preliminaryPlan.resolvePaths.length > 0
     );
     if (shouldRunScip && discovery.tool) {
+      phaseTimer.start("scipEnrichment");
       options.progress?.update?.("Enriching TypeScript/JavaScript bindings with SCIP");
       try {
         scipEvidence = await (options.scipIndexer ?? localScipIndexer).index({ projectRoot: repoPath, repositoryId: repoId, tool: discovery.tool, units });
@@ -608,6 +626,7 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
         scipEvidence = [];
         scipStatus = "failed";
       }
+      phaseTimer.start("resolutionPreparation");
     }
     if (scipStatus !== "ready") options.progress?.update?.("SCIP enrichment unavailable; continuing with parser-based resolution");
     const versions = { ...preliminaryVersions, scipStatus };
@@ -633,14 +652,15 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       && plan.resolvePaths.length === 0
       && plan.removedPaths.length === 0
       && previousManifest !== undefined;
+    phaseTimer.finish();
     const graph = graphCompatible
       ? { graph: structuredClone(previousGraph), resolutionByFile: new Map() }
       : await (options.progress
         ? options.progress.run(
           "Resolving language relationships",
-          (progressReporter) => buildCodeGraphWithResolutionFromFacts(repoPath, candidateInput.allUnits, progressReporter, repoId, candidateInput.scope.paths, resolverContext),
+          (progressReporter) => buildCodeGraphWithResolutionFromFacts(repoPath, candidateInput.allUnits, progressReporter, repoId, candidateInput.scope.paths, resolverContext, options.diagnosticTimings ? (phase, elapsedMs) => phaseTimer.record(phase, elapsedMs) : undefined),
         )
-        : buildCodeGraphWithResolutionFromFacts(repoPath, candidateInput.allUnits, undefined, repoId, candidateInput.scope.paths, resolverContext));
+        : buildCodeGraphWithResolutionFromFacts(repoPath, candidateInput.allUnits, undefined, repoId, candidateInput.scope.paths, resolverContext, options.diagnosticTimings ? (phase, elapsedMs) => phaseTimer.record(phase, elapsedMs) : undefined));
     if (graphCompatible) {
       graph.graph.edges = graph.graph.edges.filter((edge) => edge.type !== "calls" && edge.type !== "references" && edge.type !== "extends" && edge.type !== "implements");
       rebindUnchangedSemanticEdges(graph.graph, previousGraph, candidateInput.allUnits, repoId, resolverContext.resolutionVersion, new Set());
@@ -661,7 +681,9 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
     recordIndexWork(counters, "filesResolved", persistedResolution.size);
     if (plan.fullGraphResolution && !graphCompatible) recordIndexWork(counters, "fullResolutionFallbacks");
     const reuseResolutionPaths = plan.reasons.some((reason) => reason === "resolution_version_changed" || reason === "scip_fingerprint_changed" || reason === "scip_status_changed") ? [] : plan.reusePaths;
+    phaseTimer.start("graphPersistence");
     store.writeCandidateGraph(generation.id, graph.graph, changes.fileHashes, graphCompatible ? undefined : persistedResolution, reuseResolutionPaths);
+    phaseTimer.finish();
     options.progress?.update?.("Resolving framework relationships");
     const frameworkFacts = candidateInput.allUnits.map((unit) => ({ relativePath: unit.relativePath, facts: unit.facts }));
     const frameworkContextBase = {
@@ -688,7 +710,10 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
     const frameworkAnalyzePaths = expandFrameworkAnalyzePaths(previousFramework, new Set(frameworkInvalidation.analyzePaths));
     recordIndexWork(counters, "frameworkFilesResolved", frameworkAnalyzePaths.size);
     recordIndexWork(counters, "frameworkFilesReused", Math.max(0, frameworkInvalidation.reusePaths.length - Math.max(0, frameworkAnalyzePaths.size - frameworkInvalidation.analyzePaths.length)));
+    phaseTimer.start("frameworkDetection");
     const detections = detectFrameworks(frameworkContextBase, builtinFrameworkAdapters);
+    phaseTimer.finish();
+    phaseTimer.start("frameworkMaterialization");
     const frameworkMaterialization = analyzeFramework({
       ...frameworkContextBase,
       generationId: generation.id,
@@ -698,17 +723,26 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       previousFramework,
       maxObservations: 10_000,
     } satisfies FrameworkAnalysisContext, builtinFrameworkAdapters);
+    phaseTimer.finish();
+    phaseTimer.start("frameworkPersistence");
     store.writeCandidateFramework(generation.id, frameworkMaterialization);
     store.stageReliabilityContributions(generation.id, frameworkMaterializationContributions(frameworkMaterialization));
+    phaseTimer.finish();
+    if (versions.frameworkResolutionVersion) store.assertCandidateFrameworkComplete(repoId, generation.id, versions.frameworkResolutionVersion);
     options.progress?.update?.("Writing index results");
+    phaseTimer.start("lexicalBuild");
     const lexical: LexicalFileUpdate[] = units.map((unit) => ({ file: unit.relativePath, fileHash: unit.facts.contentHash, documents: toLexicalDocumentsFromFacts(repoId, unit) }));
+    phaseTimer.finish();
+    phaseTimer.start("lexicalPersistence");
     store.writeCandidateLexicalDocuments(generation.id, lexical);
+    phaseTimer.finish();
     const semanticStartedAt = performance.now();
     let semantic: SemanticIndexResult | undefined;
     const previousSemanticStates = store.getFileCapabilityStates(repoId, "semantic");
     const activeSemanticEnabled = store.hasActiveSemanticCapability(repoId);
     let semanticPreserved = false;
     let semanticFailure: string | undefined;
+    if (options.includeSemantic || activeSemanticEnabled) phaseTimer.start("semanticBuild");
     if (options.includeSemantic) {
       const providers = options.semanticProviders;
       if (!providers) {
@@ -746,6 +780,8 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       semanticPreserved = true;
     }
     if (semanticCandidate) store.writeCandidateSemanticVectors(generation.id, semanticCandidate.points);
+    if (options.includeSemantic || activeSemanticEnabled) phaseTimer.finish();
+    phaseTimer.start("publishFinalize");
     const configFileStates = [...changes.fileHashes.entries()]
       .filter(([file]) => isModuleConfigPath(file))
       .map(([file, fileHash]) => ({
@@ -805,6 +841,8 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
       totalMs,
     };
     const published = { kind: "published" as const, repositoryId: repoId, generationId: generation.id, plan, published: true as const, frameworkConfig, ...legacy };
+    const finalTimings = phaseTimer.snapshot();
+    if (finalTimings) Object.assign(published, { phaseTimingsMs: finalTimings });
     Object.defineProperty(published, "counters", {
       value: freezeIndexWorkCounters(counters),
       enumerable: false,
@@ -813,7 +851,8 @@ async function runPipeline(inputPath: string, operation: "index" | "sync", optio
     });
     return published as unknown as IndexPipelineResult;
   } catch (error) {
-    return { kind: "failed", repositoryId: repoId, ...(activeGenerationId ? { activeGenerationId } : {}), published: false, failure: failure(error, activeGenerationId) };
+    const phaseTimingsMs = phaseTimer.snapshot();
+    return { kind: "failed", repositoryId: repoId, ...(activeGenerationId ? { activeGenerationId } : {}), published: false, failure: failure(error, activeGenerationId), ...(phaseTimingsMs ? { phaseTimingsMs } : {}) };
   } finally {
     store.close();
   }

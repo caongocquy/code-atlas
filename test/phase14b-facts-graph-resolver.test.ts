@@ -79,6 +79,27 @@ test("facts graph accepts only the strong semantic decision returned by the reso
   assert.equal(result.resolutionByFile.get("consumer.ts")?.relativePath, "consumer.ts");
 });
 
+test("resolver traces remain scoped when files reuse the same localId", async () => {
+  const { unit, adapter, environment, serviceUnit } = fixture();
+  const other = { ...unit, relativePath: "other.ts" };
+  const result = await buildCodeGraphWithResolutionFromFacts("/repo", [unit, other, serviceUnit], undefined, "repo", ["consumer.ts", "other.ts"], context(adapter, environment));
+  for (const file of ["consumer.ts", "other.ts"]) {
+    const resolution = result.resolutionByFile.get(file);
+    assert.ok(resolution);
+    assert.ok(resolution.decisions.some((decision) => decision.site.localId === "call:1"));
+    assert.equal(resolution.decisions.find((decision) => decision.site.localId === "call:1")?.status, "resolved");
+    assert.ok(resolution.trace.length > 0);
+    assert.ok(resolution.trace.every((event) => event.site.sourceUnit.relativePath === file));
+  }
+  assert.equal(result.graph.edges.filter((edge) => edge.type === "calls").length, 2);
+  const reordered = await buildCodeGraphWithResolutionFromFacts("/repo", [serviceUnit, other, unit], undefined, "repo", ["consumer.ts", "other.ts"], context(adapter, environment));
+  assert.deepEqual(result.graph, reordered.graph);
+  assert.deepEqual(result.resolutionByFile.get("consumer.ts")?.decisions, reordered.resolutionByFile.get("consumer.ts")?.decisions);
+  assert.deepEqual(result.resolutionByFile.get("other.ts")?.decisions, reordered.resolutionByFile.get("other.ts")?.decisions);
+  assert.deepEqual(result.resolutionByFile.get("consumer.ts")?.trace, reordered.resolutionByFile.get("consumer.ts")?.trace);
+  assert.deepEqual(result.resolutionByFile.get("other.ts")?.trace, reordered.resolutionByFile.get("other.ts")?.trace);
+});
+
 test("facts graph materializes accepted implementation edges", async () => {
   const item = {
     filePath: "consumer.ts",

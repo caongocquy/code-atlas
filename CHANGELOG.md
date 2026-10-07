@@ -4,6 +4,24 @@ All notable changes to CodeAtlas are documented here.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-07
+
+### Added
+
+- Execution-flow discovery, repository architecture maps, and a framework entry catalog covering HTTP/web routes, declared GraphQL resolvers, scheduled jobs, and messaging consumers.
+- Static messaging producer/consumer links within repositories and across explicitly selected workspace members.
+- Workspace membership, pinned-generation health, and exact declared JS/TS npm package dependency candidates through read-only MCP queries; `code-atlas workspace map` adds a CLI membership view.
+
+### Improved
+
+- Precision-first JVM and ECMAScript member-call resolution, framework partial-evidence reporting, and snapshot-consistent query projections.
+- Strict framework package-config acquisition now rejects duplicate keys and preserves exact byte/hash integrity.
+
+### Compatibility
+
+- Existing CLI commands and MCP inputs remain available. Resolution, facts, and framework evidence versions changed since 1.4.0; refresh existing indexes with `code-atlas sync` (or rebuild with `code-atlas index`) before relying on current evidence.
+- Workspace links are static candidates only: they do not prove runtime delivery, package installation, or semver satisfaction. npm aliases, local/workspace protocols, nested package federation, and Phase17D-C2 remain deferred.
+
 ## [1.4.0] - 2026-09-29
 
 ### Added

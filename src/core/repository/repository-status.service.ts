@@ -31,12 +31,16 @@ import {
   scanRepo,
 } from "./repository-files.js";
 import { detectChangeDetectionMode } from "../indexing/change-detector.js";
+import { scanModuleConfigFiles } from "../indexing/filesystem-change-detector.js";
 import { CURRENT_INDEX_VERSION_DOMAINS } from "./index-version.js";
 import type { LanguageId } from "../graph/parsers/types.js";
 import {
   getLanguageAdapter,
   getSupportedLanguages,
 } from "../graph/resolver/adapter-registry.js";
+import type { SemanticConfig } from "../config/codeatlas-config.js";
+import { readRepositoryConfig } from "../../infrastructure/semantic/semantic-config.store.js";
+import { createConfiguredProviders, closeConfiguredProviders } from "../../infrastructure/semantic/repository-providers.js";
 
 export type RepositoryStatus = {
   changeDetection: "git" | "filesystem";
@@ -97,6 +101,8 @@ export type RepositoryStatusProviders = {
 
 export type CapabilitySummary = {
   state: CapabilityState;
+  configured?: boolean;
+  enabled?: boolean;
   version?: string;
   storedVersion?: string;
   indexedFiles: number;
@@ -121,6 +127,7 @@ async function emptyStatus(
   sourceFiles: number,
   changeDetection: RepositoryStatus["changeDetection"],
   providers: RepositoryStatusProviders,
+  semanticConfig?: SemanticConfig,
 ): Promise<RepositoryStatus> {
   const repoId = getRepositoryIdentity(repoPath).id;
   const semanticConfigured = providers.embeddingProvider !== undefined && providers.vectorStore !== undefined;
@@ -135,7 +142,14 @@ async function emptyStatus(
       languages: getSupportedLanguages(),
       graph: { state: "not_indexed", indexedFiles: 0, itemCount: 0 },
       lexical: { state: "not_indexed", indexedFiles: 0, itemCount: 0 },
-      semantic: { state: semanticConfigured ? (semanticReady ? "not_indexed" : "unavailable") : "not_configured", indexedFiles: 0, itemCount: 0 },
+      semantic: {
+        state: semanticConfig?.enabled === false ? "disabled"
+          : semanticConfig?.enabled === true ? "not_indexed"
+            : semanticConfigured ? (semanticReady ? "not_indexed" : "unavailable") : "not_configured",
+        indexedFiles: 0, itemCount: 0,
+        configured: semanticConfig !== undefined,
+        enabled: semanticConfig?.enabled ?? false,
+      },
       reranker: { state: providers.rerankerProvider ? (rerankerReady ? "ready" : "unavailable") : "not_configured", indexedFiles: 0, itemCount: 0 },
     },
     vector: {
@@ -258,23 +272,34 @@ async function getSemanticCapability(
   hashes: Map<string, string>,
   store: AtlasStore,
   providers: RepositoryStatusProviders,
+  semanticConfig?: SemanticConfig,
 ): Promise<CapabilitySummary> {
   const metadata = store.getMetadata(repoId, "semantic");
   const states = store.getFileCapabilityStates(repoId, "semantic");
   const base = capabilityFromFiles(states, metadata, VECTOR_INDEX_VERSION, hashes);
   const provider = providers.embeddingProvider;
+  const configuration = { configured: semanticConfig !== undefined, enabled: semanticConfig?.enabled ?? false };
+
+  if (semanticConfig?.enabled === false) {
+    return { ...base, ...configuration, state: "disabled" };
+  }
+
+  if (semanticConfig?.enabled === true && base.state === "not_indexed") {
+    return { ...base, ...configuration };
+  }
 
   if (!provider || !providers.vectorStore) {
-    return { ...base, state: "not_configured" };
+    return { ...base, ...configuration, state: semanticConfig ? "unavailable" : "not_configured" };
   }
 
   try {
     if (!(await provider.isAvailable()) || !(await providers.vectorStore.isAvailable())) {
-      return { ...base, state: "unavailable" };
+      return { ...base, ...configuration, state: "unavailable" };
     }
   } catch (error) {
     return {
       ...base,
+      ...configuration,
       state: "unavailable",
       lastError: error instanceof Error ? error.message : String(error),
     };
@@ -289,10 +314,10 @@ async function getSemanticCapability(
   );
 
   if (incompatible) {
-    return { ...base, state: "stale" };
+    return { ...base, ...configuration, state: "stale" };
   }
 
-  return base;
+  return { ...base, ...configuration };
 }
 
 async function getRerankerCapability(
@@ -338,8 +363,10 @@ async function getRerankerCapability(
 async function getCapabilitySummaries(
   repoId: string,
   hashes: Map<string, string>,
+  graphHashes: Map<string, string>,
   store: AtlasStore,
   providers: RepositoryStatusProviders,
+  semanticConfig?: SemanticConfig,
 ): Promise<RepositoryStatus["capabilities"]> {
   const graphStates = store.getFileCapabilityStates(repoId, "graph");
   const lexicalStates = store.getFileCapabilityStates(repoId, "lexical");
@@ -350,7 +377,7 @@ async function getCapabilitySummaries(
       graphStates,
       store.getMetadata(repoId, "graph"),
       GRAPH_INDEX_VERSION,
-      hashes,
+      graphHashes,
     ),
     lexical: capabilityFromFiles(
       lexicalStates,
@@ -358,7 +385,7 @@ async function getCapabilitySummaries(
       LEXICAL_INDEX_VERSION,
       hashes,
     ),
-    semantic: await getSemanticCapability(repoId, hashes, store, providers),
+    semantic: await getSemanticCapability(repoId, hashes, store, providers, semanticConfig),
     reranker: await getRerankerCapability(repoId, store, providers),
   };
 }
@@ -371,13 +398,18 @@ export async function getRepositoryStatus(
   const repoPath = canonicalRepositoryPath(path.resolve(inputPath));
   const files = await scanRepo(repoPath);
   const hashes = await currentHashes(repoPath, files);
+  const graphHashes = new Map(hashes);
+  for (const file of await scanModuleConfigFiles(repoPath)) {
+    graphHashes.set(file, createFileHash(await fs.readFile(path.join(repoPath, file), "utf8")));
+  }
   const changeDetection = await detectChangeDetectionMode(repoPath);
+  const semanticConfig = (await readRepositoryConfig(repoPath)).semantic;
   const databasePath = path.join(repoPath, ".codeatlas", "atlas.db");
   if (options.readOnly) {
     try {
       await fs.access(databasePath);
     } catch {
-      return emptyStatus(repoPath, files.length, changeDetection, providers);
+      return emptyStatus(repoPath, files.length, changeDetection, providers, semanticConfig);
     }
   }
   const store = new AtlasStore(databasePath, options);
@@ -386,23 +418,30 @@ export async function getRepositoryStatus(
     : store.ensureRepository(getRepositoryIdentity(repoPath));
   if (!repository) {
     store.close();
-    return emptyStatus(repoPath, files.length, changeDetection, providers);
+    return emptyStatus(repoPath, files.length, changeDetection, providers, semanticConfig);
   }
   const repoId = repository.id;
+  let configuredProviders: Awaited<ReturnType<typeof createConfiguredProviders>> | undefined;
 
   try {
+    if (semanticConfig?.enabled && !providers.embeddingProvider) {
+      configuredProviders = await createConfiguredProviders(repoPath, { readOnly: true });
+    }
+    const effectiveProviders = configuredProviders ? { ...configuredProviders, ...providers } : providers;
     const graph = await getGraphStatus(
       repoId,
       path.join(repoPath, ".codeatlas", "atlas.db"),
-      hashes,
+      graphHashes,
       store.getMetadata(repoId, "graph"),
       store,
     );
     const capabilities = await getCapabilitySummaries(
       repoId,
       hashes,
+      graphHashes,
       store,
-      providers,
+      effectiveProviders,
+      semanticConfig,
     );
     const vector = await getVectorStatus(
       repoId,
@@ -411,7 +450,7 @@ export async function getRepositoryStatus(
       store.getMetadata(repoId, "semantic"),
       store.getFileCapabilityStates(repoId, "semantic"),
       capabilities.semantic.state,
-      providers.vectorStore,
+      effectiveProviders.vectorStore,
     );
     const frameworkSnapshot = store.loadFramework(repoId);
     const reliability = store.loadReliabilityInputs(repoId);
@@ -430,6 +469,7 @@ export async function getRepositoryStatus(
       framework: summarizeFrameworkCoverage(frameworkSnapshot, frameworkVersion, reliability, { capability: "framework_repository" }),
     };
   } finally {
+    closeConfiguredProviders(configuredProviders);
     store.close();
   }
 }

@@ -26,6 +26,29 @@ const typeText = (node: Parser.SyntaxNode | null | undefined): string | undefine
   node?.childForFieldName("type")?.text?.replace(/^:\s*/, "")
   ?? node?.childForFieldName("return_type")?.text?.replace(/^:\s*/, "");
 
+function isKnownTypeQueryParseGap(node: Parser.SyntaxNode): boolean {
+  if (node.type !== "ERROR") return false;
+  let declaration = node.parent;
+  while (declaration && declaration.type !== "lexical_declaration") declaration = declaration.parent;
+  if (!declaration || !/<\s*typeof\s+import\s*\(\s*(["'])[^"']+\1\s*\)\s*>/u.test(declaration.text)) return false;
+  if (node.text === ">()") return />\s*\(\s*\)\s*;?\s*$/u.test(declaration.text);
+  if (node.text !== "," || node.parent?.type !== "parenthesized_expression") return false;
+  const args = node.parent.namedChildren;
+  return args.length === 2 && args[0]?.type === "string" && args[1]?.type === "ERROR"
+    && /,\s*\)$/u.test(node.parent.text.trim())
+    && /<\s*typeof\s+import\s*\(\s*(["'])[^"']+\1\s*\)\s*>\s*\(/u.test(declaration.text);
+}
+
+function objectiveSyntaxIsComplete(root: Parser.SyntaxNode): boolean {
+  let complete = true;
+  const visit = (node: Parser.SyntaxNode): void => {
+    if ((node.type === "ERROR" || node.isMissing) && !isKnownTypeQueryParseGap(node)) complete = false;
+    for (const child of node.children) visit(child);
+  };
+  visit(root);
+  return complete;
+}
+
 function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: LanguageFactExtractorInput): FactExtractionOutcome {
   try {
     if (!parsed) return { kind: "infrastructure_failure", error: new Error(`Unable to parse ${input.language} source`) };
@@ -96,7 +119,13 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
       if (namespace) { exports.push({ localId: next("export"), exportedName: "*", moduleSpecifier: moduleSpecifier ? unquote(moduleSpecifier.text) : undefined, kind: "star", range: range(namespace) }); return; }
       const declaration = node.childForFieldName("declaration");
       const declaredName = nameOf(declaration);
-      if (declaredName) exports.push({ localId: next("export"), exportedName: declaredName, localName: declaredName, kind: "declaration", range: range(node) });
+      if (declaredName) {
+        const isDefault = node.children.some((child) => child.type === "default" && child.text === "default");
+        exports.push({ localId: isDefault ? id("export-default", node.startIndex) : next("export"), exportedName: isDefault ? "default" : declaredName, localName: declaredName, kind: "declaration", range: range(node) });
+      } else if (node.children.some((child) => child.type === "default" && child.text === "default")) {
+        const defaultBinding = node.childForFieldName("value");
+        if (defaultBinding?.type === "identifier") exports.push({ localId: id("export-default", node.startIndex), exportedName: "default", localName: defaultBinding.text, kind: "declaration", range: range(node) });
+      }
     };
     const visit = (node: Parser.SyntaxNode): void => {
       const isCallable = ["function_declaration", "function_expression", "arrow_function", "method_definition"].includes(node.type);
@@ -217,7 +246,7 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
       parserIdentity: { language: parsed.adapter.language, ...parsed.adapter.metadata }, parseStatus: parsed.tree.rootNode.hasError || uniqueDiagnostics.length > 0 ? "deterministic_partial" : "complete", parserDiagnostics: uniqueDiagnostics,
       symbols, containmentScopes, imports, exports, references, callSites, bindingSeeds, declaredTypeAnnotations, expressions, members, assignments,
       parameters, returns, constructors, inheritances, implementations, aliases, modules, namespaces,
-      frameworkSyntax: syntax.finish(!(parsed.tree.rootNode.hasError || uniqueDiagnostics.length > 0), parsed.tree.rootNode),
+      frameworkSyntax: syntax.finish(objectiveSyntaxIsComplete(parsed.tree.rootNode), parsed.tree.rootNode),
     };
     return { kind: "facts", facts };
   } catch (error) { return { kind: "infrastructure_failure", error: error instanceof Error ? error : new Error(String(error)) }; }

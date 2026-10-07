@@ -10,7 +10,6 @@ export function normalizeJvmFacts(facts: ParsedFactsBlob, context: AdapterContex
   const result = empty(), unit = context.sourceUnit;
   const base = (kind: string, localId: string, range: SourceRangeFact) => ({ evidenceId: `${unit.relativePath}:${kind}:${localId}` as never, sourceUnit: unit, range });
   const symbols = new Map(facts.symbols.map((item) => [item.localId, symbolIdentity({ repositoryId: context.repositoryIdentity.id, relativePath: unit.relativePath, language: unit.language, kind: item.kind, qualifiedName: item.declaredQualifiedName ?? item.name, discriminator: item.localId })]));
-  const byName = new Map(facts.symbols.map((item) => [item.name, symbols.get(item.localId)!]));
   const scopes = new Map(facts.containmentScopes.map((item) => [item.localId, item]));
   const parent = (id: string | undefined): FactLocalId | undefined => id ? scopes.get(id as FactLocalId)?.parentId : undefined;
   const enclosingType = (symbol: typeof facts.symbols[number]) => { let current = symbol.scopeId; while (current) { const scope = scopes.get(current); if (!scope) break; if (["class_declaration", "object_declaration"].includes(scope.kind)) return facts.symbols.find((item) => item.scopeId === scope.localId && ["class", "interface"].includes(item.kind)); current = scope.parentId; } return undefined; };
@@ -20,15 +19,25 @@ export function normalizeJvmFacts(facts: ParsedFactsBlob, context: AdapterContex
     const raw = value.trim();
     const name = raw.replaceAll("?", "");
     if (raw !== name) return { kind: "named", name: raw };
-    const qualified = facts.symbols.find((item) => item.name.endsWith(`.${name}`));
-    const known = byName.get(name) ?? (qualified ? symbols.get(qualified.localId) : undefined);
+    const candidates = facts.symbols.filter((item) => (item.kind === "class" || item.kind === "interface")
+      && (item.name === name || item.declaredQualifiedName === name));
+    const known = candidates.length === 1 ? symbols.get(candidates[0]!.localId) : undefined;
     return known ? { kind: "known", symbol: known } : { kind: "named", name };
   };
   const typeByBinding = new Map<string, TypeRef>();
   const bindingById = new Map(facts.bindingSeeds.map((item) => [item.localId, item]));
-  for (const annotation of facts.declaredTypeAnnotations) { const type = typeOf(annotation.text); if (type && bindingById.has(annotation.ownerId)) typeByBinding.set(annotation.ownerId, type); }
+  for (const annotation of facts.declaredTypeAnnotations) {
+    const type = typeOf(annotation.text);
+    if (!type) continue;
+    if (bindingById.has(annotation.ownerId)) { typeByBinding.set(annotation.ownerId, type); continue; }
+    const owner = facts.symbols.find((item) => item.localId === annotation.ownerId && item.kind === "variable");
+    const bindings = owner ? facts.bindingSeeds.filter((item) => item.name === owner.name && item.ownerId === owner.scopeId
+      && item.range.startLine === owner.range.startLine && item.range.startColumn === owner.range.startColumn
+      && item.range.endLine === owner.range.endLine && item.range.endColumn === owner.range.endColumn) : [];
+    if (bindings.length === 1) typeByBinding.set(bindings[0]!.localId, type);
+  }
   for (const item of facts.constructors) if (item.resultBindingId) typeByBinding.set(item.resultBindingId, typeOf(item.constructedTypeName) ?? { kind: "named", name: item.constructedTypeName });
-  const findBinding = (name: string | undefined, start: string | undefined) => { const candidates = facts.bindingSeeds.filter((item) => item.name === name); let current = start; while (current) { const found = candidates.find((item) => item.ownerId === current); if (found) return found; current = parent(current); } return candidates.length === 1 ? candidates[0] : undefined; };
+  const findBinding = (name: string | undefined, start: string | undefined) => { const candidates = facts.bindingSeeds.filter((item) => item.name === name); let current = start; while (current) { const found = candidates.filter((item) => item.ownerId === current); if (found.length > 0) return found.length === 1 ? found[0] : undefined; current = parent(current); } return undefined; };
   for (const item of facts.bindingSeeds) result.bindings = [...result.bindings, { ...base("binding", item.localId, item.range), kind: "binding", scope: scopeOf(item.ownerId), name: item.name, bindingId: item.localId, declaredType: typeByBinding.get(item.localId) }];
   for (const item of facts.declaredTypeAnnotations) { const type = typeOf(item.text); if (type) { result.typeAnnotations = [...result.typeAnnotations, { ...base("type", item.localId, item.range), kind: "type_annotation", subjectLocalId: item.ownerId, type }]; result.bindings = result.bindings.map((binding) => binding.bindingId === item.ownerId ? { ...binding, declaredType: type } : binding); } }
   for (const item of facts.imports) result.imports = [...result.imports, { ...base("import", item.localId, item.range), kind: "import", specifier: item.moduleSpecifier, importedName: item.importedName, localName: item.localName, module: { repositoryId: context.repositoryIdentity.id, normalizedName: item.moduleSpecifier } satisfies ModuleIdentity }];
@@ -44,12 +53,15 @@ export function normalizeJvmFacts(facts: ParsedFactsBlob, context: AdapterContex
     const receiverBinding = receiver ? findBinding(receiver.text, receiver.ownerScopeId) : undefined;
     if (receiverBinding) ownerType = typeByBinding.get(receiverBinding.localId);
     if (!ownerType && receiverText?.endsWith("()")) ownerType = typeOf(receiverText.slice(0, -2));
-    if (!ownerType && receiver?.text === "this") { let current = receiver.ownerScopeId; while (current && scopes.get(current)?.kind !== "class_declaration" && scopes.get(current)?.kind !== "class_body") current = parent(current); const owner = facts.symbols.find((symbol) => (symbol.kind === "class" || symbol.kind === "interface") && symbol.scopeId === current); if (owner) ownerType = { kind: "known", symbol: symbols.get(owner.localId)! }; }
+    if (!ownerType && receiver?.text === "this") { let current = receiver.ownerScopeId; while (current && !["class_declaration", "object_declaration"].includes(scopes.get(current)?.kind ?? "")) current = parent(current); const owner = facts.symbols.find((symbol) => (symbol.kind === "class" || symbol.kind === "interface") && symbol.scopeId === current); if (owner) ownerType = { kind: "known", symbol: symbols.get(owner.localId)! }; }
     const owner = ownerType?.kind === "known" ? facts.symbols.find((symbol) => symbols.get(symbol.localId) === ownerType.symbol) : undefined;
     const memberName = item.memberName.startsWith(".") ? item.memberName.slice(1) : item.memberName;
-    const members = owner && unit.language === "kotlin"
-      ? facts.symbols.filter((symbol) => symbol.kind === "method" && symbol.name === memberName && enclosingType(symbol)?.localId === owner.localId)
-      : owner ? facts.symbols.filter((symbol) => symbol.name === memberName && symbol.scopeId === owner.scopeId) : [];
+    const memberKind = item.memberKind === "field" ? "variable" : "method";
+    const members = owner ? facts.symbols.filter((symbol) => symbol.kind === memberKind && symbol.name === memberName
+      && enclosingType(symbol)?.localId === owner.localId
+      && facts.symbols.filter((candidate) => candidate.kind === memberKind
+        && (candidate.declaredQualifiedName ?? candidate.name) === (symbol.declaredQualifiedName ?? symbol.name))
+        .every((candidate) => enclosingType(candidate)?.localId === owner.localId)) : [];
     if (ownerType && members.length > 0) result.members = [...result.members, ...members.map((member) => ({ ...base("member", item.localId, item.range), kind: "member" as const, ownerType, memberName, member: symbols.get(member.localId)!, access: item.access }))];
     else result.diagnostics = [...result.diagnostics, { ...base("member", item.localId, item.range), code: "receiver_type_unknown", message: `Cannot resolve receiver for ${item.memberName}` }];
   }

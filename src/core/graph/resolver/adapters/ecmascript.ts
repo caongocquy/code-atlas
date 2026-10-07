@@ -14,11 +14,11 @@ export function normalizeEcmascriptFacts(facts: ParsedFactsBlob, context: Adapte
   const evidenceId = (kind: string, localId: string) => `${unit.relativePath}:${kind}:${localId}` as never;
   const base = (kind: string, localId: string, range: SourceRangeFact) => ({ evidenceId: evidenceId(kind, localId), sourceUnit: unit, range });
   const symbols = new Map(facts.symbols.map((item) => [item.localId, symbolIdentity({ repositoryId: context.repositoryIdentity.id, relativePath: unit.relativePath, language: unit.language, kind: item.kind, qualifiedName: item.declaredQualifiedName ?? item.name, discriminator: item.localId })]));
-  const byName = new Map(facts.symbols.map((item) => [item.name, symbols.get(item.localId)!]));
   const typeOf = (text: string | undefined): TypeRef | undefined => {
     if (!text) return undefined;
     const clean = text.trim().replace(/^[?]+|[?]+$/g, "");
-    const known = byName.get(clean);
+    const candidates = facts.symbols.filter((item) => (item.kind === "class" || item.kind === "interface") && item.name === clean);
+    const known = candidates.length === 1 ? symbols.get(candidates[0]!.localId) : undefined;
     return known ? { kind: "known", symbol: known } : { kind: "named", name: clean };
   };
   const scopes = new Map(facts.containmentScopes.map((item) => [item.localId, item]));
@@ -41,11 +41,11 @@ export function normalizeEcmascriptFacts(facts: ParsedFactsBlob, context: Adapte
     const candidates = facts.bindingSeeds.filter((item) => item.name === name);
     let scope = localId;
     while (scope) {
-      const match = candidates.find((item) => item.ownerId === scope);
-      if (match) return match;
+      const matches = candidates.filter((item) => item.ownerId === scope);
+      if (matches.length > 0) return matches.length === 1 ? matches[0] : undefined;
       scope = parentScope(scope);
     }
-    return candidates.length === 1 ? candidates[0] : undefined;
+    return localId === undefined && candidates.length === 1 ? candidates[0] : undefined;
   };
   for (const item of facts.bindingSeeds) result.bindings = [...result.bindings, { ...base("binding", item.localId, item.range), kind: "binding", scope: scopeOf(item.ownerId), name: item.name, bindingId: item.localId }];
   for (const item of facts.declaredTypeAnnotations) {
@@ -73,7 +73,9 @@ export function normalizeEcmascriptFacts(facts: ParsedFactsBlob, context: Adapte
     const ownerType = receiverBinding ? typeByBinding.get(receiverBinding.localId) : undefined;
     const ownerSymbol = ownerType?.kind === "known" ? facts.symbols.find((symbol) => symbols.get(symbol.localId) === ownerType.symbol) : undefined;
     const ownerScopeId = ownerSymbol?.scopeId;
-    const member = facts.symbols.find((symbol) => symbol.kind === "method" && symbol.name === item.memberName && symbol.scopeId && scopes.get(symbol.scopeId)?.parentId === ownerScopeId);
+    const members = ownerSymbol ? facts.symbols.filter((symbol) => symbol.kind === "method" && symbol.name === item.memberName
+      && symbol.scopeId && scopes.get(symbol.scopeId)?.parentId === ownerScopeId) : [];
+    const member = members.length === 1 ? members[0] : undefined;
     if (ownerType && member) {
       result.members = [...result.members, { ...base("member", item.localId, item.range), kind: "member", ownerType, memberName: item.memberName, member: symbols.get(member.localId)!, access: item.access }];
     } else {

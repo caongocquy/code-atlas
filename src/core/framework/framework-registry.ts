@@ -57,10 +57,10 @@ function mergeProvenance(left: FrameworkProvenance, right: FrameworkProvenance):
 }
 
 function hasIncompleteCoverage(coverage: readonly FrameworkMaterialization["coverage"][number][]): boolean {
+  // Resolved counts unique outputs; multiple attempted observations may merge into one output.
   return coverage.some((item) => item.applicable > 0 && (
     item.supported < item.applicable
     || item.attempted < item.applicable
-    || item.resolved + item.ambiguous + item.unknown + item.unsupported + item.budgetExhausted < item.attempted
     || item.ambiguous > 0
     || item.unknown > 0
     || item.unsupported > 0
@@ -74,9 +74,10 @@ function hasIncompleteDetectionInputs(
 ): boolean {
   return detections.some((item) => {
     if (!item.complete || (item.configured && !item.observed) || !item.observed) return item.configured && !item.observed;
+    const requiredCapabilities = item.capabilities.filter((capability) => !["nestjs.message_pattern", "nestjs.event_pattern", "spring.kafka_listener", "spring.rabbit_listener"].includes(capability));
     return item.capabilities.length === 0
       ? !coverage.some((entry) => entry.framework === item.framework && entry.applicable > 0)
-      : item.capabilities.some((capability) => !coverage.some((entry) => entry.framework === item.framework && entry.capability === capability && entry.applicable > 0));
+      : requiredCapabilities.some((capability) => !coverage.some((entry) => entry.framework === item.framework && entry.capability === capability && entry.applicable > 0));
   });
 }
 
@@ -133,7 +134,7 @@ export function resolveFrameworkEvidence(ctx: FrameworkAnalysisContext, evidence
     if (item.confidence !== "exact" && item.confidence !== "strong") continue;
     for (const observation of item.entities) {
       if (observation.confidence === "weak") continue;
-      const entity: FrameworkEntity = { ref: observation.ref, displayName: observation.displayName, provenance: provenance(item) };
+      const entity: FrameworkEntity = { ref: observation.ref, displayName: observation.displayName, ...(observation.scheduledMetadata ? { scheduledMetadata: observation.scheduledMetadata } : {}), ...(observation.messageMetadata ? { messageMetadata: observation.messageMetadata } : {}), provenance: provenance(item) };
       const key = frameworkEntityKey(entity.ref);
       const existing = entities.get(key);
       if (conflictingEntities.has(key)) continue;
@@ -193,7 +194,7 @@ export function resolveFrameworkEvidence(ctx: FrameworkAnalysisContext, evidence
     }
     if (item.state === "unsupported" || !item.supported) {
       dimension.unsupported += 1;
-      diagnostics.push(diagnostic(item, "framework_construct_unsupported", "unsupported", "framework construct is unsupported"));
+      diagnostics.push(diagnostic(item, item.messageUnsupportedReason ? "framework_message_unsupported" : item.scheduledUnsupportedReason ? "framework_schedule_unsupported" : "framework_construct_unsupported", "unsupported", item.messageUnsupportedReason ?? item.scheduledUnsupportedReason ?? "framework construct is unsupported"));
       coverage.set(coverageKey, dimension);
       continue;
     }
@@ -313,7 +314,7 @@ export function analyzeFramework(ctx: FrameworkAnalysisContext, adapters: readon
       evidence.push(...result.evidence.slice(0, remaining));
       if (result.evidence.length > remaining) evidence.push({ evidenceId: `framework-budget:${adapter.id}`, framework: adapter.frameworks[0] ?? "react", adapterId: adapter.id, adapterVersion: adapter.version, strategy: adapter.id, capability: "adapter", relativePath: "", origin: "framework_inferred", confidence: "exact", refs: [], entities: [], applicable: true, supported: false, attempted: true, state: "budget_exhausted", outputKind: "relationship", relationKind: "component_usage", sourceCandidates: [], targetCandidates: [] });
       for (const dependency of result.dependencies) {
-        const key = JSON.stringify([dependency.framework, dependency.scope, dependency.ownerPath]);
+        const key = JSON.stringify([dependency.framework, dependency.scope, dependency.ownerPath, ...(dependency.framework === "react" ? dependency.lookupKeys : [])]);
         const existing = dependencies.get(key);
         if (!existing) dependencies.set(key, dependency);
         else dependencies.set(key, {
@@ -528,7 +529,7 @@ export function analyzeFramework(ctx: FrameworkAnalysisContext, adapters: readon
   }
   const mergedDependencies = new Map<string, FrameworkMaterialization["dependencies"][number]>();
   for (const dependency of [...ctx.previousFramework.dependencies.filter((item) => !analyzePaths.has(item.ownerPath)), ...dependencies.values()]) {
-    const key = JSON.stringify([dependency.framework, dependency.scope, dependency.ownerPath]);
+    const key = JSON.stringify([dependency.framework, dependency.scope, dependency.ownerPath, ...(dependency.framework === "react" ? dependency.lookupKeys : [])]);
     const existing = mergedDependencies.get(key);
     if (!existing) mergedDependencies.set(key, dependency);
     else mergedDependencies.set(key, { ...existing, inputKeys: [...new Set([...existing.inputKeys, ...dependency.inputKeys])].sort(), lookupKeys: [...new Set([...existing.lookupKeys, ...dependency.lookupKeys])].sort(), complete: existing.complete && dependency.complete });

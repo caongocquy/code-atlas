@@ -5,7 +5,7 @@ import { enrichTaskContextCandidates, enrichTaskContextGraph } from "../src/core
 import type { NormalizedTaskContextInput } from "../src/core/context/task-context.types.js";
 import type { TaskContextCandidate } from "../src/core/context/task-context.types.js";
 import type { CodeGraph } from "../src/core/graph/types.js";
-import { resolveLanguageImportCandidates } from "../src/core/graph/imports.js";
+import { importFactTargets, isRelativeImport, resolveImportCandidates, resolveLanguageImportCandidates } from "../src/core/graph/imports.js";
 
 test("graph enrichment is one-hop and capped per required seed", () => {
   const seed: TaskContextCandidate = { subject: { kind: "symbol", path: "src/a.ts", symbolId: "a", selectorVersion: "1" }, evidence: [{ kind: "explicit_anchor", anchor: { kind: "symbol", path: "src/a.ts", name: "a" } }], sourceRanks: {}, exact: true };
@@ -40,6 +40,38 @@ test("language import resolution maps Python, Kotlin, and Rust module imports to
   assert.deepEqual(resolveLanguageImportCandidates("main.py", ".related", "python"), ["related.py", "related/__init__.py"]);
   assert.deepEqual(resolveLanguageImportCandidates("main.kt", "fixture.Related.helper", "kotlin"), ["related.kt"]);
   assert.deepEqual(resolveLanguageImportCandidates("main.rs", "crate::related::helper", "rust"), ["related.rs", "related/mod.rs"]);
+});
+
+test("relative import candidates use canonical forward-slash graph paths", () => {
+  assert.equal(isRelativeImport(".\\app\\router\\routes"), true);
+  assert.deepEqual(resolveImportCandidates("src\\App.tsx", ".\\app\\router\\routes"), [
+    "src/app/router/routes.ts",
+    "src/app/router/routes.tsx",
+    "src/app/router/routes.js",
+    "src/app/router/routes.jsx",
+    "src/app/router/routes/index.ts",
+    "src/app/router/routes/index.tsx",
+    "src/app/router/routes/index.js",
+    "src/app/router/routes/index.jsx",
+  ]);
+  assert.deepEqual(resolveImportCandidates("src/App.tsx", "./app/router/routes"), [
+    "src/app/router/routes.ts",
+    "src/app/router/routes.tsx",
+    "src/app/router/routes.js",
+    "src/app/router/routes.jsx",
+    "src/app/router/routes/index.ts",
+    "src/app/router/routes/index.tsx",
+    "src/app/router/routes/index.js",
+    "src/app/router/routes/index.jsx",
+  ]);
+  assert.deepEqual(resolveImportCandidates("src/components/Button.tsx", "../shared/types.js"), [
+    "src/shared/types.ts",
+    "src/shared/types.tsx",
+    "src/shared/types.js",
+    "src/shared/types.jsx",
+  ]);
+  assert.deepEqual(resolveLanguageImportCandidates("src\\App.kt", "com.example.Helper", "kotlin"), ["src/example.kt"]);
+  assert.deepEqual(importFactTargets("src\\App.tsx", { moduleSpecifier: ".\\app\\router\\routes.tsx" } as never), ["src/app/router/routes.tsx"]);
 });
 
 test("change, impact, and affected-test enrichment is relevant, bounded, and incomplete-safe", async () => {

@@ -41,18 +41,23 @@ export function extractImports(source: string): ImportReference[] {
 }
 
 export function isRelativeImport(importSource: string): boolean {
-  return importSource.startsWith("./") || importSource.startsWith("../");
+  const normalizedSource = importSource.replaceAll("\\", "/");
+  return normalizedSource.startsWith("./") || normalizedSource.startsWith("../");
+}
+
+function normalizeGraphPath(value: string): string {
+  return path.posix.normalize(value.replaceAll("\\", "/"));
 }
 
 export function resolveImportCandidates(
   importerFile: string,
   importSource: string,
 ): string[] {
-  const importerDir = path.dirname(importerFile);
+  const importerDir = path.posix.dirname(normalizeGraphPath(importerFile));
 
-  const resolvedBase = path.normalize(path.join(importerDir, importSource));
+  const resolvedBase = normalizeGraphPath(path.posix.join(importerDir, importSource));
 
-  const extension = path.extname(resolvedBase);
+  const extension = path.posix.extname(resolvedBase);
 
   if (extension === ".js") {
     const withoutExtension = resolvedBase.slice(0, -extension.length);
@@ -74,10 +79,10 @@ export function resolveImportCandidates(
     `${resolvedBase}.tsx`,
     `${resolvedBase}.js`,
     `${resolvedBase}.jsx`,
-    path.join(resolvedBase, "index.ts"),
-    path.join(resolvedBase, "index.tsx"),
-    path.join(resolvedBase, "index.js"),
-    path.join(resolvedBase, "index.jsx"),
+    path.posix.join(resolvedBase, "index.ts"),
+    path.posix.join(resolvedBase, "index.tsx"),
+    path.posix.join(resolvedBase, "index.js"),
+    path.posix.join(resolvedBase, "index.jsx"),
   ];
 }
 
@@ -88,18 +93,18 @@ export function resolveLanguageImportCandidates(
 ): string[] {
   if (language === "python" && importSource.startsWith(".")) {
     const relative = importSource.replace(/^\.+/, "") || path.basename(importerFile, path.extname(importerFile));
-    const base = path.normalize(path.join(path.dirname(importerFile), relative));
-    return [`${base}.py`, path.join(base, "__init__.py")];
+    const base = normalizeGraphPath(path.posix.join(path.posix.dirname(normalizeGraphPath(importerFile)), relative));
+    return [`${base}.py`, path.posix.join(base, "__init__.py")];
   }
 
   if (language === "kotlin") {
     const name = importSource.split(".").filter(Boolean).at(-2) ?? importSource.split(".").at(-1);
-    return name ? [path.join(path.dirname(importerFile), `${name.toLowerCase()}.kt`)] : [];
+    return name ? [path.posix.join(path.posix.dirname(normalizeGraphPath(importerFile)), `${name.toLowerCase()}.kt`)] : [];
   }
 
   if (language === "rust") {
     const name = importSource.split("::").filter(Boolean).at(-2) ?? importSource.split("::").at(-1);
-    return name ? [path.join(path.dirname(importerFile), `${name}.rs`), path.join(path.dirname(importerFile), name, "mod.rs")] : [];
+    return name ? [path.posix.join(path.posix.dirname(normalizeGraphPath(importerFile)), `${name}.rs`), path.posix.join(path.posix.dirname(normalizeGraphPath(importerFile)), name, "mod.rs")] : [];
   }
 
   return resolveImportCandidates(importerFile, importSource);
@@ -114,7 +119,7 @@ export function importFactTargets(
   }
 
   const candidates = resolveImportCandidates(importerPath, fact.moduleSpecifier);
-  const normalizedSpecifier = path.normalize(path.join(path.dirname(importerPath), fact.moduleSpecifier));
+  const normalizedSpecifier = normalizeGraphPath(path.posix.join(path.posix.dirname(normalizeGraphPath(importerPath)), fact.moduleSpecifier));
 
   if (candidates.includes(normalizedSpecifier)) {
     return [normalizedSpecifier];

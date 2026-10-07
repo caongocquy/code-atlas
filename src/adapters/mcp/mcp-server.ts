@@ -1,3 +1,7 @@
+import { queryWorkspacePackageLinks } from "../../core/workspace/workspace-package-links.service.js";
+import { DEPENDENCY_KINDS, type WorkspacePackageLinksInput } from "../../core/workspace/workspace-package-links.types.js";
+import { queryWorkspaceMessageLinks } from "../../core/workspace/workspace-message-links.service.js";
+import type { WorkspaceMessageLinksInput } from "../../core/workspace/workspace-message-links.types.js";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -30,6 +34,16 @@ import {
 } from "../../core/graph/query/graph-query.service.js";
 import { analyzeImpact } from "../../core/graph/query/impact.service.js";
 import { traceGraph } from "../../core/graph/query/trace.service.js";
+import { discoverExecutionFlow } from "../../core/graph/query/execution-flow.service.js";
+import { loadArchitecturePolicy } from "../../core/architecture/architecture-policy.js";
+import { queryMessageLinks, MessageLinksError, type MessageLinksInput } from "../../core/graph/intelligence/message-links.service.js";
+import { queryWorkspaceMap, WorkspaceMapError } from "../../core/workspace/workspace-map.service.js";
+import { WORKSPACE_BOUNDS, type WorkspaceMapInput } from "../../core/workspace/workspace.types.js";
+import { buildRepositoryMap } from "../../core/graph/intelligence/repository-map.service.js";
+import type { RepositoryMap } from "../../core/graph/intelligence/repository-map.types.js";
+import { buildRepositoryEntryCatalog, filterRepositoryEntries } from "../../core/graph/intelligence/repository-entry-catalog.service.js";
+import type { RepositoryEntryCatalog, RepositoryEntryFilters } from "../../core/graph/intelligence/repository-entry-catalog.types.js";
+import { exactProjectionCount, projectKnownCollection } from "../../core/projection/known-collection.js";
 import { calculateImportance } from "../../core/graph/intelligence/importance.service.js";
 import {
   detectArchitecturalBridges,
@@ -128,8 +142,15 @@ const toolAnnotations: Record<string, McpToolAnnotations> = {
   architecture_drift: readOnlyAnnotations,
   change_gate: readOnlyAnnotations,
   trace: readOnlyAnnotations,
+  execution_flow: readOnlyAnnotations,
   inspect_retrieval: localWriteAnnotations,
   list_communities: readOnlyAnnotations,
+  repository_map: readOnlyAnnotations,
+  workspace_map: readOnlyAnnotations,
+  workspace_message_links: readOnlyAnnotations,
+  workspace_package_links: readOnlyAnnotations,
+  list_entries: readOnlyAnnotations,
+  message_links: readOnlyAnnotations,
   get_community: readOnlyAnnotations,
   important_symbols: readOnlyAnnotations,
   architectural_bridges: readOnlyAnnotations,
@@ -360,6 +381,117 @@ export function projectMcpResponse<T extends JsonObject>(result: T, detail: McpD
     output.diagnostics = projectDiagnostics(result.diagnostics as JsonObject, limit);
   }
   return withOmissions(output, omitted) as T & JsonObject;
+}
+
+export function projectRepositoryMapResponse(
+  map: RepositoryMap,
+  detail: McpDetail = "compact",
+  limits: { maxAreas?: number; maxFilesPerArea?: number; maxRelations?: number } = {},
+): JsonObject {
+  const maxAreas = Math.max(1, Math.min(100, Math.floor(limits.maxAreas ?? 20)));
+  const maxFiles = Math.max(1, Math.min(100, Math.floor(limits.maxFilesPerArea ?? 10)));
+  const maxRelations = Math.max(1, Math.min(100, Math.floor(limits.maxRelations ?? 30)));
+  const maxDiagnosticPaths = detail === "full" ? 100 : 20;
+  const maxFrameworkDiagnostics = detail === "full" ? 100 : 20;
+  const fileLimit = detail === "full" ? maxFiles : Math.min(maxFiles, 5);
+  const areaProjection = projectKnownCollection(map.areas, maxAreas, { kind: "preserve" });
+  const selectedAreas = areaProjection.items;
+  const selectedAreaIds = new Set(selectedAreas.map((area) => area.id));
+  const eligibleRelations = map.relations.filter((relation) => selectedAreaIds.has(relation.sourceAreaId) && selectedAreaIds.has(relation.targetAreaId));
+  const selectedRelations = projectKnownCollection(eligibleRelations, maxRelations, { kind: "preserve" }).items;
+  const relationProjection = exactProjectionCount(map.relations.length, selectedRelations.length);
+  const ambiguousFiles = map.diagnostics.ambiguousFiles.paths.slice(0, maxDiagnosticPaths);
+  const unclassifiedFiles = map.diagnostics.unclassifiedFiles.paths.slice(0, maxDiagnosticPaths);
+  const frameworkDiagnostics = map.diagnostics.frameworkDiagnostics.slice(0, maxFrameworkDiagnostics);
+  const ambiguousFileProjection = exactProjectionCount(map.diagnostics.ambiguousFiles.count, ambiguousFiles.length);
+  const unclassifiedFileProjection = exactProjectionCount(map.diagnostics.unclassifiedFiles.count, unclassifiedFiles.length);
+  const frameworkDiagnosticProjection = exactProjectionCount(map.diagnostics.frameworkDiagnostics.length, frameworkDiagnostics.length);
+  const filesTruncated = selectedAreas.some((area) => area.files.length > fileLimit);
+  const pathsTruncated = ambiguousFileProjection.truncated || unclassifiedFileProjection.truncated;
+  const areasTruncated = areaProjection.count.truncated;
+  const relationsTruncated = relationProjection.truncated;
+  const representativeEdgesTruncated = detail !== "full" && selectedRelations.some((relation) => relation.representativeEdges.length > 1);
+  const frameworkDiagnosticsTruncated = frameworkDiagnosticProjection.truncated;
+  const truncated = map.diagnostics.truncation.diagnosticPaths || pathsTruncated || areasTruncated || filesTruncated || relationsTruncated || representativeEdgesTruncated || frameworkDiagnosticsTruncated;
+  const areas = selectedAreas.map((area) => {
+    const files = projectKnownCollection(area.files, fileLimit, { kind: "preserve" });
+    return {
+      id: area.id,
+      label: area.label,
+      boundarySource: area.boundarySource,
+      identityStability: area.identityStability,
+      identitySemantics: area.identitySemantics,
+      fileCount: area.fileCount,
+      symbolCount: area.symbolCount,
+      files: files.items,
+      projection: { files: files.count },
+      ...(detail === "full" ? { directories: area.directories } : {}),
+      representativeSymbols: area.representativeSymbols,
+      internalEdgeCount: area.internalEdgeCount,
+      externalEdgeCount: area.externalEdgeCount,
+      cohesion: area.cohesion,
+      coupling: area.coupling,
+      frameworkIds: area.frameworkIds,
+      executionEntryBindingCount: area.executionEntryBindingCount,
+    };
+  });
+  const relations = selectedRelations.map((relation) => {
+    const representativeEdges = projectKnownCollection(relation.representativeEdges, detail === "full" ? 5 : 1, { kind: "preserve" });
+    return {
+      sourceAreaId: relation.sourceAreaId,
+      targetAreaId: relation.targetAreaId,
+      edgeCount: relation.edgeCount,
+      relationCounts: relation.relationCounts,
+      representativeEdges: representativeEdges.items,
+      projection: { representativeEdges: representativeEdges.count },
+    };
+  });
+  return {
+    boundarySource: map.boundarySource,
+    identityStability: map.identityStability,
+    totalAreaCount: map.areas.length,
+    totalRelationCount: map.relations.length,
+    projection: { areas: areaProjection.count, relations: relationProjection, frameworkDiagnostics: frameworkDiagnosticProjection },
+    areas,
+    relations,
+    diagnostics: {
+      ...map.diagnostics,
+      ambiguousFiles: { count: map.diagnostics.ambiguousFiles.count, paths: ambiguousFiles, projection: ambiguousFileProjection },
+      unclassifiedFiles: { count: map.diagnostics.unclassifiedFiles.count, paths: unclassifiedFiles, projection: unclassifiedFileProjection },
+      frameworkDiagnostics,
+      truncation: {
+        ...map.diagnostics.truncation,
+        diagnosticPaths: map.diagnostics.truncation.diagnosticPaths || pathsTruncated,
+        areas: areasTruncated,
+        files: filesTruncated,
+        relations: relationsTruncated,
+        representativeEdges: representativeEdgesTruncated,
+        frameworkDiagnostics: frameworkDiagnosticsTruncated,
+      },
+    },
+    coverage: { ...map.coverage, mayBeIncomplete: map.coverage.mayBeIncomplete || truncated },
+    mayBeIncomplete: map.mayBeIncomplete || truncated,
+    ...(map.frameworkReliability ? { frameworkReliability: map.frameworkReliability } : {}),
+  };
+}
+
+export function projectRepositoryEntryCatalogResponse(
+  catalog: RepositoryEntryCatalog,
+  filters: RepositoryEntryFilters = {},
+  detail: McpDetail = "compact",
+  limit = detail === "full" ? MAX_LIMIT : DEFAULT_LIMIT,
+): JsonObject {
+  const entries = projectKnownCollection(filterRepositoryEntries(catalog.entries, filters), limit, { kind: "preserve" });
+  const diagnostics = projectKnownCollection(catalog.diagnostics, detail === "full" ? 100 : 20, { kind: "preserve" });
+  const frameworkDiagnostics = projectKnownCollection(catalog.frameworkDiagnostics, detail === "full" ? 100 : 20, { kind: "preserve" });
+  return {
+    entries: entries.items,
+    diagnostics: diagnostics.items,
+    frameworkDiagnostics: frameworkDiagnostics.items,
+    projection: { entries: entries.count, diagnostics: diagnostics.count, frameworkDiagnostics: frameworkDiagnostics.count },
+    mayBeIncomplete: catalog.mayBeIncomplete || entries.count.truncated || diagnostics.count.truncated || frameworkDiagnostics.count.truncated,
+    ...(catalog.frameworkReliability ? { frameworkReliability: catalog.frameworkReliability } : {}),
+  };
 }
 
 function compactChunk(chunk: InspectorChunk): JsonObject {
@@ -857,6 +989,38 @@ export function createMcpServer(): McpServer {
     ...(context.framework?.reliability ? { reliability: context.framework.reliability } : {}),
   })));
 
+  const executionFlowRoute = z.object({
+    kind: z.literal("route"),
+    framework: z.enum(["nestjs", "spring", "next"]),
+    path: z.string().min(1),
+    method: z.string().min(1).nullable().optional(),
+    scope: z.string().min(1).optional(),
+    router: z.string().min(1).optional(),
+    owner: z.string().min(1).nullable().optional(),
+    conditions: z.array(z.string()).optional(),
+  }).strict();
+  const executionFlowMessage = z.object({ kind: z.literal("message_consumer"), id: z.string().min(1) }).strict();
+  const executionFlowScheduled = z.object({ kind: z.literal("scheduled"), id: z.string().min(1) }).strict();
+  const executionFlowGraphql = z.object({ kind: z.literal("graphql"), id: z.string().min(1) }).strict();
+  registerJsonTool(server, "execution_flow", "Discover bounded downstream calls from a symbol or framework route, or an exact GraphQL root operation or nested field mapping; unlike trace, this does not require a target endpoint. Exact scheduled and message consumer IDs select declared callable mappings with unverified runtime registration.", z.object({
+    ...commonInput,
+    entry: z.union([queryInput, executionFlowRoute, executionFlowGraphql, executionFlowScheduled, executionFlowMessage]).describe("A symbol query, exact framework route selector, GraphQL entity ID, scheduled entity ID, or message consumer entity ID. list_entries returns roots only; nested graphql_field IDs are available in framework intelligence."),
+    maxDepth: z.number().int().min(0).max(32).describe("Bound call traversal depth.").optional(),
+    maxNodes: z.number().int().min(1).max(MAX_LIMIT).describe("Bound flow nodes, including a framework entry when present; limit is accepted as an alias.").optional(),
+  }).strict(), async (args) => withGraph(resolveRepo(args.repoPath as string | undefined), async (context) => {
+    const rawEntry = args.entry as string | { kind: "route"; framework: "nestjs" | "spring" | "next"; path: string; method?: string | null; scope?: string; router?: string; owner?: string | null; conditions?: string[] } | { kind: "graphql" | "scheduled" | "message_consumer"; id: string };
+    const entry = typeof rawEntry === "string" ? { kind: "symbol" as const, query: rawEntry } : rawEntry;
+    const detail = args.detail as McpDetail | undefined;
+    const result = discoverExecutionFlow(context.graph, context.framework, entry, {
+      maxDepth: args.maxDepth as number | undefined,
+      maxNodes: (args.maxNodes as number | undefined) ?? (args.limit as number | undefined) ?? (detail === "full" ? MAX_LIMIT : DEFAULT_DETAIL_LIMIT),
+      coverage: { mayBeIncomplete: context.mayBeIncomplete },
+    });
+    // The core traversal already applies deterministic depth/node bounds. Keep its
+    // graph order in compact output; generic MCP array projection sorts alphabetically.
+    return { ...result, evidenceState: context.evidenceState };
+  }));
+
   registerJsonTool(server, "inspect_retrieval", "Diagnose retrieval stages and ranking; use search_code for default matching-code retrieval.", z.object({
     ...commonInput,
     query: queryInput,
@@ -882,6 +1046,109 @@ export function createMcpServer(): McpServer {
       return projectRetrievalInspectionResponse(inspection, args.detail as McpDetail | undefined, (args.limit as number | undefined) ?? DEFAULT_LIMIT);
     } finally {
       await closeProviders(providers);
+    }
+  });
+
+  registerJsonTool(server, "workspace_map", "Read repository membership, pinned generations and health from explicitly selected local indexes. No source scan, automatic discovery or cross-repository semantic links; source freshness is unknown. Per-repository snapshots are consistent; the workspace is not atomic across repositories.", z.object({
+    repositories: z.array(z.string().min(1).max(WORKSPACE_BOUNDS.maxPathLength)).min(1).max(WORKSPACE_BOUNDS.maxRepositories).describe("Explicit repository roots; relative paths use the server working directory.").optional(),
+    workspacePath: z.string().min(1).max(WORKSPACE_BOUNDS.maxPathLength).describe("Explicit workspace config v1; members resolve relative to the config directory.").optional(),
+    limit: z.number().int().min(1).max(WORKSPACE_BOUNDS.maxDetailLimit).describe("One global returned detail budget; defaults to 100.").optional(),
+    detail: z.enum(["compact", "full"]).describe("compact keeps member health; full adds bounded namespaced evidence details.").optional(),
+  }).strict().refine(args => (args.repositories !== undefined) !== (args.workspacePath !== undefined), { message: "Choose exactly one of repositories or workspacePath." }), async args => {
+    try { return await queryWorkspaceMap(args as WorkspaceMapInput); }
+    catch (error) { if (error instanceof WorkspaceMapError) throw new McpToolError(error.code, error.message); throw error; }
+  });
+
+  registerJsonTool(server, "workspace_message_links", "Read statically compatible declared producer/consumer mappings across explicit workspace repositories. Cross-repository only; freshness, delivery, broker/cluster, transport and deployment connectivity are unverified. Compare target generation with a later execution_flow response.", z.object({
+    repositories: z.array(z.string().min(1).max(WORKSPACE_BOUNDS.maxPathLength)).min(1).max(WORKSPACE_BOUNDS.maxRepositories).optional(),
+    workspacePath: z.string().min(1).max(WORKSPACE_BOUNDS.maxPathLength).optional(),
+    sourceRepositoryId: z.string().min(1).max(WORKSPACE_BOUNDS.maxPathLength).optional(),
+    targetRepositoryId: z.string().min(1).max(WORKSPACE_BOUNDS.maxPathLength).optional(),
+    producerSymbol: queryInput.optional(), consumerId: queryInput.optional(),
+    protocolKind: z.enum(["unspecified", "kafka"]).optional(),
+    destination: z.string().min(1).max(WORKSPACE_BOUNDS.maxPathLength).optional(),
+    limit: z.number().int().min(1).max(WORKSPACE_BOUNDS.maxDetailLimit).optional(),
+    detail: z.enum(["compact", "full"]).optional(),
+  }).strict(), async args => {
+    try { return await queryWorkspaceMessageLinks(args as WorkspaceMessageLinksInput); }
+    catch (error) {
+      if (error instanceof WorkspaceMapError || error instanceof MessageLinksError) throw new McpToolError(error.code, error.message);
+      throw error;
+    }
+  });
+
+  registerJsonTool(server, "workspace_package_links", "Read exact declared npm package dependency candidates across explicit workspace repositories. Certified indexed root manifests only; no installation, semver satisfaction or runtime resolution proof.", z.object({
+    repositories: z.array(z.string().min(1).max(WORKSPACE_BOUNDS.maxPathLength)).min(1).max(WORKSPACE_BOUNDS.maxRepositories).optional(),
+    workspacePath: z.string().min(1).max(WORKSPACE_BOUNDS.maxPathLength).optional(),
+    sourceRepositoryId: z.string().min(1).max(WORKSPACE_BOUNDS.maxPathLength).optional(),
+    targetRepositoryId: z.string().min(1).max(WORKSPACE_BOUNDS.maxPathLength).optional(),
+    packageName: z.string().min(1).max(214).optional(), dependencyKind: z.enum(DEPENDENCY_KINDS).optional(),
+    limit: z.number().int().min(1).max(WORKSPACE_BOUNDS.maxDetailLimit).optional(), detail: z.enum(["compact", "full"]).optional(),
+  }).strict(), async args => {
+    try { return await queryWorkspacePackageLinks(args as WorkspacePackageLinksInput); }
+    catch (error) { if (error instanceof WorkspaceMapError) throw new McpToolError(error.code, error.message); throw error; }
+  });
+
+  registerJsonTool(server, "repository_map", "Summarize configured architecture areas or inferred graph communities, directed dependencies, framework entry facets, and incomplete evidence.", z.object({
+    ...commonInput,
+    maxAreas: z.number().int().min(1).max(100).describe("Maximum areas to return; limit is an alias.").optional(),
+    maxFilesPerArea: z.number().int().min(1).max(100).describe("Maximum file paths shown for each area.").optional(),
+    maxRelations: z.number().int().min(1).max(100).describe("Maximum directed area relations to return.").optional(),
+  }).strict(), async (args) => withGraph(resolveRepo(args.repoPath as string | undefined), async (context) => {
+    const architecturePolicy = await loadArchitecturePolicy(context.repoPath);
+    const map = buildRepositoryMap(context.graph, architecturePolicy, context.framework, { graphMayBeIncomplete: context.mayBeIncomplete });
+    const projected = projectRepositoryMapResponse(map, args.detail as McpDetail | undefined, {
+      maxAreas: (args.maxAreas as number | undefined) ?? Math.min((args.limit as number | undefined) ?? DEFAULT_LIMIT, 100),
+      maxFilesPerArea: args.maxFilesPerArea as number | undefined,
+      maxRelations: args.maxRelations as number | undefined,
+    });
+    return { ...projected, evidenceState: context.evidenceState };
+  }));
+
+  registerJsonTool(server, "list_entries", "List framework entries. NestJS and Spring HTTP routes have callable bindings; Next web routes are file boundaries; GraphQL query/mutation/subscription roots are declared resolver mappings with unverified schema exposure. Nested fields are not external entries. Scheduled jobs are declared mappings; scheduler registration and runtime execution are unverified. Message consumers are statically declared inbound mappings; broker destinations, listener registration, group membership and delivery are unverified.", z.object({
+    ...commonInput,
+    triggerKind: z.enum(["cron", "interval", "timeout", "fixed_rate", "fixed_delay"]).describe("Exact scheduled trigger kind.").optional(),
+    protocolKind: z.enum(["unspecified", "kafka", "rabbit"]).describe("Exact declared consumer protocol; Nest transport is unspecified.").optional(),
+    consumerKind: z.enum(["request_response", "event"]).describe("Exact inbound consumer semantics.").optional(),
+    destinationKind: z.enum(["pattern", "topic", "queue"]).describe("Exact destination kind.").optional(),
+    destination: z.string().min(1).describe("Exact declared pattern/topic/queue.").optional(),
+    declaredName: z.string().describe("Exact declared schedule name.").optional(),
+    kind: z.enum(["http", "web_route", "graphql", "scheduled", "message_consumer"]).describe("Exact entry kind.").optional(),
+    framework: z.enum(["nestjs", "spring", "next"]).describe("Exact framework.").optional(),
+    path: z.string().min(1).describe("Exact route path.").optional(),
+    method: z.string().min(1).describe("Exact HTTP method, normalized to uppercase; Next file boundaries have no method.").optional(),
+  }).strict(), async (args) => withGraph(resolveRepo(args.repoPath as string | undefined), async (context) => {
+    const catalog = buildRepositoryEntryCatalog(context.framework);
+    const projected = projectRepositoryEntryCatalogResponse(catalog, {
+      protocolKind: args.protocolKind as RepositoryEntryFilters["protocolKind"],
+      consumerKind: args.consumerKind as RepositoryEntryFilters["consumerKind"],
+      destinationKind: args.destinationKind as RepositoryEntryFilters["destinationKind"],
+      destination: args.destination as string | undefined,
+      triggerKind: args.triggerKind as RepositoryEntryFilters["triggerKind"],
+      declaredName: args.declaredName as string | undefined,
+      kind: args.kind as RepositoryEntryFilters["kind"],
+      framework: args.framework as RepositoryEntryFilters["framework"],
+      path: args.path as string | undefined,
+      method: args.method as string | undefined,
+    }, args.detail as McpDetail | undefined, args.limit as number | undefined);
+    return { ...projected, evidenceState: context.evidenceState };
+  }));
+
+  registerJsonTool(server, "message_links", "Inspect outbound messaging calls and declared consumers using static compatibility only; runtime dispatch, transport, broker and delivery are unverified. Producer calls are generation-scoped evidence, not execution entries. Use returned consumer IDs independently with execution_flow.", z.object({
+    ...commonInput,
+    producerSymbol: queryInput.describe("Exact callable identity/name; mutually exclusive with consumerId.").optional(),
+    consumerId: queryInput.describe("Existing message_consumer entity ID; selects compatible incoming producer calls.").optional(),
+    protocolKind: z.enum(["unspecified", "kafka"]).describe("Exact proven producer protocol; Nest transport remains unknown.").optional(),
+    destination: z.string().describe("Exact literal pattern/topic metadata filter; does not prove producer behavior.").optional(),
+  }).strict().refine(args => args.producerSymbol === undefined || args.consumerId === undefined, {
+    message: "producerSymbol and consumerId are mutually exclusive.",
+  }), async (args) => {
+    try {
+      return await queryMessageLinks(resolveRepo(args.repoPath as string | undefined), args as MessageLinksInput);
+    } catch (error) {
+      if (error instanceof MessageLinksError) throw new McpToolError(error.code, error.message);
+      if (error instanceof Error && error.message === "Repository graph is not indexed.") throw new McpToolError("index_required", error.message);
+      throw error;
     }
   });
 

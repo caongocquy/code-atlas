@@ -141,6 +141,125 @@ test("writes and reloads a complete empty framework materialization", async () =
   reopened.close();
 }));
 
+test("publishes only explained dynamic JSX as incomplete framework evidence", async () => withFixture((root) => {
+  const store = openFixture(root);
+  const { repositoryId, generationId } = beginCandidate(store, root);
+  const relativePath = "src/App.tsx";
+  const diagnostic: FrameworkDiagnostic = {
+    code: "framework_construct_unsupported", outcome: "unsupported", framework: "react", capability: "react.component_usage",
+    relativePath, strategy: "jsx-dynamic-component-usage", evidenceIds: ["jsx:1"],
+    refs: [{ relativePath, inputKey: `facts:${relativePath}`, localId: "jsx:1" }], reason: "framework construct is unsupported",
+  };
+  const coverage: FrameworkCoverage = {
+    framework: "react", capability: "react.component_usage", relativePath, strategy: "jsx-dynamic-component-usage",
+    outputKind: "relationship", kind: "component_usage", applicable: 1, supported: 0, attempted: 1,
+    resolved: 0, ambiguous: 0, unknown: 0, unsupported: 1, budgetExhausted: 0, weakDropped: 0,
+  };
+  const candidate = materialization({ complete: false, diagnostics: [diagnostic], coverage: [coverage] });
+  store.writeCandidateFramework(generationId, candidate);
+  store.assertCandidateFrameworkComplete(repositoryId, generationId, "framework-1");
+  store.publishCandidateGeneration(generationId, { frameworkStaged: true });
+  assert.deepEqual(store.loadFramework(repositoryId)?.diagnostics, [diagnostic]);
+  assert.equal(store.loadFramework(repositoryId)?.complete, false);
+  store.close();
+}));
+
+test("rejects unexplained or inconsistent framework outcomes at publication", async () => withFixture((root) => {
+  const store = openFixture(root);
+  const relativePath = "src/App.tsx";
+  const diagnostic: FrameworkDiagnostic = {
+    code: "framework_construct_unsupported", outcome: "unsupported", framework: "react", capability: "react.component_usage",
+    relativePath, strategy: "jsx-dynamic-component-usage", evidenceIds: ["jsx:1"],
+    refs: [{ relativePath, inputKey: `facts:${relativePath}`, localId: "jsx:1" }], reason: "framework construct is unsupported",
+  };
+  const coverage: FrameworkCoverage = {
+    framework: "react", capability: "react.component_usage", relativePath, strategy: "jsx-dynamic-component-usage",
+    outputKind: "relationship", kind: "component_usage", applicable: 1, supported: 0, attempted: 1,
+    resolved: 0, ambiguous: 0, unknown: 0, unsupported: 1, budgetExhausted: 0, weakDropped: 0,
+  };
+  for (const candidate of [
+    materialization({ complete: false, diagnostics: [{ ...diagnostic, strategy: "other-unsupported" }], coverage: [{ ...coverage, strategy: "other-unsupported" }] }),
+    materialization({ complete: false, diagnostics: [{ ...diagnostic, code: "framework_target_unknown", outcome: "unknown" }], coverage: [{ ...coverage, unsupported: 0, unknown: 1 }] }),
+    materialization({ complete: false, diagnostics: [{ ...diagnostic, code: "framework_target_ambiguous", outcome: "ambiguous" }], coverage: [{ ...coverage, unsupported: 0, ambiguous: 1 }] }),
+    materialization({ complete: false, diagnostics: [diagnostic], coverage: [{ ...coverage, unsupported: 0 }] }),
+    materialization({ complete: true, diagnostics: [diagnostic], coverage: [coverage] }),
+  ]) {
+    const { generationId } = beginCandidate(store, root);
+    store.writeCandidateFramework(generationId, candidate);
+    assert.throws(() => store.publishCandidateGeneration(generationId, { frameworkStaged: true }), /Candidate framework materialization is incomplete/);
+  }
+  store.close();
+}));
+
+test("incomplete candidate framework error reports bounded site and reason context", async () => withFixture((root) => {
+  const store = openFixture(root);
+  const { repositoryId, generationId } = beginCandidate(store, root);
+  writeLanguageGraph(store, generationId);
+  const unresolved: FrameworkDiagnostic = {
+    code: "framework_target_unknown", outcome: "unknown", framework: "next", capability: "route-binding",
+    relativePath: "app/users/page.tsx", strategy: "app-router-page", evidenceIds: ["site:1"],
+    refs: [{ relativePath: "app/users/page.tsx", inputKey: "facts:page", localId: "call:1" }],
+    reason: "target is not available",
+  };
+  const coverage: FrameworkCoverage = {
+    framework: "next", capability: "route-binding", relativePath: "app/users/page.tsx", strategy: "app-router-page",
+    outputKind: "relationship", kind: "route_binding", applicable: 2, supported: 2, attempted: 2,
+    resolved: 1, ambiguous: 0, unknown: 1, unsupported: 0, budgetExhausted: 0, weakDropped: 0,
+  };
+  store.writeCandidateFramework(generationId, materialization({
+    complete: false, diagnostics: Array.from({ length: 12 }, (_, index) => ({ ...unresolved, evidenceIds: [`site:${index}`] })),
+    coverage: [coverage], dependencies: [{ framework: "next", scope: "app", ownerPath: "package.json", inputKeys: ["package:app"], lookupKeys: ["next"], complete: true }],
+  }));
+  assert.throws(() => store.publishCandidateGeneration(generationId, { frameworkStaged: true }), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /^Candidate framework materialization is incomplete/);
+    for (const detail of ["next", "app/users/page.tsx", "attemptedSites", "representedSites", "resolvedSites", "uniqueRelations", "unresolvedByReason", "coverage_unknown", "framework_target_unknown", "call:1"]) {
+      assert.ok(error.message.includes(detail), detail);
+    }
+    assert.ok(!error.message.includes('"owner":"package.json"'));
+    assert.ok(error.message.length < 4096);
+    assert.ok(error.message.split("target is not available").length <= 6);
+    return true;
+  });
+  assert.equal(store.loadFramework(repositoryId, generationId)?.complete, false);
+  store.close();
+}));
+
+test("framework failure samples never borrow an owner from another source file", async () => withFixture((root) => {
+  const store = openFixture(root);
+  const { generationId } = beginCandidate(store, root);
+  const files = [".tmp-init.js", "src/app/router/routes.tsx", "src/features/PlansSection.tsx"];
+  const sourceFiles = files.slice(1);
+  const coverage: FrameworkCoverage[] = sourceFiles.map((relativePath) => ({
+    framework: "react", capability: "react.component_usage", relativePath, strategy: "jsx-component-usage",
+    outputKind: "relationship", kind: "component_usage", applicable: 1, supported: 1, attempted: 1,
+    resolved: 0, ambiguous: 0, unknown: 1, unsupported: 0, budgetExhausted: 0, weakDropped: 0,
+  }));
+  const diagnostics: FrameworkDiagnostic[] = sourceFiles.map((relativePath) => ({
+    code: "framework_target_unknown", outcome: "unknown", framework: "react", capability: "react.component_usage",
+    relativePath, strategy: "jsx-component-usage", evidenceIds: [`react-jsx:${relativePath}:jsx:1`],
+    refs: [{ relativePath, inputKey: `facts:${relativePath}`, localId: "jsx:1" }], reason: "relationship endpoint is not unique",
+  }));
+  store.writeCandidateFramework(generationId, materialization({
+    complete: false, coverage, diagnostics,
+    dependencies: files.map((ownerPath) => ({ framework: "react", scope: "root", ownerPath, inputKeys: [`facts:${ownerPath}`], lookupKeys: ["jsx:Child"], complete: true })),
+  }));
+  assert.throws(() => store.publishCandidateGeneration(generationId, { frameworkStaged: true }), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    const report = JSON.parse(error.message.slice("Candidate framework materialization is incomplete: ".length)) as {
+      files: Array<{ file: string; owner?: string }>;
+      unresolvedSamples: Array<{ file: string; owner?: string; site?: string; strategy: string }>;
+    };
+    for (const file of sourceFiles) {
+      assert.equal(report.files.find((item) => item.file === file)?.owner, file);
+      assert.deepEqual(report.unresolvedSamples.filter((item) => item.file === file).map((item) => [item.owner, item.site]), [[file, "jsx:1"]]);
+      assert.equal(report.unresolvedSamples.find((item) => item.file === file)?.strategy, "jsx-component-usage");
+    }
+    return true;
+  });
+  store.close();
+}));
+
 test("persists entities, relationships, classifications and query inputs", async () => withFixture((root) => {
   const store = openFixture(root);
   const { repositoryId, generationId } = beginCandidate(store, root);
@@ -170,17 +289,6 @@ test("persists entities, relationships, classifications and query inputs", async
   };
   const detection = { framework: "next" as const, scope: "app", configured: true, observed: true, capabilities: ["app-router"], refs: provenance().refs, complete: true };
   const dependency: FrameworkDependency = { framework: "next", scope: "app", ownerPath: "package.json", inputKeys: ["package:app"], lookupKeys: ["next"], complete: true };
-  const diagnostic: FrameworkDiagnostic = {
-    code: "framework_target_unknown",
-    outcome: "unknown",
-    framework: "next",
-    capability: "route-binding",
-    relativePath: "app/users/page.tsx",
-    strategy: "app-router-page",
-    evidenceIds: ["evidence:1"],
-    refs: provenance().refs,
-    reason: "target is not available",
-  };
   const coverage: FrameworkCoverage = {
     framework: "next",
     capability: "route-binding",
@@ -203,7 +311,6 @@ test("persists entities, relationships, classifications and query inputs", async
     entities: [route],
     relationships: [relationship],
     classifications: [classification],
-    diagnostics: [diagnostic],
     coverage: [coverage],
     config: [config],
     detections: [detection],
@@ -278,6 +385,51 @@ test("rejects dangling endpoints, weak provenance and conflicting duplicates ato
   store.close();
 }));
 
+test("reports malformed duplicate framework lookup keys with owner context", async () => withFixture((root) => {
+  const store = openFixture(root);
+  const { repositoryId, generationId } = beginCandidate(store, root);
+  const dependency: FrameworkDependency = {
+    framework: "react", scope: "root", ownerPath: "App.tsx",
+    inputKeys: ["facts:App.tsx"], lookupKeys: ["jsx:Button", "jsx:Button"], complete: true,
+  };
+  assert.throws(() => store.writeCandidateFramework(generationId, materialization({ dependencies: [dependency] })), (error: unknown) => {
+    assert.ok(error instanceof TypeError);
+    for (const detail of ["lookupKeys contains duplicates", "file=App.tsx", "language=unavailable", "framework=react", "siteKind=framework_dependency", "localId=unavailable", "owner=App.tsx", "caller=unavailable", 'lookupKeys=["jsx:Button","jsx:Button"]', 'duplicateValues=["jsx:Button"]']) {
+      assert.ok(error.message.includes(detail), detail);
+    }
+    return true;
+  });
+  assert.equal(store.loadFramework(repositoryId, generationId), undefined);
+  store.close();
+}));
+
+test("rejects forty lookup keys in one dependency with bounded owner diagnostics", async () => withFixture((root) => {
+  const store = openFixture(root);
+  const { repositoryId, generationId } = beginCandidate(store, root);
+  const lookupKeys = Array.from({ length: 40 }, (_, index) => `jsx:Component${String(index + 1).padStart(2, "0")}`);
+  const dependency: FrameworkDependency = { framework: "react", scope: "root", ownerPath: "App.tsx", inputKeys: ["facts:App.tsx"], lookupKeys, complete: true };
+  assert.throws(() => store.writeCandidateFramework(generationId, materialization({ dependencies: [dependency] })), (error: unknown) => {
+    assert.ok(error instanceof TypeError);
+    for (const detail of ["lookupKeys must contain at most 32 items", "framework=react", "file=App.tsx", "owner=App.tsx", "totalKeys=40", "uniqueKeys=40", 'keyFamilies=["jsx"]', "jsx:Component01"]) assert.ok(error.message.includes(detail), detail);
+    assert.ok(error.message.length < 1500);
+    return true;
+  });
+  assert.equal(store.loadFramework(repositoryId, generationId), undefined);
+  store.close();
+}));
+
+test("persists forty distinct React dependencies for one owner without dropping keys", async () => withFixture((root) => {
+  const store = openFixture(root);
+  const { repositoryId, generationId } = beginCandidate(store, root);
+  const dependencies: FrameworkDependency[] = Array.from({ length: 40 }, (_, index) => ({
+    framework: "react", scope: "root", ownerPath: "App.tsx", inputKeys: ["facts:App.tsx"],
+    lookupKeys: [`jsx:Component${String(index + 1).padStart(2, "0")}`], complete: true,
+  }));
+  store.writeCandidateFramework(generationId, materialization({ dependencies }));
+  assert.deepEqual(store.loadFramework(repositoryId, generationId)?.dependencies.map((item) => item.lookupKeys[0]), dependencies.map((item) => item.lookupKeys[0]));
+  store.close();
+}));
+
 test("rejects missing, committed and read-only candidate framework writes", async () => withFixture((root) => {
   const store = openFixture(root);
   const { repositoryId, generationId } = beginCandidate(store, root);
@@ -326,8 +478,8 @@ test("persists distinct diagnostics sharing a coarse source tuple", async () => 
     refs: [{ relativePath: "app/users/page.tsx", inputKey: "facts:1" }],
     reason: "source target missing",
   };
-  store.writeCandidateFramework(generationId, materialization({ diagnostics: [base, { ...base, evidenceIds: ["evidence:2"], reason: "target ambiguous" }] }));
-  store.publishCandidateGeneration(generationId, { frameworkStaged: true });
+  store.writeCandidateFramework(generationId, materialization({ complete: false, diagnostics: [base, { ...base, evidenceIds: ["evidence:2"], reason: "target ambiguous" }] }));
+  assert.throws(() => store.publishCandidateGeneration(generationId, { frameworkStaged: true }), /Candidate framework materialization is incomplete/);
   assert.equal(store.loadFramework(repositoryId, generationId)?.diagnostics.length, 2);
   store.close();
 }));

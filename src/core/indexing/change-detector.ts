@@ -14,6 +14,7 @@ export type RepositoryChangeDetectorOptions = {
   skipGit?: boolean;
   progress?: Parameters<typeof detectFilesystemChanges>[1]["progress"];
   forceFullScan?: boolean;
+  onPhaseTiming?: (phase: "scan" | "hash", elapsedMs: number) => void;
 };
 
 export async function detectRepositoryChanges(

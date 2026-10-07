@@ -35,6 +35,24 @@ test("changed input and lookup keys invalidate dependency owners", () => {
   assert.deepEqual(lookup.analyzePaths, ["app/users/page.tsx"]);
 });
 
+test("all distinct React lookup keys remain available for invalidation", () => {
+  const dependencies = Array.from({ length: 40 }, (_, index) => ({
+    framework: "react" as const, scope: "root", ownerPath: "App.tsx", inputKeys: ["facts:App.tsx"],
+    lookupKeys: [`jsx:Component${String(index + 1).padStart(2, "0")}`], complete: true,
+  }));
+  const keys = frameworkChangedLookupKeys(
+    { dependencies },
+    [{ relativePath: "Component40.tsx", facts: { symbols: [{ name: "Component40" }], parameters: [], frameworkSyntax: { nodes: [], complete: true } } as never }],
+    { changedFiles: ["Component40.tsx"], deletedFiles: [] },
+  );
+  assert.equal(keys.has("jsx:Component40"), true);
+  const plan = planFrameworkInvalidation({
+    paths: [], allPaths: ["App.tsx", "Component40.tsx"], changedInputKeys: new Set(), changedLookupKeys: keys,
+    previous: previous(dependencies), frameworkResolutionVersion: "1.0.0", topologyComplete: true,
+  });
+  assert.deepEqual(plan.analyzePaths, ["App.tsx"]);
+});
+
 test("changed paths are distinct from the full rebuild universe", () => {
   const dependency = { framework: "next" as const, scope: "app", ownerPath: "app/page.tsx", inputKeys: [], lookupKeys: [], complete: true };
   const plan = planFrameworkInvalidation({ paths: ["app/page.tsx"], allPaths: ["app/page.tsx", "plain.ts"], changedInputKeys: new Set(), changedLookupKeys: new Set(), previous: previous([dependency]), frameworkResolutionVersion: "1.0.0", topologyComplete: true });
