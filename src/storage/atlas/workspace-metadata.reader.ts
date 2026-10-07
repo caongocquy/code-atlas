@@ -18,7 +18,7 @@ export function reserveWorkspaceRead(budget: WorkspaceReadBudget, records: numbe
 
 export type WorkspaceSnapshot = { generationId: string; updatedAt: string; versions: IndexVersionDomains; mayBeIncomplete: boolean; complete: boolean; diagnostics: string[]; evidence: WorkspaceEvidenceRef[] };
 
-export function readWorkspaceMetadata(databasePath: string, identity: RepositoryIdentity, budget: WorkspaceReadBudget, options?: { profile: "messaging"; read: (database: DatabaseSync, snapshot: WorkspaceSnapshot, inspectedRecords: number) => void }): WorkspaceSnapshot {
+export function readWorkspaceMetadata(databasePath: string, identity: RepositoryIdentity, budget: WorkspaceReadBudget, options?: { profile: "messaging" | "packages"; read: (database: DatabaseSync, snapshot: WorkspaceSnapshot, inspectedRecords: number) => void }): WorkspaceSnapshot {
   checkWorkspaceDeadline(budget);
   // Always use a live read-only connection: immutable=1 is unsafe if a writer creates WAL after open.
   const database = new DatabaseSync(`${pathToFileURL(databasePath).href}?mode=ro`, { readOnly: true });

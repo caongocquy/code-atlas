@@ -59,6 +59,7 @@ test("MCP exposes the structured CodeAtlas capability surface", async () => {
       "repository_map",
       "workspace_map",
       "workspace_message_links",
+      "workspace_package_links",
       "repository_status",
       "search_code",
       "semantic_clean",

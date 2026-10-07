@@ -10,7 +10,7 @@ export function createWorkspaceBudget(now: () => number, bounds: { maxRecords: n
 }
 
 export async function coordinateWorkspaceMembers(identities: RepositoryIdentity[], budget: WorkspaceReadBudget,
-  read?: (database: DatabaseSync, snapshot: WorkspaceSnapshot, identity: RepositoryIdentity, inspectedRecords: number) => void) {
+  read?: (database: DatabaseSync, snapshot: WorkspaceSnapshot, identity: RepositoryIdentity, inspectedRecords: number) => void, profile: "messaging" | "packages" = "messaging") {
   const repositories: WorkspaceMember[] = [];
   const knownDetails: WorkspaceEvidenceRef[] = [];
   for (const identity of identities) {
@@ -23,7 +23,7 @@ export async function coordinateWorkspaceMembers(identities: RepositoryIdentity[
       const dbPath = path.join(identity.rootPath, ".codeatlas", "atlas.db");
       const info = await stat(dbPath);
       if (!info.isFile()) throw new WorkspaceReadError("index_unavailable");
-      const snapshot = readWorkspaceMetadata(dbPath, identity, budget, read ? { profile: "messaging", read: (database, snapshot, inspectedRecords) => read(database, snapshot, identity, inspectedRecords) } : undefined);
+      const snapshot = readWorkspaceMetadata(dbPath, identity, budget, read ? { profile, read: (database, snapshot, inspectedRecords) => read(database, snapshot, identity, inspectedRecords) } : undefined);
       member = { ...member, generationId: snapshot.generationId, versions: snapshot.versions,
         evidenceState: { repositoryId: identity.id, generationId: snapshot.generationId, freshness: "unknown", capabilityState: "ready", mayBeIncomplete: snapshot.mayBeIncomplete, reasons: ["graph_freshness_unknown", ...(!read && snapshot.mayBeIncomplete ? ["graph_resolution_incomplete" as const] : [])], updatedAt: snapshot.updatedAt },
         health: { availability: snapshot.complete ? "available" : "partial", compatibility: "compatible", generationAvailability: "available", diagnostics: snapshot.diagnostics }, queryCoverage: { complete: snapshot.complete, inspectedRecords: budget.inspectedRecords - before } };
