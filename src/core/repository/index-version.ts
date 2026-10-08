@@ -10,8 +10,8 @@ export type VectorRefreshMode = "semantic-reindex" | "incremental";
 
 export const INDEX_SCHEMA_VERSION = "2.0.0";
 export const FACTS_SCHEMA_VERSION = "3.0.0";
-export const FACTS_VERSION = "3.1.1";
-export const FRAMEWORK_RESOLUTION_VERSION = "1.7.0";
+export const FACTS_VERSION = "3.1.2";
+export const FRAMEWORK_RESOLUTION_VERSION = "1.7.1";
 export const FRAMEWORK_CONFIG_INTEGRITY_VERSION = "1.0.0";
 export const RELIABILITY_VERSION = "1.0.0";
 

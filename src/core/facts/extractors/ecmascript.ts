@@ -118,6 +118,16 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
       const namespace = node.namedChildren.find((child) => child.type === "namespace_export");
       if (namespace) { exports.push({ localId: next("export"), exportedName: "*", moduleSpecifier: moduleSpecifier ? unquote(moduleSpecifier.text) : undefined, kind: "star", range: range(namespace) }); return; }
       const declaration = node.childForFieldName("declaration");
+      // A variable declaration can export several named bindings; the declaration
+      // itself has no name field. Preserve each parser-proven simple identifier.
+      if (declaration && ["lexical_declaration", "variable_declaration"].includes(declaration.type)) {
+        for (const declarator of declaration.namedChildren.filter((item) => item.type === "variable_declarator")) {
+          const declared = declarator.childForFieldName("name");
+          if (declared?.type !== "identifier") continue;
+          exports.push({ localId: next("export"), exportedName: declared.text, localName: declared.text, kind: "declaration", range: range(declarator) });
+        }
+        return;
+      }
       const declaredName = nameOf(declaration);
       if (declaredName) {
         const isDefault = node.children.some((child) => child.type === "default" && child.text === "default");

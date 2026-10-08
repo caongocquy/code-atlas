@@ -841,6 +841,11 @@ async function runPipelineLocked(inputPath: string, operation: "index" | "sync" 
     const changedInputKeys = new Set([
       ...(previousFramework?.config ?? []).filter((item) => changedConfigPaths.has(item.relativePath)).map((item) => item.inputKey),
       ...frameworkConfig.filter((item) => changedConfigPaths.has(item.relativePath)).map((item) => item.inputKey),
+      // Framework dependencies also reference consulted facts from other files.
+      // Invalidate importers when a target's exports disappear or change identity,
+      // even if its new symbol name no longer matches a previous JSX lookup key.
+      ...[...new Set([...changes.addedFiles, ...changes.changedFiles, ...changes.deletedFiles, ...terminalDirtyOwners])]
+        .map((file) => `facts:${file}`),
     ]);
     const frameworkInvalidation = planFrameworkInvalidation({
       paths: [...new Set([...changes.addedFiles, ...changes.changedFiles, ...changes.deletedFiles, ...terminalDirtyOwners])],

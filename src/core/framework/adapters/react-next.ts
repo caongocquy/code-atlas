@@ -139,16 +139,86 @@ function canonicalGraphPath(value: string): string {
   return path.posix.normalize(value.replaceAll("\\", "/"));
 }
 
+type ImportedComponentTargets = {
+  nodes: FrameworkAnalysisContext["graph"]["nodes"][number][];
+  paths: Set<string>;
+  configKeys: Set<string>;
+};
+
+const emptyImportedTargets = (): ImportedComponentTargets => ({ nodes: [], paths: new Set(), configKeys: new Set() });
+
+function verifiedLazyNamedExport(
+  ctx: FrameworkAnalysisContext,
+  file: string,
+  localName: string,
+  visited: Set<string>,
+  consulted: Set<string>,
+): ImportedComponentTargets {
+  const result = emptyImportedTargets();
+  const fileFacts = (ctx.lookupFacts ?? ctx.facts).find((item) => canonicalGraphPath(item.relativePath) === file)?.facts;
+  if (!fileFacts || fileFacts.parseStatus !== "complete") return result;
+  const rootScope = fileFacts.containmentScopes.find((item) => item.kind === "program")?.localId;
+  const bindings = fileFacts.bindingSeeds.filter((item) => item.name === localName && item.bindingKind === "local" && item.ownerId === rootScope);
+  if (!rootScope || bindings.length !== 1) return result;
+  const assignments = fileFacts.assignments.filter((item) => item.targetId === bindings[0]!.localId && item.assignmentKind === "declaration");
+  if (assignments.length !== 1) return result;
+  const expression = fileFacts.expressions.find((item) => item.localId === assignments[0]!.sourceExpressionId);
+  if (expression?.kind !== "call" || !expression.text) return result;
+
+  // Strictly recognize the two-literal lazyRouteNamed(() => import("path"), "Export") form.
+  // This is parser-derived initializer text, never arbitrary source-file regex matching.
+  // Computed specifiers, computed export names, extra arguments and other wrappers fail closed.
+  const literalCall = /^\s*lazyRouteNamed\s*\(\s*\(\s*\)\s*=>\s*import\s*\(\s*(["'])([^"'\x60\\\r\n]+)\1\s*\)\s*,\s*(["'])([$A-Za-z_][$\w]*)\3\s*\)\s*$/s.exec(expression.text);
+  if (!literalCall) return result;
+  const [, , specifier, , exportName] = literalCall;
+  if (!specifier || !exportName || !fileFacts.exports.some((item) => item.localName === localName && !item.moduleSpecifier)) return result;
+
+  // Do not infer semantics from a function name alone: require a unique imported
+  // implementation with React.lazy and the named-export-to-default adapter shape.
+  const helperImports = fileFacts.imports.filter((item) => item.localName === "lazyRouteNamed" && item.importedName === "lazyRouteNamed" && item.kind === "named");
+  if (helperImports.length !== 1) return result;
+  const helperTarget = importTarget(ctx, file, helperImports[0]!.moduleSpecifier);
+  for (const key of helperTarget.configKeys) result.configKeys.add(key);
+  if (helperTarget.kind !== "project") return result;
+  const helpers = helperTarget.paths.flatMap((candidate) => (ctx.lookupFacts ?? ctx.facts)
+    .filter((item) => canonicalGraphPath(item.relativePath) === candidate && item.facts.parseStatus === "complete"));
+  if (helpers.length !== 1) return result;
+  const helper = helpers[0]!;
+  const helperFacts = helper.facts;
+  const declarations = helperFacts.symbols.filter((item) => item.kind === "function" && item.name === "lazyRouteNamed");
+  if (declarations.length !== 1
+    || !helperFacts.exports.some((item) => item.exportedName === "lazyRouteNamed" && item.localName === "lazyRouteNamed")
+    || !helperFacts.imports.some((item) => item.moduleSpecifier === "react" && item.importedName === "lazy" && item.localName === "lazy")
+    || !helperFacts.returns.some((returned) => returned.ownerSymbolId === declarations[0]!.localId
+      && helperFacts.expressions.some((item) => item.localId === returned.expressionId && item.text
+        && /^\s*lazy\s*\(/s.test(item.text)
+        && /importWithChunkRetry\s*\(\s*importer\s*\)\s*\.then\s*\(/s.test(item.text)
+        && /default\s*:\s*module\s*\[\s*exportName\s*\]/s.test(item.text)))) return result;
+  consulted.add(canonicalGraphPath(helper.relativePath));
+
+  const importedTarget = importTarget(ctx, file, specifier);
+  for (const key of importedTarget.configKeys) result.configKeys.add(key);
+  if (importedTarget.kind !== "project") return result;
+  for (const candidate of importedTarget.paths) {
+    const resolved = exportedComponentTargets(ctx, candidate, exportName, visited, consulted);
+    result.nodes.push(...resolved.nodes);
+    for (const key of resolved.configKeys) result.configKeys.add(key);
+  }
+  result.nodes = [...new Map(result.nodes.map((node) => [node.id, node])).values()];
+  return result;
+}
+
 function exportedComponentTargets(
   ctx: FrameworkAnalysisContext,
   filePath: string,
   exportName: string,
   visited = new Set<string>(),
   consulted = new Set<string>(),
-): { nodes: FrameworkAnalysisContext["graph"]["nodes"][number][]; paths: Set<string> } {
+): ImportedComponentTargets {
   const file = canonicalGraphPath(filePath);
+  const result: ImportedComponentTargets = { nodes: [], paths: consulted, configKeys: new Set() };
   const visitKey = JSON.stringify([file, exportName]);
-  if (visited.has(visitKey)) return { nodes: [], paths: consulted };
+  if (visited.has(visitKey)) return result;
   visited.add(visitKey);
   consulted.add(file);
 
@@ -157,8 +227,7 @@ function exportedComponentTargets(
     && canonicalGraphPath(node.file) === file && ctx.graph.edges.some((edge) => edge.type === "contains" && fileNodeIds.has(edge.from) && edge.to === node.id));
   const fileFacts = (ctx.lookupFacts ?? ctx.facts).find((item) => canonicalGraphPath(item.relativePath) === file);
   const matching = (fileFacts?.facts.exports ?? []).filter((item) => item.exportedName === exportName || (item.kind === "star" && item.exportedName === "*" && exportName !== "default"));
-  const nodes: FrameworkAnalysisContext["graph"]["nodes"][number][] = [];
-  if (matching.length === 0 && exportName !== "default") nodes.push(...localTargets(exportName));
+  if (matching.length === 0 && exportName !== "default") result.nodes.push(...localTargets(exportName));
   for (const item of matching) {
     if (item.moduleSpecifier) {
       for (const candidate of resolveImportCandidates(file, item.moduleSpecifier)) {
@@ -166,23 +235,37 @@ function exportedComponentTargets(
         if (!ctx.graph.nodes.some((node) => node.type === "file" && canonicalGraphPath(node.file) === targetFile)) continue;
         const nextName = item.kind === "star" ? exportName : item.localName;
         if (!nextName) continue;
-        nodes.push(...exportedComponentTargets(ctx, targetFile, nextName, visited, consulted).nodes);
+        const resolved = exportedComponentTargets(ctx, targetFile, nextName, visited, consulted);
+        result.nodes.push(...resolved.nodes);
+        for (const key of resolved.configKeys) result.configKeys.add(key);
       }
     } else if (item.localName) {
-      nodes.push(...localTargets(item.localName));
+      const local = localTargets(item.localName);
+      result.nodes.push(...local);
+      if (local.length === 0) {
+        const dynamic = verifiedLazyNamedExport(ctx, file, item.localName, visited, consulted);
+        result.nodes.push(...dynamic.nodes);
+        for (const key of dynamic.configKeys) result.configKeys.add(key);
+      }
     }
   }
-  return { nodes: [...new Map(nodes.map((node) => [node.id, node])).values()], paths: consulted };
+  result.nodes = [...new Map(result.nodes.map((node) => [node.id, node])).values()];
+  return result;
 }
 
 function importedComponentTargets(
   ctx: FrameworkAnalysisContext,
   files: readonly string[],
   exportName: string,
-): { nodes: FrameworkAnalysisContext["graph"]["nodes"][number][]; paths: Set<string> } {
+): ImportedComponentTargets {
   const consulted = new Set<string>();
-  const nodes = files.flatMap((file) => exportedComponentTargets(ctx, file, exportName, new Set(), consulted).nodes);
-  return { nodes: [...new Map(nodes.map((node) => [node.id, node])).values()], paths: consulted };
+  const configKeys = new Set<string>();
+  const nodes = files.flatMap((file) => {
+    const resolved = exportedComponentTargets(ctx, file, exportName, new Set(), consulted);
+    for (const key of resolved.configKeys) configKeys.add(key);
+    return resolved.nodes;
+  });
+  return { nodes: [...new Map(nodes.map((node) => [node.id, node])).values()], paths: consulted, configKeys };
 }
 
 function hasKnownDynamicLocalBinding(facts: FrameworkAnalysisContext["facts"][number]["facts"], jsx: SyntaxObservation): boolean {
@@ -248,9 +331,10 @@ function analyze(ctx: FrameworkAnalysisContext): { evidence: readonly FrameworkE
       let targetNodes: FrameworkAnalysisContext["graph"]["nodes"][number][];
       if (binding) {
         const importedName = binding.importedName === "*" ? targetName : binding.importedName ?? targetName;
-        const imported = target?.kind === "project" ? importedComponentTargets(ctx, target.paths, importedName) : { nodes: [], paths: new Set<string>() };
+        const imported = target?.kind === "project" ? importedComponentTargets(ctx, target.paths, importedName) : emptyImportedTargets();
         targetNodes = imported.nodes;
         for (const file of imported.paths) configKeysByLookup.get(`jsx:${jsx.name}`)?.add(`facts:${file}`);
+        for (const key of imported.configKeys) configKeysByLookup.get(`jsx:${jsx.name}`)?.add(key);
       } else targetNodes = localNodes.filter((node) => node.type !== "file" && node.name === targetName);
       const targets = targetNodes.map((node): FrameworkSubjectRef => ({ kind: "language", nodeId: node.id }));
       const ownerFacts = (materialized.facts.symbols ?? []).filter((item) => item.localId === jsx.ownerSymbolId);

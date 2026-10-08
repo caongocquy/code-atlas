@@ -6,6 +6,12 @@ All notable changes to CodeAtlas are documented here.
 
 ## [1.6.0] - 2026-10-08
 
+### React lazy routes and MCP guidance
+
+- Recognize parser-proven named `export const` bindings and resolve explicitly verified `lazyRouteNamed(() => import("literal"), "NamedExport")` routes through local helpers, TypeScript aliases and re-exports. Keep computed/unverified targets fail-closed and pre-existing dynamic JSX partial rather than inventing relationships.
+- Clarify MCP tool discovery: `inspect_change` accepts Git working/staged/commit/range sources; use `compile_task_context` with file anchors for named file lists.
+- Facts version `3.1.2` and framework resolution version `1.7.1` invalidate affected older evidence safely. The first post-upgrade sync reparses old fact-cache entries and rematerializes framework relationships; performance may temporarily differ from a no-op sync.
+
 ### Improved
 
 - Incremental indexing now reuses a published generation on true no-op `index` and `sync`, without parsing, resolution, or storage writes when source and capability inputs have not changed.
