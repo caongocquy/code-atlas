@@ -523,3 +523,59 @@ archiving (real SCIP remains a separately installed CI smoke dependency).
 - `.github/workflows/release-artifacts.yml`: helper backfill and artifact smoke gate.
 - `.github/workflows/portable-packaging-smoke.yml`: publication-free native matrix.
 - `RELEASE_PACKAGING_AUDIT.md`: audit, sizes, decisions and release gates.
+
+## Native qualification update (2026-10-08)
+
+The isolated branch was committed and pushed as `chore/release-packaging-161`.
+The first native run exposed a real macOS x64 toolchain issue: ONNX Runtime's
+pinned CoreML source references `MLOptimizationHints` (macOS 14.4+) and
+`MLSpecializationStrategy` (macOS 15+) while targeting macOS 13.5, and Clang
+promotes those availability warnings to errors. The runner also confirmed the
+source was built for `x86_64` with CoreML and WebGPU enabled. The build helper
+now passes the narrow availability-warning override to both C++ and Objective-C++
+compiler flags; the follow-up native x64 build is still running, so this change
+is not yet qualified.
+
+Run `37807771156` on commit `b0d12895b3f4b58e681b563468175d9e54357fb4` has
+completed Linux x64 and macOS ARM64 successfully. Windows x64 artifact build,
+all 9 packaged runtime smokes, ZIP extraction and integrity checks passed; its
+full-suite regression gate failed on changed assertions in three tests. The
+Windows baseline/candidate comparison was run under Node 24.21.0:
+
+| Platform | Base archive | Candidate archive | Base installed (logical) | Candidate installed (logical) | Full-suite comparison |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Linux x64 | 448.1 MiB | 327.1 MiB | 1,187.5 MiB | 669.6 MiB | pass; base 1,349 tests (1,297 pass / 49 fail / 3 skip), candidate 1,376 (1,324 / 49 / 3); no changed/added assertions |
+| macOS ARM64 | 228.5 MiB | 116.1 MiB | 912.4 MiB | 444.5 MiB | pass; base 1,349 tests (1,297 pass / 49 fail / 3 skip), candidate 1,376 (1,324 / 49 / 3); no changed/added assertions |
+| Windows x64 | 238.4 MiB | 125.5 MiB | 907.5 MiB | 412.7 MiB | fail; base 1,349 (1,232 pass / 114 fail / 3 skip), candidate 1,377 (1,284 / 90 / 3); 0 added failures, 24 resolved, 3 changed assertions |
+| macOS x64 | pending | pending | pending | pending | native build in progress |
+
+The three Windows assertion changes are confined to existing failing tests:
+two SQLite teardown failures report `EBUSY` while removing `atlas.db` or its
+WAL file (the specific file varies between runs), and one incremental graph
+assertion shows duplicate file identities for forward-slash and backslash paths.
+The test files are unchanged from the release base. These failures point to
+existing Windows file-handle cleanup and path-normalization defects, not a
+packaging-only candidate failure, but the strict comparator remains red and
+the gate is not counted as passing. No test or skip was weakened.
+
+The published `doctor` command is absent from the immutable v1.6.0 release base;
+its unknown-command behavior was checked and no command was added as part of
+this packaging change. CLI, sync, parsers, semantic provider, MCP, and artifact
+runtime checks are covered by the 9 isolated package smoke suites on the passing
+platforms. The current run still needs a completed native macOS x64 build and
+artifact checks before this audit can make a four-platform qualification claim.
+
+The Windows path-normalization change in `bfae465` preserves escaped JSON
+sequences while normalizing only CI temporary roots; it does not hide nested
+file-name differences. The regression comparison unit suite passed 13/13.
+The ONNX build-argument test suite passed 7/7 after adding the C++ compiler flag.
+The pushed CI run is the evidence source for the matrix; sizes above are
+installed logical-byte and compressed archive measurements from its native
+artifacts, converted using 1 MiB = 1,048,576 bytes. This section supersedes the
+earlier statement that no commit, push, or CI run had occurred.
+
+Release status remains **NO-GO** until macOS x64 completes its native artifact
+smoke and dynamic-library checks, and the three Windows changed assertions are
+reviewed against the release base as accepted baseline defects or fixed without
+weakening their tests. No tag, merge, npm publication, GitHub Release, or
+Homebrew update has been made.
