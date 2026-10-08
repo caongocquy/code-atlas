@@ -133,6 +133,8 @@ test("Darwin x64 bundle scan resolves native dependencies and permits universal 
       const file = binary;
       return file === binding
         ? `${file}:\n\t@rpath/libexample.dylib (compatibility version 1.0.0)`
+        : file === library
+          ? `${file}:\n\t@rpath/libexample.dylib (compatibility version 1.0.0)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)`
         : `${file}:\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)`;
     }
     if (action === "-l") return machoLoadCommands(DARWIN_X64_MINIMUM_VERSION, binary === binding);

@@ -79,6 +79,12 @@ function validateMacOSMinimum(binary, loadCommands) {
   }
 }
 
+function linkedLibraries(binary, output) {
+  return output.split("\n").slice(binary.endsWith(".dylib") ? 2 : 1)
+    .map((line) => line.trim().split(" (")[0])
+    .filter(Boolean);
+}
+
 export function validateDarwinX64OnnxPayload(nativeDir, runCapture = capture) {
   if (!fs.existsSync(nativeDir)) throw new Error(`Missing ONNX native payload: ${nativeDir}`);
   const files = nativeFiles(nativeDir);
@@ -99,9 +105,8 @@ export function validateDarwinX64OnnxPayload(nativeDir, runCapture = capture) {
     }
     const loadCommands = runCapture("otool", ["-arch", "x86_64", "-l", binary]);
     validateMacOSMinimum(file, loadCommands);
-    const dependencies = runCapture("otool", ["-arch", "x86_64", "-L", binary]).split("\n").slice(1);
-    for (const line of dependencies) {
-      const dependency = line.trim().split(" (")[0];
+    const dependencies = linkedLibraries(binary, runCapture("otool", ["-arch", "x86_64", "-L", binary]));
+    for (const dependency of dependencies) {
       if (dependency.startsWith("@rpath/")) {
         const name = path.basename(dependency);
         if (!fileSet.has(name)) throw new Error(`ONNX dependency ${dependency} is missing from native payload`);
@@ -240,10 +245,8 @@ export function validateDarwinX64NativeBundle(bundleDir, runCapture = capture) {
     const loadCommands = runCapture("otool", ["-arch", "x86_64", "-l", binary]);
     validateMacOSMinimum(path.relative(bundleDir, binary), loadCommands);
     const rpaths = rpathsFrom(loadCommands);
-    const dependencies = runCapture("otool", ["-arch", "x86_64", "-L", binary]).split("\n").slice(1);
-    for (const line of dependencies) {
-      const dependency = line.trim().split(" (")[0];
-      if (!dependency) continue;
+    const dependencies = linkedLibraries(binary, runCapture("otool", ["-arch", "x86_64", "-L", binary]));
+    for (const dependency of dependencies) {
       const candidates = resolveLoadPath(dependency, binary, bundleDir, rpaths);
       if (!candidates.some((candidate) => isSystemPath(candidate) || isBundledPath(candidate, bundleDir))) {
         throw new Error(`Unresolved native dependency ${dependency} from ${path.relative(bundleDir, binary)}`);
