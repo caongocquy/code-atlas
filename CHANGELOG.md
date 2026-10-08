@@ -4,6 +4,27 @@ All notable changes to CodeAtlas are documented here.
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-10-08
+
+### Improved
+
+- Incremental indexing now reuses a published generation on true no-op `index` and `sync`, without parsing, resolution, or storage writes when source and capability inputs have not changed.
+- Bounded source edits reuse unchanged graph, lexical, framework, and semantic evidence; unchanged symbols retain embeddings rather than being re-embedded.
+- More precise handling of framework lookups and downstream re-export invalidation, while preserving conservative incomplete-evidence behavior.
+
+### Reliability
+
+- Cross-process index writer locking rejects overlapping operations and recovers from terminated writers.
+- Semantic provider identities distinguish otherwise-colliding configurations; legacy stored identities receive a safe semantic refresh.
+- Python build/exclude behavior is consistent between scanning and incremental sync.
+
+### Verification and compatibility
+
+- Added Windows CI coverage for native parsers, CLI indexing and delta sync, MCP Inspector, packed npm consumers, and real MiniLM/ONNX embedding on `develop`.
+- Verified Windows 11 incremental indexing and semantic reuse on a real TypeScript/React workspace: 512 parsed-source files and 3,147 semantic vectors; a no-change semantic-enabled sync reused the generation without embedding or DB transactions.
+- Existing indexes may perform a one-time semantic rebuild after provider identity migration. CPU-only MiniLM embedding can be slow on large workspaces; subsequent no-op syncs reuse existing vectors.
+- The known 12 pre-existing full-suite canonical failures remain outside the targeted release verification gate; no claim of a green full suite is made.
+
 ## [1.5.0] - 2026-10-07
 
 ### Added
