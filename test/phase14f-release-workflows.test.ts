@@ -140,6 +140,6 @@ test("release workflow requires npm first and safely handles duplicate releases"
   assert.match(release, /--latest/);
   assert.match(release, /Existing GitHub Release does not match/);
   assert.match(release, /HTTP\/\[\^ \]\+ 404|status code 404/);
-  assert.match(release, /for attempt in \{1\.\.12\}/);
+  assert.match(release, /for attempt in \{1\.\.60\}/);
   assert.match(release, /sleep 10/);
 });
