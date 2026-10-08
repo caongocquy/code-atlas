@@ -1,6 +1,7 @@
+import { log } from "@clack/prompts";
+
 import { cliProgressRunner } from "./cli-progress-reporter.js";
-import { formatNotice } from "./cli-output.js";
-import { getTerminalCapabilities, renderBrandHeader } from "./cli-presentation.js";
+import { getTerminalCapabilities, startCliPresentation } from "./cli-presentation.js";
 import type { ProgressKind, ProgressReporter, ProgressRunner } from "../../core/progress/progress.types.js";
 import { silentProgressRunner } from "../../core/progress/silent-progress-runner.js";
 
@@ -71,29 +72,25 @@ export function createCliCommandReporter(options: { command?: CliCommand; json?:
   const progress = json || quiet ? silentProgressRunner : cliProgressRunner;
   const capabilities = getTerminalCapabilities();
   if (!json && !quiet && options.command && capabilities.interactive) {
-    process.stdout.write(`${renderBrandHeader(commandSubtitles[options.command], capabilities)}\n\n`);
+    startCliPresentation(commandSubtitles[options.command], capabilities);
   }
-  const humanOutput = (message: string): void => {
-    if (!json && !quiet) process.stdout.write(`${message}\n`);
-  };
-
   return {
     json,
     progress,
     start(message) {
-      humanOutput(message);
+      if (!json && !quiet) log.step(message);
     },
     success(message) {
-      humanOutput(message);
+      if (!json && !quiet) log.success(message);
     },
     warning(message) {
-      if (!json && !quiet) process.stderr.write(`${formatNotice(message, undefined, "warning")}\n`);
+      if (!json && !quiet) log.warn(message, { output: process.stderr });
     },
     failure(message) {
-      if (!json && !quiet) process.stderr.write(`${message}\n`);
+      if (!json && !quiet) log.error(message, { output: process.stderr });
     },
     detail(message) {
-      if (!json && !quiet) process.stdout.write(`${message}\n`);
+      if (!json && !quiet) log.message(message);
     },
     output(value) {
       if (json) process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);

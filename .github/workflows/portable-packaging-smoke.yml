@@ -1,0 +1,213 @@
+name: Portable packaging smoke
+
+on:
+  push:
+    branches: [chore/release-packaging-161]
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - scripts/package-release-bundle.mjs
+      - scripts/prune-release-bundle.mjs
+      - scripts/smoke-release-bundle.mjs
+      - test/release-bundle-pruning.test.ts
+      - src/adapters/cli/**
+      - src/cli.ts
+      - scripts/verify-release-archive.mjs
+      - .github/workflows/portable-packaging-smoke.yml
+      - package.json
+      - pnpm-lock.yaml
+
+permissions:
+  contents: read
+
+jobs:
+  portable:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            platform: darwin
+            arch: arm64
+          - runner: macos-15-intel
+            platform: darwin
+            arch: x64
+          - runner: ubuntu-22.04
+            platform: linux
+            arch: x64
+          - runner: windows-2022
+            platform: windows
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Build candidate and run packaging regressions
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.22.0 --activate
+          pnpm install --frozen-lockfile
+          pnpm build
+          node --import tsx/esm --test test/release-bundle-pruning.test.ts test/onnx-darwin-x64-packaging.test.ts test/release-archive-integrity.test.ts test/release-regression-comparison.test.ts test/cli-startup.test.ts test/cli-presentation.test.ts test/cli-ux-cleanup.test.ts test/integration-picker.test.ts test/phase12-cli-regression.test.ts test/phase14b-parser-packaging.test.ts test/semantic-lifecycle.test.ts test/phase16b-scip-indexer.test.ts test/react-lazy-route-framework.test.ts
+      - name: Check out immutable release base for equivalent full-suite comparison
+        uses: actions/checkout@v4
+        with:
+          ref: 8f3c2d7671b4d9a9deaa70c83c80c4fccb94689f
+          path: .release-base
+      - name: Run full release-base suite and build its unpruned artifact
+        shell: bash
+        env:
+          RELEASE_PLATFORM: ${{ matrix.platform }}
+          RELEASE_ARCH: ${{ matrix.arch }}
+        run: |
+          mkdir -p .evidence
+          cd .release-base
+          pnpm install --frozen-lockfile
+          pnpm build
+          mkdir -p node_modules/.bin
+          chmod +x dist/cli.js
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            printf '@echo off\r\nnode "%%~dp0..\\..\\dist\\cli.js" %%*\r\n' > node_modules/.bin/code-atlas.cmd
+            export CODE_ATLAS_CLI="$(node -p 'require("node:path").resolve("node_modules/.bin/code-atlas.cmd")')"
+          else
+            ln -sf "$PWD/dist/cli.js" node_modules/.bin/code-atlas
+            export CODE_ATLAS_CLI="$(node -p 'require("node:path").resolve("node_modules/.bin/code-atlas")')"
+          fi
+          export PATH="$PWD/node_modules/.bin:$PATH"
+          if node --import tsx/esm --test --test-reporter=tap test/*.test.ts > ../.evidence/baseline-tests.log 2>&1; then
+            echo 0 > ../.evidence/baseline-tests.exit
+          else
+            echo "$?" > ../.evidence/baseline-tests.exit
+          fi
+          version=$(node -p "require('./package.json').version")
+          node scripts/package-release-bundle.mjs --tool code-atlas --bin-name code-atlas --package-name @showdar2112/code-atlas --package-dir . --entry dist/cli.js --version "$version"
+          node ../scripts/verify-release-archive.mjs snapshot .release/bundle ../.evidence/baseline-integrity.json
+      - name: Archive unpruned base (Unix)
+        if: runner.os != 'Windows'
+        run: tar -C .release-base/.release/bundle -czf .evidence/baseline.tar.gz .
+      - name: Archive unpruned base (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path '.release-base/.release/bundle/*' -DestinationPath .evidence/baseline.zip -CompressionLevel Optimal
+      - name: Record equivalent base sizes and reclaim generated baseline files
+        shell: bash
+        run: |
+          node --input-type=module -e 'import fs from "node:fs"; const data=JSON.parse(fs.readFileSync(".evidence/baseline-integrity.json")); const archive=fs.readdirSync(".evidence").find(name=>/^baseline\.(tar\.gz|zip)$/.test(name)); fs.writeFileSync(".evidence/baseline-metrics.json",JSON.stringify({node:process.version,platform:process.platform,arch:process.arch,archiveFormat:archive.endsWith("zip")?"zip":"tar.gz",archiveBytes:fs.statSync(".evidence/"+archive).size,installedLogicalBytes:data.logicalBytes,installedAllocatedBytes:data.allocatedBytes},null,2)); fs.rmSync(".evidence/"+archive); fs.rmSync(".release-base",{recursive:true,force:true});'
+      - name: Run full candidate suite and compare failure assertions
+        shell: bash
+        run: |
+          mkdir -p node_modules/.bin
+          chmod +x dist/cli.js
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            printf '@echo off\r\nnode "%%~dp0..\\..\\dist\\cli.js" %%*\r\n' > node_modules/.bin/code-atlas.cmd
+            export CODE_ATLAS_CLI="$(node -p 'require("node:path").resolve("node_modules/.bin/code-atlas.cmd")')"
+          else
+            ln -sf "$PWD/dist/cli.js" node_modules/.bin/code-atlas
+            export CODE_ATLAS_CLI="$(node -p 'require("node:path").resolve("node_modules/.bin/code-atlas")')"
+          fi
+          export PATH="$PWD/node_modules/.bin:$PATH"
+          if node --import tsx/esm --test --test-reporter=tap test/*.test.ts > .evidence/candidate-tests.log 2>&1; then
+            echo 0 > .evidence/candidate-tests.exit
+          else
+            echo "$?" > .evidence/candidate-tests.exit
+          fi
+          node scripts/compare-release-tests.mjs --normalize-root "$GITHUB_WORKSPACE/.release-base" --normalize-root "$GITHUB_WORKSPACE" .evidence/baseline-tests.log .evidence/candidate-tests.log .evidence/regression-comparison.json
+      - name: Set up pinned Python for ONNX macOS x64 build
+        if: matrix.platform == 'darwin' && matrix.arch == 'x64'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore validated ONNX macOS x64 payload
+        if: matrix.platform == 'darwin' && matrix.arch == 'x64'
+        id: onnx-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/code-atlas-onnx-native
+          key: onnx-1.30.0-f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7-macos15-x64-coreml-webgpu-cmake3.31.8-v1
+      - name: Check out exact ONNX Runtime source and submodules
+        if: matrix.platform == 'darwin' && matrix.arch == 'x64' && steps.onnx-cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/onnxruntime
+          ref: f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7
+          submodules: recursive
+          path: .onnx-source
+      - name: Build full ONNX Runtime 1.30.0 macOS x64 payload
+        if: matrix.platform == 'darwin' && matrix.arch == 'x64' && steps.onnx-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          python3 -m pip install cmake==3.31.8 -r .onnx-source/tools/ci_build/github/linux/docker/scripts/requirements.txt
+          env -u VCPKG_INSTALLATION_ROOT -u VCPKG_ROOT node scripts/build-onnx-darwin-x64.mjs .onnx-source "$RUNNER_TEMP/code-atlas-onnx-native"
+      - name: Select validated ONNX payload for macOS x64 packaging
+        if: matrix.platform == 'darwin' && matrix.arch == 'x64'
+        shell: bash
+        run: echo "CODE_ATLAS_ONNX_NATIVE_DIR=$RUNNER_TEMP/code-atlas-onnx-native" >> "$GITHUB_ENV"
+      - name: Build clean portable artifact
+        shell: bash
+        env:
+          RELEASE_PLATFORM: ${{ matrix.platform }}
+          RELEASE_ARCH: ${{ matrix.arch }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          node scripts/package-release-bundle.mjs --tool code-atlas --bin-name code-atlas --package-name @showdar2112/code-atlas --package-dir . --entry dist/cli.js --version "$version"
+      - name: Install external SCIP compiler for enrichment smoke only
+        shell: bash
+        run: |
+          npm install --prefix "$RUNNER_TEMP/scip-tool" --no-save --no-package-lock --no-audit --no-fund @sourcegraph/scip-typescript@0.4.0
+          echo "$RUNNER_TEMP/scip-tool/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: Test bundled runtime with isolated HOME and no NODE_PATH
+        env:
+          CODE_ATLAS_SCIP_SMOKE: "1"
+        run: node scripts/smoke-release-bundle.mjs .release/bundle
+      - name: Snapshot installed artifact content
+        run: node scripts/verify-release-archive.mjs snapshot .release/bundle .release/integrity.json
+      - name: Archive verified candidate (Unix)
+        if: runner.os != 'Windows'
+        run: tar -C .release/bundle -czf portable-candidate.tar.gz .
+      - name: Archive verified candidate (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path '.release/bundle/*' -DestinationPath portable-candidate.zip -CompressionLevel Optimal
+      - name: Extract and verify archive (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir .release/extracted
+          tar -xzf portable-candidate.tar.gz -C .release/extracted
+          node scripts/verify-release-archive.mjs verify .release/extracted .release/integrity.json
+      - name: Extract and verify archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Expand-Archive portable-candidate.zip -DestinationPath .release/extracted
+          node scripts/verify-release-archive.mjs verify .release/extracted .release/integrity.json
+      - name: Recheck extracted artifact runtime
+        env:
+          CODE_ATLAS_SCIP_SMOKE: "1"
+        run: node scripts/smoke-release-bundle.mjs .release/extracted
+      - name: Record native sizes and archive checksum
+        shell: bash
+        run: |
+          node --input-type=module -e 'import fs from "node:fs"; import crypto from "node:crypto"; const archive=fs.readdirSync(".").find(name=>/^portable-candidate\.(tar\.gz|zip)$/.test(name)); const bytes=fs.readFileSync(archive); const inventory=JSON.parse(fs.readFileSync(".release/integrity.json")); const metrics={node:process.version,platform:process.platform,arch:process.arch,archive,archiveBytes:bytes.length,sha256:crypto.createHash("sha256").update(bytes).digest("hex"),installedLogicalBytes:inventory.logicalBytes,installedAllocatedBytes:inventory.allocatedBytes}; fs.writeFileSync(".release/metrics.json", JSON.stringify(metrics,null,2)); console.log(metrics);'
+      - name: Upload review artifacts and pruning decisions
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: portable-candidate-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            portable-candidate.*
+            .release/pruning.json
+            .release/integrity.json
+            .release/metrics.json
+            .release/*.log
+            .evidence/*.log
+            .evidence/*.exit
+            .evidence/baseline-metrics.json
+            .evidence/baseline-integrity.json
+            .evidence/regression-comparison.json
+          include-hidden-files: true
+          if-no-files-found: ignore
+          compression-level: 0

@@ -1,3 +1,4 @@
+import { intro, log } from "@clack/prompts";
 import picocolors from "picocolors";
 
 export type TerminalCapabilities = {
@@ -31,6 +32,15 @@ export function getTerminalCapabilities(
   const color = isTTY && !isCI && !("NO_COLOR" in env);
   const columns = typeof stream.columns === "number" && stream.columns > 0 ? stream.columns : undefined;
   return { isTTY, color, interactive: isTTY && !isCI, ...(columns ? { columns } : {}) };
+}
+
+export function startCliPresentation(
+  subtitle: string,
+  capabilities: TerminalCapabilities = getTerminalCapabilities(),
+): void {
+  if (!capabilities.interactive) return;
+  intro("CODEATLAS");
+  log.message(subtitle);
 }
 
 function colors(capabilities: TerminalCapabilities) {

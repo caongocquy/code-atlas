@@ -1,3 +1,4 @@
+import { log } from "@clack/prompts";
 import path from "node:path";
 
 import { getRepositoryIdentity } from "../../core/repository/repository-identity.js";
@@ -20,26 +21,26 @@ function describeNode(node: GraphNode): string {
 
 function printCandidate(candidate: GraphEntityMatch): void {
   const node = candidate.entity;
-  console.log(`  ${node.name} :: ${node.qualifiedName ?? node.name} (${node.file}:${node.startLine ?? "?"}, ${node.type})`);
+  log.message(`  ${node.name} :: ${node.qualifiedName ?? node.name} (${node.file}:${node.startLine ?? "?"}, ${node.type})`);
 }
 
 function printResolution(resolution: ReturnType<GraphQueryEntityResolver["resolve"]>): boolean {
   if (resolution.status === "resolved") return true;
   if (resolution.status === "not_found") {
-    console.error(`No graph entity found for "${resolution.query}"`);
+    log.error(`No graph entity found for "${resolution.query}"`);
     return false;
   }
-  console.error(`Ambiguous graph entity "${resolution.query}". Candidates:`);
+  log.error(`Ambiguous graph entity "${resolution.query}". Candidates:`);
   resolution.candidates.forEach(printCandidate);
   return false;
 }
 
 function printRelations(relations: ReturnType<typeof findCallers>): void {
   if (relations.length === 0) {
-    console.log("(no matches)");
+    log.message("(no matches)");
     return;
   }
-  for (const relation of relations) console.log(`  → ${describeNode(relation.entity)}`);
+  for (const relation of relations) log.message(`  → ${describeNode(relation.entity)}`);
 }
 
 function printImpact(result: ReturnType<typeof analyzeImpact>): void {
@@ -47,14 +48,14 @@ function printImpact(result: ReturnType<typeof analyzeImpact>): void {
     printResolution(result.resolution);
     return;
   }
-  console.log(`Impact for ${describeNode(result.target)}`);
-  console.log(`Risk: ${result.risk}`);
-  console.log(`Direct: ${result.summary.directCount}`);
-  console.log(`Transitive: ${result.summary.transitiveCount}`);
-  if (result.mayBeIncomplete) console.log("Coverage: may be incomplete");
-  if (result.truncated) console.log(`Results truncated at ${result.limits.maxResults}`);
+  log.message(`Impact for ${describeNode(result.target)}`);
+  log.message(`Risk: ${result.risk}`);
+  log.message(`Direct: ${result.summary.directCount}`);
+  log.message(`Transitive: ${result.summary.transitiveCount}`);
+  if (result.mayBeIncomplete) log.message("Coverage: may be incomplete");
+  if (result.truncated) log.message(`Results truncated at ${result.limits.maxResults}`);
   for (const item of [...result.directImpact, ...result.transitiveImpact]) {
-    console.log(`  ${item.depth}. ${item.reason} → ${describeNode(item.entity)}`);
+    log.message(`  ${item.depth}. ${item.reason} → ${describeNode(item.entity)}`);
   }
 }
 
@@ -65,66 +66,66 @@ function printTrace(result: ReturnType<typeof traceGraph>): void {
     return;
   }
   if (result.status === "no_path") {
-    console.log(`No path found from ${describeNode(result.source)} to ${describeNode(result.target)}`);
-    console.log(`Mode: ${result.limits.mode}; max depth: ${result.limits.maxDepth}`);
+    log.message(`No path found from ${describeNode(result.source)} to ${describeNode(result.target)}`);
+    log.message(`Mode: ${result.limits.mode}; max depth: ${result.limits.maxDepth}`);
     return;
   }
   if (result.status !== "found") return;
-  console.log(`Trace (${result.limits.mode}):`);
+  log.message(`Trace (${result.limits.mode}):`);
   for (const hop of result.path.hops) {
     const direction = hop.direction === "forward" ? "→" : "←";
-    console.log(`  ${describeNode(hop.from)} --${hop.relation} ${direction} ${describeNode(hop.to)}`);
+    log.message(`  ${describeNode(hop.from)} --${hop.relation} ${direction} ${describeNode(hop.to)}`);
   }
-  if (result.mayBeIncomplete) console.log("Coverage: may be incomplete");
+  if (result.mayBeIncomplete) log.message("Coverage: may be incomplete");
 }
 
 function printImportant(result: ReturnType<typeof calculateImportance>): void {
-  console.log(`Important symbols (${result.totalCandidates} candidates):`);
+  log.message(`Important symbols (${result.totalCandidates} candidates):`);
   for (const item of result.items) {
     const suppression = item.signals.suppressionReasons.length > 0
       ? `; suppression=${item.signals.suppressionReasons.join(",")}`
       : "";
-    console.log(`  ${item.rank}. ${item.score.toFixed(4)} ${describeNode(item.symbol)}${suppression}`);
-    console.log(`     signals callers=${item.signals.callers} callees=${item.signals.callees} importedBy=${item.signals.importedBy} dependents=${item.signals.dependents} crossFileReach=${item.signals.crossFileReach} inheritance=${item.signals.inheritance}`);
+    log.message(`  ${item.rank}. ${item.score.toFixed(4)} ${describeNode(item.symbol)}${suppression}`);
+    log.message(`     signals callers=${item.signals.callers} callees=${item.signals.callees} importedBy=${item.signals.importedBy} dependents=${item.signals.dependents} crossFileReach=${item.signals.crossFileReach} inheritance=${item.signals.inheritance}`);
   }
-  if (result.truncated) console.log(`Results truncated at ${result.items.length}`);
-  if (result.mayBeIncomplete) console.log("Coverage: may be incomplete");
+  if (result.truncated) log.message(`Results truncated at ${result.items.length}`);
+  if (result.mayBeIncomplete) log.message("Coverage: may be incomplete");
 }
 
 function printCommunity(community: ReturnType<typeof detectCommunities>["communities"][number]): void {
-  console.log(`${community.id}: ${community.label}`);
-  console.log(`  size=${community.size} quality=${community.quality} cohesion=${community.cohesion.toFixed(3)} coupling=${community.coupling.toFixed(3)}`);
-  console.log(`  files=${community.files.length} internalEdges=${community.internalEdgeCount} externalEdges=${community.externalEdgeCount}`);
-  if (community.representatives.length > 0) console.log(`  representatives=${community.representatives.map((node) => node.qualifiedName ?? node.name).join(", ")}`);
+  log.message(`${community.id}: ${community.label}`);
+  log.message(`  size=${community.size} quality=${community.quality} cohesion=${community.cohesion.toFixed(3)} coupling=${community.coupling.toFixed(3)}`);
+  log.message(`  files=${community.files.length} internalEdges=${community.internalEdgeCount} externalEdges=${community.externalEdgeCount}`);
+  if (community.representatives.length > 0) log.message(`  representatives=${community.representatives.map((node) => node.qualifiedName ?? node.name).join(", ")}`);
 }
 
 function printCommunities(result: ReturnType<typeof detectCommunities>, limit: number): void {
   const visible = result.communities.filter((community) => community.quality !== "singleton").slice(0, limit);
-  console.log(`Communities: ${result.totalCommunities} (largest=${result.largestCommunitySize}, cross-community edges=${result.crossCommunityEdgeCount})`);
+  log.message(`Communities: ${result.totalCommunities} (largest=${result.largestCommunitySize}, cross-community edges=${result.crossCommunityEdgeCount})`);
   visible.forEach(printCommunity);
   const hiddenSingletons = result.totalCommunities - result.communities.filter((community) => community.quality !== "singleton").length;
-  if (hiddenSingletons > 0) console.log(`  ${hiddenSingletons} singleton communities omitted`);
-  if (result.truncated || visible.length < result.communities.filter((community) => community.quality !== "singleton").length) console.log(`Results limited to ${limit}`);
-  if (result.mayBeIncomplete) console.log("Coverage: may be incomplete");
+  if (hiddenSingletons > 0) log.message(`  ${hiddenSingletons} singleton communities omitted`);
+  if (result.truncated || visible.length < result.communities.filter((community) => community.quality !== "singleton").length) log.message(`Results limited to ${limit}`);
+  if (result.mayBeIncomplete) log.message("Coverage: may be incomplete");
 }
 
 function printBridges(result: ReturnType<typeof detectArchitecturalBridges>): void {
-  console.log(`Architectural bridges (${result.totalCandidates} candidates):`);
+  log.message(`Architectural bridges (${result.totalCandidates} candidates):`);
   for (const bridge of result.bridges) {
-    console.log(`  ${bridge.score.toFixed(4)} ${describeNode(bridge.source)} --${bridge.edge.type}→ ${describeNode(bridge.target)} (${bridge.sourceCommunityId} → ${bridge.targetCommunityId}; ${bridge.reason})`);
+    log.message(`  ${bridge.score.toFixed(4)} ${describeNode(bridge.source)} --${bridge.edge.type}→ ${describeNode(bridge.target)} (${bridge.sourceCommunityId} → ${bridge.targetCommunityId}; ${bridge.reason})`);
   }
-  if (result.truncated) console.log(`Results truncated at ${result.bridges.length}`);
-  if (result.mayBeIncomplete) console.log("Coverage: may be incomplete");
+  if (result.truncated) log.message(`Results truncated at ${result.bridges.length}`);
+  if (result.mayBeIncomplete) log.message("Coverage: may be incomplete");
 }
 
 function printCycles(result: ReturnType<typeof detectStructuralCycles>): void {
   const counts = Object.entries(result.counts).map(([relation, count]) => `${relation}=${count}`).join(", ");
-  console.log(`Cycles (${counts || "none"}):`);
+  log.message(`Cycles (${counts || "none"}):`);
   for (const cycle of result.cycles) {
-    console.log(`  ${cycle.relation} (${cycle.length}): ${cycle.nodes.map((node) => node.qualifiedName ?? node.name).join(" → ")}`);
+    log.message(`  ${cycle.relation} (${cycle.length}): ${cycle.nodes.map((node) => node.qualifiedName ?? node.name).join(" → ")}`);
   }
-  if (result.truncated) console.log(`Results truncated at ${result.cycles.length}`);
-  if (result.mayBeIncomplete) console.log("Coverage: may be incomplete");
+  if (result.truncated) log.message(`Results truncated at ${result.cycles.length}`);
+  if (result.mayBeIncomplete) log.message("Coverage: may be incomplete");
 }
 
 function numericOption(args: string[], name: string, fallback: number): number {
@@ -196,8 +197,8 @@ async function main(): Promise<void> {
         printResolution(resolution);
         return;
       }
-      console.log(describeNode(resolution.entity));
-      console.log(`Qualified: ${resolution.entity.qualifiedName ?? resolution.entity.name}`);
+      log.message(describeNode(resolution.entity));
+      log.message(`Qualified: ${resolution.entity.qualifiedName ?? resolution.entity.name}`);
       return;
     }
     if (command === "impact") {
@@ -227,7 +228,7 @@ async function main(): Promise<void> {
             ? findImportedBy(graph, resolution.entity)
             : undefined;
     if (!relations) throw new Error(`Unknown graph command: ${command}`);
-    console.log(describeNode(resolution.entity));
+    log.message(describeNode(resolution.entity));
     printRelations(relations);
   } finally {
     store.close();
@@ -235,6 +236,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
-  console.error(error);
+  log.error(error);
   process.exitCode = 1;
 });

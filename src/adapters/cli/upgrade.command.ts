@@ -1,3 +1,4 @@
+import { note } from "@clack/prompts";
 import { execFile as execFileCallback } from "node:child_process";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
@@ -185,7 +186,7 @@ export async function runUpgradeCommand(
   args: string[],
   currentVersion: string,
   dependencies: UpgradeCheckDependencies = systemDependencies(),
-  write: (text: string) => unknown = (text) => process.stdout.write(text),
+  write?: (text: string) => unknown,
 ): Promise<void> {
   const checkOnly = args.includes("--check");
   if (args.some((arg) => arg !== "--check" && arg !== "--json")) {
@@ -212,5 +213,11 @@ export async function runUpgradeCommand(
     }
     result.upgraded = true;
   }
-  write(args.includes("--json") ? `${JSON.stringify(result, null, 2)}\n` : `${formatHumanResult(result)}\n`);
+  if (write) {
+    write(args.includes("--json") ? `${JSON.stringify(result, null, 2)}\n` : `${formatHumanResult(result)}\n`);
+  } else if (args.includes("--json")) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } else {
+    note(formatHumanResult(result));
+  }
 }

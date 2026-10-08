@@ -1,3 +1,4 @@
+import { log } from "@clack/prompts";
 import { buildCodeGraph } from "../../core/graph/build-graph.js";
 import type { GraphEdge, GraphNode } from "../../core/graph/types.js";
 
@@ -45,46 +46,46 @@ async function main(): Promise<void> {
 
   const callEdges = graph.edges.filter((edge) => edge.type === "calls");
 
-  console.log(`Nodes: ${graph.nodes.length}`);
+  log.message(`Nodes: ${graph.nodes.length}`);
 
-  console.log(`- Files: ${fileNodes.length}`);
+  log.message(`- Files: ${fileNodes.length}`);
 
-  console.log(`- Symbols: ${symbolNodes.length}`);
+  log.message(`- Symbols: ${symbolNodes.length}`);
 
-  console.log(`Edges: ${graph.edges.length}`);
+  log.message(`Edges: ${graph.edges.length}`);
 
-  console.log(`- Contains: ${containsEdges.length}`);
+  log.message(`- Contains: ${containsEdges.length}`);
 
-  console.log(`- Imports: ${importEdges.length}`);
+  log.message(`- Imports: ${importEdges.length}`);
 
-  console.log(`- Calls: ${callEdges.length}`);
+  log.message(`- Calls: ${callEdges.length}`);
 
-  console.log("\nSample nodes:");
+  log.message("\nSample nodes:");
 
   for (const node of graph.nodes.slice(0, 10)) {
-    console.log(describeNode(node));
+    log.message(describeNode(node));
   }
 
-  console.log("\nSample contains edges:");
+  log.message("\nSample contains edges:");
 
   for (const edge of containsEdges.slice(0, 15)) {
-    console.log(describeEdge(edge, nodeById));
+    log.message(describeEdge(edge, nodeById));
   }
 
-  console.log("\nSample import edges:");
+  log.message("\nSample import edges:");
 
   for (const edge of importEdges.slice(0, 20)) {
-    console.log(describeEdge(edge, nodeById));
+    log.message(describeEdge(edge, nodeById));
   }
 
-  console.log("\nSample call edges:");
+  log.message("\nSample call edges:");
 
   for (const edge of callEdges.slice(0, 20)) {
-    console.log(describeEdge(edge, nodeById));
+    log.message(describeEdge(edge, nodeById));
   }
 }
 
 main().catch((error) => {
-  console.error(error);
+  log.error(error);
   process.exit(1);
 });

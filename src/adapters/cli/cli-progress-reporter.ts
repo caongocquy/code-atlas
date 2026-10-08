@@ -1,4 +1,4 @@
-import { Listr, type ListrTask, type ListrTaskWrapper } from "listr2";
+import { log, spinner, type Task } from "@clack/prompts";
 
 import {
   formatProgress,
@@ -14,71 +14,70 @@ import type {
 
 const UPDATE_INTERVAL_MS = 80;
 
-function createReporter(
-  title: string,
-  kind: ProgressKind,
-  task: ListrTaskWrapper<any, any, any>,
-): ProgressReporter {
-  let currentTitle = title;
-  let lastUpdate = 0;
-  let lastMessage = "";
-
-  function publish(message: string, force = false): void {
-    const now = Date.now();
-
-    if (
-      !force &&
-      (message === lastMessage || now - lastUpdate < UPDATE_INTERVAL_MS)
-    ) {
-      return;
-    }
-
-    lastMessage = message;
-    lastUpdate = now;
-    task.title = `${formatTaskTitle(currentTitle)} — ${message}`;
-  }
-
-  return {
-    setTitle(nextTitle) {
-      currentTitle = nextTitle;
-      task.title = formatTaskTitle(nextTitle);
-    },
-    update(message) {
-      publish(message);
-    },
-    setProgress(current, total) {
-      publish(formatProgress(current, total, kind), current >= total);
-    },
-  };
-}
-
 export function createProgressTask(
   title: string,
   work: (reporter: ProgressReporter) => void | Promise<void>,
   kind: ProgressKind = "default",
-): ListrTask {
+): Task {
   return {
     title: formatTaskTitle(title),
-    task: async (_context, task) => {
-      await work(createReporter(title, kind, task));
+    task: async (message) => {
+      let currentTitle = title;
+      let lastUpdate = 0;
+      let lastMessage = "";
+
+      function publish(value: string, force = false): void {
+        const now = Date.now();
+        if (!force && (value === lastMessage || now - lastUpdate < UPDATE_INTERVAL_MS)) return;
+        lastMessage = value;
+        lastUpdate = now;
+        message(`${formatTaskTitle(currentTitle)} — ${value}`);
+      }
+
+      await work({
+        setTitle(nextTitle) {
+          currentTitle = nextTitle;
+          message(formatTaskTitle(nextTitle));
+        },
+        update(value) {
+          publish(value);
+        },
+        setProgress(current, total) {
+          publish(formatProgress(current, total, kind), current >= total);
+        },
+      });
+
+      return `${formatTaskTitle(currentTitle)} complete`;
     },
   };
 }
 
-export async function runProgressTasks(tasks: ListrTask[]): Promise<void> {
-  const capabilities = getTerminalCapabilities();
-  await new Listr(tasks, {
-    renderer: capabilities.interactive || (process.env.LISTR_FORCE_TTY === "1" && process.env.CI !== "true")
-      ? "default"
-      : "simple",
-    fallbackRenderer: "simple",
-    rendererOptions: {
-      formatOutput: "truncate",
-      clearOutput: capabilities.interactive || process.env.LISTR_FORCE_TTY === "1",
-      collapseSkips: true,
-    },
-    fallbackRendererOptions: {},
-  }).run();
+export async function runProgressTasks(tasks: Task[]): Promise<void> {
+  if (getTerminalCapabilities().interactive) {
+    for (const task of tasks) {
+      const taskSpinner = spinner();
+      taskSpinner.start(task.title);
+      try {
+        const result = await task.task((message) => taskSpinner.message(message));
+        taskSpinner.stop(typeof result === "string" ? result : task.title);
+      } catch (error) {
+        taskSpinner.error(error instanceof Error ? error.message : String(error));
+        throw error;
+      }
+    }
+    return;
+  }
+
+  for (const task of tasks) {
+    log.step(task.title);
+    try {
+      const result = await task.task((message) => log.message(message));
+      if (typeof result === "string") log.success(result);
+    } catch (error) {
+      log.error(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  }
 }
 
 export async function runProgressTask<T>(

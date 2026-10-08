@@ -1,5 +1,5 @@
-import { createInterface } from "node:readline/promises";
 import path from "node:path";
+import { cancel, isCancel, select, text } from "@clack/prompts";
 
 import { createCliCommandReporter } from "./cli-command-reporter.js";
 import { formatSummary } from "./cli-output.js";
@@ -33,7 +33,8 @@ export async function runSemanticCommand(args: string[], cwd = path.resolve(".")
 
   switch (action) {
     case "setup": {
-      const provider = await providerConfig(parsed.flags);
+      const provider = await providerConfig(parsed.flags, !parsed.json);
+      if (!provider) return;
       result = await reporter.run("Provisioning and probing semantic provider", (progress) =>
         setupSemanticProvider(repoPath, provider, {
           onProgress: (event) => progress.update(event.status === "progress_total"
@@ -100,30 +101,44 @@ function parseSemanticArgs(args: string[]): { paths: string[]; json: boolean; fl
   return { paths, json, flags };
 }
 
-async function providerConfig(flags: SetupFlags) {
+async function providerConfig(flags: SetupFlags, allowPrompt = true) {
   let providerType = flags.provider;
   const modelDefault = DEFAULT_LOCAL_EMBEDDING_MODEL;
   if (!providerType) {
-    if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    if (!allowPrompt || !process.stdin.isTTY || !process.stdout.isTTY) {
       throw new Error("Choose a provider with --provider builtin-local or --provider openai-compatible.");
     }
-    const prompt = createInterface({ input: process.stdin, output: process.stdout });
-    try {
-      process.stdout.write("Semantic provider\n  1) Built-in local (Transformers.js + ONNX)\n  2) OpenAI-compatible endpoint\n");
-      const choice = (await prompt.question("Choose 1 or 2: ")).trim();
-      if (choice === "1") providerType = "builtin-local";
-      else if (choice === "2") providerType = "openai-compatible";
-      else throw new Error("Choose 1 or 2.");
-      if (providerType === "builtin-local") {
-        flags.model ??= (await prompt.question(`Hugging Face model [${modelDefault}]: `)).trim() || modelDefault;
-        flags.revision ??= (await prompt.question("Model revision [main]: ")).trim() || "main";
-      } else {
-        flags.baseUrl ??= (await prompt.question("OpenAI-compatible base URL: ")).trim();
-        flags.model ??= (await prompt.question("Embedding model: ")).trim();
-        flags.apiKeyEnv ??= (await prompt.question("API key environment variable (blank for no auth): ")).trim() || undefined;
-      }
-    } finally {
-      prompt.close();
+    const choice = await select({
+      message: "Choose a semantic provider",
+      options: [
+        { value: "builtin-local" as const, label: "Built-in local", hint: "Transformers.js + ONNX" },
+        { value: "openai-compatible" as const, label: "OpenAI-compatible endpoint" },
+      ],
+    });
+    if (isCancel(choice)) return cancelSemanticSetup();
+    providerType = choice;
+
+    if (providerType === "builtin-local") {
+      const model = flags.model ?? await promptValue("Hugging Face model", modelDefault);
+      if (model === undefined) return;
+      flags.model = model;
+      const revision = flags.revision ?? await promptValue("Model revision", "main");
+      if (revision === undefined) return;
+      flags.revision = revision;
+    } else {
+      const baseUrl = flags.baseUrl ?? await promptValue("OpenAI-compatible base URL");
+      if (baseUrl === undefined) return;
+      flags.baseUrl = baseUrl;
+      const model = flags.model ?? await promptValue("Embedding model");
+      if (model === undefined) return;
+      flags.model = model;
+      const apiKeyEnv = flags.apiKeyEnv ?? await promptValue(
+        "API key environment variable (blank for no auth)",
+        undefined,
+        "Leave blank for no authentication",
+      );
+      if (apiKeyEnv === undefined) return;
+      flags.apiKeyEnv = apiKeyEnv || undefined;
     }
   }
 
@@ -141,4 +156,20 @@ async function providerConfig(flags: SetupFlags) {
     model: flags.model,
     ...(flags.apiKeyEnv ? { apiKeyEnv: flags.apiKeyEnv } : {}),
   };
+}
+
+async function promptValue(message: string, defaultValue?: string, placeholder?: string): Promise<string | undefined> {
+  const promptPlaceholder = placeholder ?? defaultValue;
+  const value = await text({
+    message,
+    ...(defaultValue === undefined ? {} : { defaultValue }),
+    ...(promptPlaceholder === undefined ? {} : { placeholder: promptPlaceholder }),
+  });
+  return isCancel(value) ? cancelSemanticSetup() : value.trim();
+}
+
+function cancelSemanticSetup(): undefined {
+  process.exitCode = 130;
+  cancel("Semantic setup cancelled");
+  return undefined;
 }

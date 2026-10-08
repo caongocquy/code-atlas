@@ -82,6 +82,7 @@ jobs:
             arch: x64
             asset: code-atlas-windows-x64.zip
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 300
     steps:
       - name: Checkout exact tag
         uses: actions/checkout@v4
@@ -99,6 +100,10 @@ jobs:
           git fetch origin "$DEFAULT_BRANCH" --depth=1
           mkdir -p scripts
           git show FETCH_HEAD:scripts/package-release-bundle.mjs > scripts/package-release-bundle.mjs
+          git show FETCH_HEAD:scripts/prune-release-bundle.mjs > scripts/prune-release-bundle.mjs
+          git show FETCH_HEAD:scripts/smoke-release-bundle.mjs > scripts/smoke-release-bundle.mjs
+          git show FETCH_HEAD:scripts/onnx-darwin-x64.mjs > scripts/onnx-darwin-x64.mjs
+          git show FETCH_HEAD:scripts/build-onnx-darwin-x64.mjs > scripts/build-onnx-darwin-x64.mjs
 
       - name: Set up Node.js 24
         uses: actions/setup-node@v4
@@ -112,12 +117,45 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm build
 
+      - name: Set up pinned Python for ONNX macOS x64 build
+        if: matrix.platform == 'darwin' && matrix.arch == 'x64'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore validated ONNX macOS x64 payload
+        if: matrix.platform == 'darwin' && matrix.arch == 'x64'
+        id: onnx-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/code-atlas-onnx-native
+          key: onnx-1.30.0-f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7-macos15-x64-coreml-webgpu-cmake3.31.8-v1
+      - name: Check out exact ONNX Runtime source and submodules
+        if: matrix.platform == 'darwin' && matrix.arch == 'x64' && steps.onnx-cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/onnxruntime
+          ref: f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7
+          submodules: recursive
+          path: .onnx-source
+      - name: Build full ONNX Runtime 1.30.0 macOS x64 payload
+        if: matrix.platform == 'darwin' && matrix.arch == 'x64' && steps.onnx-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          python3 -m pip install cmake==3.31.8 -r .onnx-source/tools/ci_build/github/linux/docker/scripts/requirements.txt
+          env -u VCPKG_INSTALLATION_ROOT -u VCPKG_ROOT node scripts/build-onnx-darwin-x64.mjs .onnx-source "$RUNNER_TEMP/code-atlas-onnx-native"
+      - name: Select validated ONNX payload for macOS x64 packaging
+        if: matrix.platform == 'darwin' && matrix.arch == 'x64'
+        shell: bash
+        run: echo "CODE_ATLAS_ONNX_NATIVE_DIR=$RUNNER_TEMP/code-atlas-onnx-native" >> "$GITHUB_ENV"
       - name: Build portable runtime bundle
         env:
           RELEASE_PLATFORM: ${{ matrix.platform }}
           RELEASE_ARCH: ${{ matrix.arch }}
         run: >-
           node scripts/package-release-bundle.mjs --tool "code-atlas" --bin-name "code-atlas" --package-name "@showdar2112/code-atlas" --package-dir "." --entry "dist/cli.js" --version "${{ needs.metadata.outputs.version }}"
+
+      - name: Verify portable runtime feature paths
+        run: node scripts/smoke-release-bundle.mjs .release/bundle
 
       - name: Create tar.gz archive
         if: runner.os != 'Windows'

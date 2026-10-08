@@ -1,5 +1,7 @@
 import path from "node:path";
 
+import { log } from "@clack/prompts";
+
 import { cliProgressRunner } from "./cli-progress-reporter.js";
 import {
   formatIncrementalSync,
@@ -22,18 +24,18 @@ async function main(): Promise<void> {
   const graph = (result as IndexPipelineResult).graph;
 
   if (graph.versionChanged) {
-    console.log(
+    log.message(
       formatNotice(
         "Graph index version changed",
         `${graph.storedVersion ?? "none"} → ${GRAPH_INDEX_VERSION}`,
         "warning",
       ),
     );
-    console.log(formatNotice("Full rebuild required", undefined, "warning"));
+    log.message(formatNotice("Full rebuild required", undefined, "warning"));
   }
 
   if (graph.status === "current") {
-    console.log(
+    log.message(
       formatSummary("Graph already up to date", [
         { label: "Files", value: graph.files },
         { label: "Unchanged", value: graph.unchangedFiles },
@@ -46,7 +48,7 @@ async function main(): Promise<void> {
   }
 
   if (!graph.fullRebuild) {
-    console.log(
+    log.message(
       formatNotice(
         "Incremental sync",
         formatIncrementalSync(
@@ -79,10 +81,10 @@ async function main(): Promise<void> {
     { label: "Time", value: `${graph.totalMs.toFixed(1)} ms` },
   );
 
-  console.log(formatSummary("Graph indexed", summaryRows, "graph"));
+  log.message(formatSummary("Graph indexed", summaryRows, "graph"));
 }
 
 main().catch((error) => {
-  console.error(error);
+  log.error(error);
   process.exit(1);
 });

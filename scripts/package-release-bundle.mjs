@@ -6,6 +6,8 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import console from "node:console";
 import process from "node:process";
+import { installDarwinX64OnnxRuntime, validateDarwinX64NativeBundle } from "./onnx-darwin-x64.mjs";
+import { pruneReleaseBundle } from "./prune-release-bundle.mjs";
 
 function fail(message) {
   console.error(message);
@@ -72,6 +74,9 @@ for (const [name, value] of Object.entries({ tool, binName, packageName, entry, 
 const platform = process.env.RELEASE_PLATFORM;
 const arch = process.env.RELEASE_ARCH;
 if (!platform || !arch) fail("RELEASE_PLATFORM and RELEASE_ARCH are required");
+if ((platform === "windows" ? "win32" : platform) !== process.platform || arch !== process.arch) {
+  fail(`Release target ${platform}-${arch} does not match host ${process.platform}-${process.arch}`);
+}
 
 const root = process.cwd();
 const releaseRoot = path.join(root, ".release");
@@ -119,12 +124,28 @@ const packagePath = path.join(bundleDir, "node_modules", ...packageName.split("/
 const entryPath = path.join(packagePath, ...entry.split("/"));
 if (!fs.existsSync(entryPath)) fail(`Packaged CLI entry does not exist: ${entryPath}`);
 
+if (platform === "darwin" && arch === "x64") {
+  const nativeDir = process.env.CODE_ATLAS_ONNX_NATIVE_DIR;
+  if (!nativeDir) fail("CODE_ATLAS_ONNX_NATIVE_DIR is required for Darwin x64 portable bundles");
+  const packageCount = installDarwinX64OnnxRuntime(bundleDir, path.resolve(nativeDir));
+  console.log(`Installed pinned Darwin x64 ONNX Runtime payload into ${packageCount} onnxruntime-node package(s)`);
+}
+
+const removed = pruneReleaseBundle(bundleDir, platform, arch);
+fs.writeFileSync(path.join(releaseRoot, "pruning.json"), JSON.stringify(removed, null, 2) + "\n");
+console.log(`Pruned ${removed.length} build-only or non-target paths from portable dependencies`);
+
 const runtimeDir = path.join(bundleDir, "runtime");
 fs.mkdirSync(runtimeDir, { recursive: true });
 const runtimeName = process.platform === "win32" ? "node.exe" : "node";
 const runtimePath = path.join(runtimeDir, runtimeName);
 fs.copyFileSync(process.execPath, runtimePath);
 if (process.platform !== "win32") fs.chmodSync(runtimePath, 0o755);
+
+if (platform === "darwin" && arch === "x64") {
+  const nativeFiles = validateDarwinX64NativeBundle(bundleDir);
+  console.log(`Validated ${nativeFiles.length} Darwin x64 native bundle files and their dylib dependencies`);
+}
 
 const binDir = path.join(bundleDir, "bin");
 fs.mkdirSync(binDir, { recursive: true });
