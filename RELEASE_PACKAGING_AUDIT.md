@@ -579,3 +579,37 @@ smoke and dynamic-library checks, and the three Windows changed assertions are
 reviewed against the release base as accepted baseline defects or fixed without
 weakening their tests. No tag, merge, npm publication, GitHub Release, or
 Homebrew update has been made.
+
+
+### Latest native run 37823137359 (66c3633) — Windows result correction
+
+GitHub Actions run: https://github.com/caongocquy/code-atlas/actions/runs/37823137359
+
+The saved Windows x64 candidate evidence confirms the full-suite regression
+comparator is **FAIL**. Artifact creation, ZIP extraction and all 9 artifact
+runtime smoke groups passed. The Windows baseline had 1,349 tests (1,232 pass,
+114 fail, 3 skip); the candidate had 1,377 (1,284 pass, 90 fail, 3 skip). There
+were zero added failure identities, 24 resolved failures, two changed existing
+assertions and zero added skips. The changed identities are:
+
+- `framework-semantic-fail-fast.test.ts :: known dynamic JSX publishes partial
+  framework and runs semantic once`: both runs fail Windows SQLite teardown
+  with `EBUSY`, but the locked WAL/SHM file differs.
+- `phase0-incremental.test.ts :: incremental sync handles unchanged, one changed
+  importer impact, deletion, and deterministic output`: the actual graph contains
+  duplicate logical paths using slash and backslash spellings.
+
+These test files are unchanged from the release base, so this is not attributed to
+the packaging diff. The strict assertion comparator nevertheless remains red; do
+not count Windows full-suite qualification as passing. The candidate archive is
+125.54 MiB (131,667,678 bytes), versus 238.42 MiB (250,029,510 bytes) for the
+base. Logical installed size is 412.72 MiB (432,655,095 bytes), versus 907.52 MiB
+(951,836,098 bytes) for the base. Candidate SHA-256 is
+`c86eb227dd92e7d17c80748bcc67c2811ff3f7ed5e2cab97d5a08f5b675fedab`. Raw JSON
+evidence is under `/private/tmp/code-atlas-ci-evidence-66c3633/windows-x64/`.
+
+The same run reports macOS ARM64 and Linux x64 jobs successful. macOS x64 was
+still running its native ONNX build at the last available status snapshot; the
+GitHub API was unreachable during this audit update, so its final job and artifact
+results remain unverified here. Therefore the four-platform matrix is incomplete
+and the release remains **NO-GO**.
