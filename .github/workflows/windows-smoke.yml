@@ -107,7 +107,7 @@ jobs:
           $installedCli = Join-Path $consumer "node_modules/@showdar2112/code-atlas/dist/cli.js"
           node $installedCli --version
           if ($LASTEXITCODE -ne 0) { throw "Packed consumer CLI failed" }
-          @'
+          $instructions = @'
           Code Atlas Windows test artifact
           Git commit: ${{ github.sha }}
           Package version: 1.5.0 (testing unreleased develop/PR code; NOT npm latest)
@@ -122,7 +122,8 @@ jobs:
 
           Keep your current config, indexes and uncommitted source safe; back up first.
           Do not publish this tarball as npm latest.
-          '@.Replace("[[TARBALL]]", $packageFile) | Set-Content -Path (Join-Path $bundle "INSTALL-WINDOWS.txt")
+          '@
+          $instructions.Replace("[[TARBALL]]", $packageFile) | Set-Content -Path (Join-Path $bundle "INSTALL-WINDOWS.txt")
 
       - name: Upload Windows test artifact
         uses: actions/upload-artifact@v4
