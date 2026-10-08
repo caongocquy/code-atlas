@@ -44,6 +44,14 @@ jobs:
           set -euo pipefail
           pnpm run build
           pnpm exec tsc --noEmit
+          # A durable absolute CLI path is required for agent integration tests.
+          cli_dir="$GITHUB_WORKSPACE/node_modules/.bin"
+          mkdir -p "$cli_dir"
+          chmod +x "$GITHUB_WORKSPACE/dist/cli.js"
+          ln -sf "$GITHUB_WORKSPACE/dist/cli.js" "$cli_dir/code-atlas"
+          export PATH="$cli_dir:$PATH"
+          export CODE_ATLAS_CLI="$cli_dir/code-atlas"
+          command -v code-atlas
           pnpm run lint
           pnpm exec node --import tsx/esm --test \
             test/phase14f-release-workflows.test.ts \
