@@ -66,6 +66,7 @@ async function main(): Promise<void> {
       return;
     }
     case "index":
+    case "reindex":
     case "sync": {
       const { runIndexingCommand } = await import("./adapters/cli/indexing.command.js");
       await runIndexingCommand(command, args);

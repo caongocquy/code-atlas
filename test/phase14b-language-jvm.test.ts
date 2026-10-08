@@ -4,7 +4,7 @@ import test from "node:test";
 import { extractJavaFacts, javaFactExtractor } from "../src/core/facts/extractors/java.js";
 import { extractKotlinFacts, kotlinFactExtractor } from "../src/core/facts/extractors/kotlin.js";
 import { JAVA_CAPABILITIES, KOTLIN_CAPABILITIES, jvmSemanticAdapter } from "../src/core/graph/resolver/adapters/jvm.js";
-import { factExtractorInput, runFixtureThroughResolver, runLanguageFixture } from "./helpers/phase14b-language-fixtures.js";
+import { assertRootMemoIsolation, factExtractorInput, runFixtureThroughResolver, runLanguageFixture } from "./helpers/phase14b-language-fixtures.js";
 
 const javaSource = `
 package demo.api;
@@ -177,7 +177,7 @@ test("real Java and Kotlin fixtures exercise the full floor deterministically", 
   assert.deepEqual(jvmWarm.normalizedFacts, jvmCold.normalizedFacts);
   assert.deepEqual(jvmWarm.resolverState.evidence, jvmCold.resolverState.evidence);
   assert.strictEqual(jvmWarm.resolverState, jvmCold.resolverState);
-  assert.ok(jvmWarm.resolverState.memoHitCount > 0);
+  assertRootMemoIsolation(jvmWarm.resolverState);
   assert.equal(jvmWarm.usedSourceSemanticFallback, false);
   assert.equal(jvmCold.floorPassed, true);
 });

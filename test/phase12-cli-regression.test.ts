@@ -68,6 +68,7 @@ test("scanner prunes ignored and built-in dependency trees before walking", asyn
     await writeFile(path.join(repoPath, "references", "kept", "source.ts"), "export const kept = true;\n");
     await writeFile(path.join(repoPath, "ignored-by-gitignore", "fake.ts"), "export const fake = true;\n");
     await writeFile(path.join(repoPath, "README.md"), "# docs\n");
+    await writeFile(path.join(repoPath, "pyproject.toml"), "[project]\nname='fixture'\n");
     await writeFile(path.join(repoPath, ".gitignore"), "ignored-by-gitignore/\n");
 
     const files = (await scanRepo(repoPath)).map((file) => path.relative(repoPath, file));
@@ -108,10 +109,10 @@ test("default CLI output is human-readable while --json stays machine-readable",
     assert.doesNotMatch(init.stdout, /^\s*\{/);
     const guidancePath = path.join(repoPath, "AGENTS.md");
     const firstGuidance = await readFile(guidancePath, "utf8");
-    assert.match(firstGuidance, /### Reporting/);
+    assert.match(firstGuidance, /sync once against the final tree/);
     await runCli(repoPath, "init");
     const secondGuidance = await readFile(guidancePath, "utf8");
-    assert.equal(secondGuidance.match(/### Reporting/g)?.length, 1);
+    assert.equal(secondGuidance.match(/sync once against the final tree/g)?.length, 1);
 
     const status = await runCli(repoPath, "status");
     assert.match(status.stdout, /Repository\n/);
@@ -200,39 +201,20 @@ async function integrationConfig(root: string, id: "codex" | "opencode" | "claud
   return parseJsonc(await readFile(path.join(root, ".cline", "mcp.json"), "utf8"));
 }
 
-test("generated guidance advertises ready graph tools without making them mandatory", async () => {
+test("generated guidance stays concise and gives the final-tree indexing workflow", async () => {
   const repoPath = await fixture("guidance-graph");
   try {
     await writeFile(path.join(repoPath, "source.ts"), "export function source() { return true; }\n");
     await indexRepository(repoPath, { skipGit: true });
     await installGuidance(repoPath);
     const guidance = await readFile(path.join(repoPath, "AGENTS.md"), "utf8");
-    const status = await getRepositoryStatus(repoPath);
-    assert.match(guidance, new RegExp(`This repository is indexed by CodeAtlas as \\*\\*${path.basename(repoPath)}\\*\\* \\(${status.graph.indexedFiles} files, ${status.graph.nodes} symbols, ${status.graph.edges} relationships\\)\\.`));
     assert.doesNotMatch(guidance, /code-atlas:final-newline/);
-    assert.match(guidance, /find_callers/);
-    assert.match(guidance, /find_callees/);
-    assert.match(guidance, /find_imports/);
-    assert.match(guidance, /impact/);
-    assert.match(guidance, /explain_incomplete/);
-    assert.match(guidance, /trace/);
-    assert.match(guidance, /not required for trivial or isolated edits/);
-    assert.match(guidance, /Check index freshness\/capabilities.*repository_status/s);
-    assert.match(guidance, /Find code or symbols.*search_code.*get_symbol/s);
-    assert.match(guidance, /### CLI/);
-    assert.match(guidance, /code-atlas status/);
-    assert.match(guidance, /code-atlas sync/);
-    assert.match(guidance, /code-atlas index/);
-    assert.match(guidance, /mayBeIncomplete=true/);
-    assert.match(guidance, /risk=unknown/);
-    assert.match(guidance, /negative results.*not authoritative/s);
-    assert.match(guidance, /### Reporting/);
-    assert.match(guidance, /materially contributes.*relevant findings/s);
-    assert.match(guidance, /analysis is unavailable.*why.*fallback/s);
-    assert.match(guidance, /mayBeIncomplete=true.*incomplete.*direct source verification/s);
-    assert.match(guidance, /trivial tasks.*not relevant.*concise/s);
-    assert.match(guidance, /CodeAtlas used.*boilerplate/);
-    assert.doesNotMatch(guidance, /MUST|NEVER|strict, opt-in|indexed capabilities:|GitNexus|gitnexus|resources\/|skills\//);
+    assert.match(guidance, /structural and relationship analysis/);
+    assert.match(guidance, /grep and direct source reads/);
+    assert.match(guidance, /run validation/);
+    assert.match(guidance, /sync once against the final tree/);
+    assert.match(guidance, /avoid repeated syncs during intermediate edits/);
+    assert.doesNotMatch(guidance, /\| Task \| Use \|/);
     assert.equal(guidance.match(/<!-- code-atlas:start -->/g)?.length, 1);
     assert.equal(guidance.match(/<!-- code-atlas:end -->/g)?.length, 1);
   } finally {
@@ -240,7 +222,7 @@ test("generated guidance advertises ready graph tools without making them mandat
   }
 });
 
-test("generated guidance reports stale capabilities and gives sync recovery", async () => {
+test("generated guidance remains stable when index freshness changes", async () => {
   const repoPath = await fixture("guidance-stale");
   try {
     const sourcePath = path.join(repoPath, "source.ts");
@@ -249,13 +231,8 @@ test("generated guidance reports stale capabilities and gives sync recovery", as
     await writeFile(sourcePath, "export function source() { return false; }\n");
     await installGuidance(repoPath);
     const guidance = await readFile(path.join(repoPath, "AGENTS.md"), "utf8");
-    assert.match(guidance, /- graph: stale/);
-    assert.match(guidance, /- lexical: stale/);
-    assert.match(guidance, /code-atlas sync/);
-    assert.match(guidance, /### CLI/);
-    assert.match(guidance, /code-atlas status/);
-    assert.match(guidance, /code-atlas sync/);
-    assert.match(guidance, /code-atlas index/);
+    assert.match(guidance, /sync once against the final tree/);
+    assert.match(guidance, /avoid repeated syncs during intermediate edits/);
     assert.doesNotMatch(guidance, /find_callers|find_callees|find_imports|find_imported_by|`impact`|`trace`/);
   } finally {
     await rm(repoPath, { recursive: true, force: true });
@@ -286,11 +263,8 @@ test("generated guidance reports an unavailable graph conservatively", async () 
 
     await installGuidance(repoPath);
     const guidance = await readFile(path.join(repoPath, "AGENTS.md"), "utf8");
-    assert.match(guidance, /- graph: unavailable/);
-    assert.match(guidance, /- lexical: unavailable/);
-    assert.doesNotMatch(guidance, /find_callers|find_callees|find_imports|find_imported_by|`impact`|`trace`/);
-    assert.match(guidance, /direct source inspection/);
-    assert.doesNotMatch(guidance, /0 symbols|0 relationships/);
+    assert.match(guidance, /grep and direct source reads/);
+    assert.match(guidance, /sync once against the final tree/);
   } finally {
     await rm(repoPath, { recursive: true, force: true });
   }
@@ -301,11 +275,8 @@ test("generated guidance reports a missing index and gives index recovery", asyn
   try {
     await installGuidance(repoPath);
     const guidance = await readFile(path.join(repoPath, "AGENTS.md"), "utf8");
-    assert.match(guidance, /- graph: not-indexed/);
-    assert.match(guidance, /- lexical: not-indexed/);
-    assert.match(guidance, /code-atlas index/);
-    assert.doesNotMatch(guidance, /find_callers|find_callees|find_imports|find_imported_by|`impact`|`trace`/);
-    assert.doesNotMatch(guidance, /\(.*symbols|\(.*relationships/);
+    assert.match(guidance, /structural and relationship analysis/);
+    assert.match(guidance, /sync once against the final tree/);
   } finally {
     await rm(repoPath, { recursive: true, force: true });
   }

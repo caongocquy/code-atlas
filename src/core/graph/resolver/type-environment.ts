@@ -24,6 +24,7 @@ export type LookupResult<T> =
 export type { TypeEnvironmentInput } from "./types.js";
 
 export type TypeEnvironment = {
+  fork?(budget: BudgetLedger, memo: ResolverMemo): TypeEnvironment;
   lookupBinding(scope: ScopeIdentity, name: string): LookupResult<BindingEvidence>;
   inferType(expression: ExpressionIdentity): LookupResult<TypeRef>;
   resolveMember(receiverType: TypeRef, member: string): LookupResult<SymbolIdentity>;
@@ -218,7 +219,7 @@ export function lookupInheritance(evidence: readonly SemanticEvidenceBatch[], ty
 }
 
 export function lookupImports(evidence: readonly SemanticEvidenceBatch[], module: ModuleIdentity, _budget: BudgetLedger): LookupResult<SymbolIdentity> {
-  const candidates = evidence.flatMap((batch) => batch.imports).filter((item) => sameModule(item.module, module) || item.specifier === module.normalizedName || item.resolvedPath === module.relativePath).sort((left, right) => left.evidenceId.localeCompare(right.evidenceId));
+  const candidates = evidence.flatMap((batch) => batch.imports).filter((item) => sameModule(item.module, module) || item.specifier === module.normalizedName || (module.relativePath !== undefined && item.resolvedPath === module.relativePath)).sort((left, right) => left.evidenceId.localeCompare(right.evidenceId));
   if (candidates.length === 0) return unsupportedReason(evidence) ? unsupported(unsupportedReason(evidence)!) : unknown("unresolved_import");
   for (const candidate of candidates) {
     if (!_budget.consume("candidateExpansions")) return exhausted("candidate_expansion_limit", candidates.slice(0, candidates.indexOf(candidate)));
@@ -228,21 +229,25 @@ export function lookupImports(evidence: readonly SemanticEvidenceBatch[], module
 
 export function createTypeEnvironment(input: TypeEnvironmentInput): TypeEnvironment {
   const bindings = indexBindings(input.evidence);
-  const memo = generationScopedMemo(input.generationId, input.memo);
-  return {
-    lookupBinding: (scope, name) => lookupInnermost(bindings, scope, name, input.budget),
-    inferType: (expression) => inferFromEvidence(input.evidence, expression, input.budget, memo),
-    resolveMember: (owner, member) => lookupMembers(input.evidence, owner, member, input.budget),
-    resolveReturn: (callable) => lookupReturns(input.evidence, callable, input.budget),
-    resolveInheritance: (type) => lookupInheritance(input.evidence, type, input.budget),
-    resolveImport: (module) => {
-      const result = lookupImports(input.evidence, module, input.budget);
-      if (result.status !== "unknown") return result;
-      const imports = input.evidence.flatMap((batch) => batch.imports).filter((item) =>
-        result.evidenceIds.includes(item.evidenceId) && (item.localName || item.importedName));
-      const symbols = input.symbols.filter((candidate) => imports.some((item) =>
-        candidate.qualifiedName === (item.importedName ?? item.localName) || candidate.relativePath === item.resolvedPath));
-      return symbols.length > 0 ? found(symbols, imports) : result;
-    },
+  const root = (budget: BudgetLedger, resolverMemo: ResolverMemo): TypeEnvironment => {
+    const memo = generationScopedMemo(input.generationId, resolverMemo);
+    return {
+      fork: root,
+      lookupBinding: (scope, name) => lookupInnermost(bindings, scope, name, budget),
+      inferType: (expression) => inferFromEvidence(input.evidence, expression, budget, memo),
+      resolveMember: (owner, member) => lookupMembers(input.evidence, owner, member, budget),
+      resolveReturn: (callable) => lookupReturns(input.evidence, callable, budget),
+      resolveInheritance: (type) => lookupInheritance(input.evidence, type, budget),
+      resolveImport: (module) => {
+        const result = lookupImports(input.evidence, module, budget);
+        if (result.status !== "unknown") return result;
+        const imports = input.evidence.flatMap((batch) => batch.imports).filter((item) =>
+          result.evidenceIds.includes(item.evidenceId) && (item.localName || item.importedName));
+        const symbols = input.symbols.filter((candidate) => imports.some((item) =>
+          candidate.qualifiedName === (item.importedName ?? item.localName) || candidate.relativePath === item.resolvedPath));
+        return symbols.length > 0 ? found(symbols, imports) : result;
+      },
+    };
   };
+  return root(input.budget, input.memo);
 }

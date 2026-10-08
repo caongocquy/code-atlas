@@ -149,8 +149,7 @@ test("real Git repository smoke preserves delivery history across CLI/process re
     await git(repo, "worktree", "add", "-q", second, "HEAD");
 
     await cli(primary, "init", repo, "--no-guidance", "--json");
-    await git(repo, "add", ".gitignore");
-    await git(repo, "commit", "-qm", "smoke index metadata");
+    assert.equal(await git(repo, "status", "--porcelain", ".gitignore"), "");
     await cli(primary, "sync", repo, "--json");
     await writeFile(path.join(repo, "auth.ts"), "export const auth = \"one\";\nexport const pending = true;\n");
 

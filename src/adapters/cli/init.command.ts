@@ -34,6 +34,9 @@ export async function runInitCommand(
   const json = args.includes("--json");
   const noGuidance = args.includes("--no-guidance");
   const noIndex = args.includes("--no-index");
+  const guidanceChanged = !noGuidance
+    ? await installGuidance(targetPath, args.includes("--strict"))
+    : false;
   let indexResult: IndexPipelineResult | undefined;
   let indexError: string | undefined;
 
@@ -57,9 +60,6 @@ export async function runInitCommand(
     }
   }
 
-  let guidanceChanged = !noGuidance
-    ? await installGuidance(targetPath, args.includes("--strict"))
-    : false;
   const status = await getRepositoryStatus(targetPath);
   const integrations = [];
 

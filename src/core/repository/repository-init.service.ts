@@ -5,7 +5,6 @@ import { promisify } from "node:util";
 
 import { AtlasStore } from "../../storage/atlas/atlas.store.js";
 import { getRepositoryIdentity } from "./repository-identity.js";
-import { readTextFile, writeConfigFile } from "../../infrastructure/integration/config-file.js";
 
 const execFile = promisify(execFileCallback);
 
@@ -24,12 +23,11 @@ export async function initializeRepository(repoPath: string): Promise<Repository
   store.close();
 
   const gitRepository = await isGitRepository(absolutePath);
-  const rootGitignoreChanged = gitRepository ? await ensureRootGitignore(absolutePath) : false;
   return {
     repoPath: absolutePath,
     repoId: repository.id,
     gitRepository,
-    rootGitignoreChanged,
+    rootGitignoreChanged: false,
     indexed: false,
   };
 }
@@ -41,13 +39,4 @@ async function isGitRepository(repoPath: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-async function ensureRootGitignore(repoPath: string): Promise<boolean> {
-  const file = await readTextFile(path.join(repoPath, ".gitignore"));
-  const hasRule = file.text.split(/\r?\n/).some((line) => line.trim() === ".codeatlas/");
-  if (hasRule) return false;
-  const prefix = file.text.length === 0 ? "" : file.text.endsWith("\n") ? file.text : `${file.text}\n`;
-  await writeConfigFile(file, `${prefix}.codeatlas/\n`);
-  return true;
 }

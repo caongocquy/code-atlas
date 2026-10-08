@@ -8,7 +8,8 @@ const groups: HelpGroup[] = [
     title: "Repository",
     commands: [
       ["init [path]", "Initialize and optionally index a repository"],
-      ["index [path]", "Build the graph and lexical indexes"],
+      ["index [path]", "Build an initial index or update a compatible index"],
+      ["reindex [path]", "Force a full index rebuild"],
       ["sync [path]", "Update indexes from repository changes"],
       ["status [path]", "Show repository and capability status"],
       ["workspace map", "Read explicit workspace index membership and health"],
@@ -81,7 +82,7 @@ const details: Record<string, string[]> = {
   index: [
     "Usage: code-atlas index [path] [options]",
     "",
-    "Build graph and lexical indexes for a repository.",
+    "Build an initial index or update an existing compatible index incrementally.",
     "",
     "Options:",
     "  --skip-git         Use filesystem scanning instead of Git change detection",
@@ -89,6 +90,17 @@ const details: Record<string, string[]> = {
     "  --diagnostic-timings Print bounded index phase timings to stderr",
     "",
     "Example: code-atlas index .",
+  ],
+  reindex: [
+    "Usage: code-atlas reindex [path] [options]",
+    "",
+    "Run a forced full rebuild of required indexes.",
+    "",
+    "Options:",
+    "  --skip-git         Use filesystem scanning instead of Git change detection",
+    "  --quiet            Suppress human progress and summary output",
+    "  --json             Print machine-readable output",
+    "  --diagnostic-timings Print bounded index phase timings and work counters to stderr",
   ],
   sync: [
     "Usage: code-atlas sync [path] [options]",

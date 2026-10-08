@@ -4,7 +4,7 @@ import test from "node:test";
 
 import { extractSwiftFacts, swiftFactExtractor } from "../src/core/facts/extractors/swift.js";
 import { SWIFT_CAPABILITIES, swiftSemanticAdapter } from "../src/core/graph/resolver/adapters/swift.js";
-import { factExtractorInput, runFixtureThroughResolver } from "./helpers/phase14b-language-fixtures.js";
+import { assertRootMemoIsolation, factExtractorInput, runFixtureThroughResolver } from "./helpers/phase14b-language-fixtures.js";
 
 const source = `import Foundation
 import struct CoreGraphics.CGPoint
@@ -152,7 +152,7 @@ test("Swift floor exercises warm memo reuse and budget exhaustion", async () => 
   const budgeted = await runFixtureThroughResolver(fixture, [outcome.facts], swiftSemanticAdapter, "cold", false, undefined, { candidateExpansions: 0 });
   assert.deepEqual(warm.decisions, cold.decisions);
   assert.strictEqual(warm.resolverState, cold.resolverState);
-  assert.ok(warm.resolverState.memoHitCount > 0);
+  assertRootMemoIsolation(warm.resolverState);
   assert.ok(budgeted.decisions.some((decision) => decision.status === "budget_exhausted"));
   assert.equal(cold.usedSourceSemanticFallback, false);
 });

@@ -8,7 +8,7 @@ import test from "node:test";
 import { decodeFacts } from "../src/core/facts/facts-codec.js";
 import { extractParsedFacts } from "../src/core/facts/facts-extractor.js";
 import type { ParserIdentity } from "../src/core/facts/facts.types.js";
-import { indexRepository, syncRepository } from "../src/core/indexing/index-pipeline.service.js";
+import { indexRepository, syncRepository, reindexRepository } from "../src/core/indexing/index-pipeline.service.js";
 import { getRepositoryIdentity } from "../src/core/repository/repository-identity.js";
 import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
 
@@ -96,7 +96,7 @@ test("cache write failure leaves the active generation unchanged", async () => {
   }
 });
 
-test("corrupt cache is repaired by the next mutating index", async () => {
+test("explicit reindex repairs corrupt fact cache", async () => {
   const repoPath = await mkdtemp(path.join(tmpdir(), "code-atlas-phase14a-cache-repair-pipeline-"));
   const databasePath = path.join(repoPath, ".codeatlas", "atlas.db");
 
@@ -114,7 +114,7 @@ test("corrupt cache is repaired by the next mutating index", async () => {
     database.prepare("UPDATE fact_blobs SET payload_json = ? WHERE fact_blob_key = ?").run("{", binding.factBlobKey);
     database.close();
 
-    const repaired = await syncRepository(repoPath, { skipGit: true });
+    const repaired = await reindexRepository(repoPath, { skipGit: true });
     assert.equal(repaired.kind, "published");
     const checked = new AtlasStore(databasePath);
     try {

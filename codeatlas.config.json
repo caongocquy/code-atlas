@@ -5,5 +5,9 @@
       "enabled": true,
       "severity": "medium"
     }
-  }
+  },
+  "excludes": [
+    ".superpowers/**",
+    "docs/superpowers/**"
+  ]
 }

@@ -306,7 +306,7 @@ export function analyzeFramework(ctx: FrameworkAnalysisContext, adapters: readon
   const facts = ctx.previousFramework
     ? ctx.facts.filter((item) => analyzePaths.has(item.relativePath))
     : ctx.facts;
-  const analysisContext = { ...ctx, facts, analyzePaths };
+  const analysisContext = { ...ctx, facts, lookupFacts: ctx.lookupFacts ?? ctx.facts, analyzePaths };
   for (const adapter of sorted(adapters, (item) => item.id)) {
     try {
       const result = adapter.analyze(analysisContext);

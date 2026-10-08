@@ -1,8 +1,9 @@
+import { decodeTerminalDependencies, type TerminalDependency } from "../../core/indexing/terminal-dependencies.js";
 import { isScheduledMetadata, isPublishableScheduledDiagnostic, isScheduledCoverage } from "../../core/framework/framework-scheduled.js";
 import { decodeMessageIdentity, isMessageMetadata, isPublishableMessageDiagnostic, isMessageCoverage } from "../../core/framework/framework-message.js";
 import fs from "node:fs";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 
 import { initializeAtlasSchema, migrateAtlasSchema, validateAtlasSchemaForReadOnly, ATLAS_SCHEMA_VERSION } from "./atlas.schema.js";
@@ -1321,8 +1322,11 @@ export class AtlasStore {
     };
   }
 
-  writeCandidateLexicalDocuments(generationId: string, updates: LexicalFileUpdate[]): void {
+  writeCandidateLexicalDocuments(generationId: string, updates: LexicalFileUpdate[]): { filesUpdated: number; documentsInserted: number; documentsDeleted: number; transactions: number; transactionCommitMs: number } {
     const generation = this.generationRepository(generationId);
+    let documentsInserted = 0;
+    let documentsDeleted = 0;
+    let transactionCommitMs: number;
     this.database.exec("BEGIN IMMEDIATE;");
     try {
       const deleteFile = this.database.prepare("DELETE FROM generation_lexical_documents WHERE generation_id = ? AND file = ?");
@@ -1332,20 +1336,59 @@ export class AtlasStore {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       for (const update of updates) {
-        deleteFile.run(generationId, update.file);
+        documentsDeleted += Number(deleteFile.run(generationId, update.file).changes);
         for (const document of update.documents) {
           insert.run(generation.repository_id, generationId, document.documentId, document.file, document.symbolName ?? null, document.qualifiedName ?? null, document.symbolType ?? null, document.content, document.startLine ?? null, document.endLine ?? null);
+          documentsInserted += 1;
         }
       }
+      const transactionCommitStartedAt = performance.now();
       this.database.exec("COMMIT;");
+      transactionCommitMs = performance.now() - transactionCommitStartedAt;
     } catch (error) {
       this.database.exec("ROLLBACK;");
       throw error;
     }
+    return { filesUpdated: updates.length, documentsInserted, documentsDeleted, transactions: 1, transactionCommitMs };
   }
 
-  writeCandidateSemanticVectors(generationId: string, points: VectorPoint[]): void {
+  copyActiveLexicalToCandidate(generationId: string, reusePaths: readonly string[]): { filesReused: number; documentsCopied: number; transactions: number; transactionCommitMs: number } {
     const generation = this.generationRepository(generationId);
+    const activeGenerationId = this.getActiveGenerationId(generation.repository_id);
+    if (!activeGenerationId) return { filesReused: 0, documentsCopied: 0, transactions: 0, transactionCommitMs: 0 };
+
+    let documentsCopied = 0;
+    let transactionCommitMs: number;
+    this.database.exec("BEGIN IMMEDIATE;");
+    try {
+      this.database.prepare("DELETE FROM generation_lexical_documents WHERE repository_id = ? AND generation_id = ?")
+        .run(generation.repository_id, generationId);
+      const insertSql =
+        `INSERT INTO generation_lexical_documents
+         (repository_id, generation_id, document_id, file, symbol_name, qualified_name, symbol_type, content, start_line, end_line)
+         SELECT repository_id, ?, document_id, file, symbol_name, qualified_name, symbol_type, content, start_line, end_line
+         FROM generation_lexical_documents
+         WHERE repository_id = ? AND generation_id = ? AND file IN (%PATHS%)`;
+      for (let offset = 0; offset < reusePaths.length; offset += 400) {
+        const paths = reusePaths.slice(offset, offset + 400);
+        const result = this.database.prepare(insertSql.replace("%PATHS%", paths.map(() => "?").join(", ")))
+          .run(generationId, generation.repository_id, activeGenerationId, ...paths);
+        documentsCopied += Number(result.changes);
+      }
+      const transactionCommitStartedAt = performance.now();
+      this.database.exec("COMMIT;");
+      transactionCommitMs = performance.now() - transactionCommitStartedAt;
+    } catch (error) {
+      this.database.exec("ROLLBACK;");
+      throw error;
+    }
+    return { filesReused: new Set(reusePaths).size, documentsCopied, transactions: 1, transactionCommitMs };
+  }
+
+  writeCandidateSemanticVectors(generationId: string, points: VectorPoint[]): { vectorsWritten: number; transactions: number; transactionCommitMs: number } {
+    const generation = this.generationRepository(generationId);
+    let vectorsWritten = 0;
+    let transactionCommitMs: number;
     this.database.exec("BEGIN IMMEDIATE;");
     try {
       const insert = this.database.prepare(
@@ -1356,13 +1399,16 @@ export class AtlasStore {
       for (const point of points) {
         const payload = point.payload as { file?: string; fileHash?: string };
         if (typeof payload.file !== "string" || typeof payload.fileHash !== "string") throw new Error("Semantic vector payload must include file and fileHash");
-        insert.run(generation.repository_id, generationId, String(point.id), Buffer.from(Float32Array.from(point.vector).buffer), payload.file, payload.fileHash, JSON.stringify(point.payload));
+        vectorsWritten += Number(insert.run(generation.repository_id, generationId, String(point.id), Buffer.from(Float32Array.from(point.vector).buffer), payload.file, payload.fileHash, JSON.stringify(point.payload)).changes);
       }
+      const transactionCommitStartedAt = performance.now();
       this.database.exec("COMMIT;");
+      transactionCommitMs = performance.now() - transactionCommitStartedAt;
     } catch (error) {
       this.database.exec("ROLLBACK;");
       throw error;
     }
+    return { vectorsWritten, transactions: 1, transactionCommitMs };
   }
 
   deleteUnreferencedFactBlobs(): number {
@@ -1508,32 +1554,53 @@ export class AtlasStore {
     }
   }
 
-  copyActiveSemanticVectorsToCandidate(generationId: string): void {
+  copyActiveSemanticVectorsToCandidate(generationId: string, reusePaths?: readonly string[]): { vectorsCopied: number; transactions: number; transactionCommitMs: number } {
     const generation = this.generationRepository(generationId);
     const activeGenerationId = this.getActiveGenerationId(generation.repository_id);
-    if (!activeGenerationId) return;
+    if (!activeGenerationId) return { vectorsCopied: 0, transactions: 0, transactionCommitMs: 0 };
 
+    let vectorsCopied = 0;
+    let transactionCommitMs: number;
     this.database.exec("BEGIN IMMEDIATE;");
     try {
       this.database.prepare("DELETE FROM generation_semantic_vectors WHERE repository_id = ? AND generation_id = ?")
         .run(generation.repository_id, generationId);
-      this.database.prepare(
-        `INSERT OR REPLACE INTO generation_semantic_vectors
-         (repository_id, generation_id, point_id, vector, file_path, file_hash, payload_json)
-         SELECT repository_id, ?, point_id, vector, file_path, file_hash, payload_json
-         FROM generation_semantic_vectors
-         WHERE repository_id = ? AND generation_id = ?
-           AND file_path IN (
-             SELECT relative_path
-             FROM file_fact_bindings
+      const bindingFilter = ` AND file_path IN (
+        SELECT relative_path
+        FROM file_fact_bindings
+        WHERE repository_id = ? AND generation_id = ?
+      )`;
+      if (reusePaths === undefined) {
+        const result = this.database.prepare(
+          `INSERT OR REPLACE INTO generation_semantic_vectors
+           (repository_id, generation_id, point_id, vector, file_path, file_hash, payload_json)
+           SELECT repository_id, ?, point_id, vector, file_path, file_hash, payload_json
+           FROM generation_semantic_vectors
+           WHERE repository_id = ? AND generation_id = ?${bindingFilter}`,
+        ).run(generationId, generation.repository_id, activeGenerationId, generation.repository_id, generationId);
+        vectorsCopied = Number(result.changes);
+      } else {
+        for (let offset = 0; offset < reusePaths.length; offset += 400) {
+          const paths = reusePaths.slice(offset, offset + 400);
+          const result = this.database.prepare(
+            `INSERT OR REPLACE INTO generation_semantic_vectors
+             (repository_id, generation_id, point_id, vector, file_path, file_hash, payload_json)
+             SELECT repository_id, ?, point_id, vector, file_path, file_hash, payload_json
+             FROM generation_semantic_vectors
              WHERE repository_id = ? AND generation_id = ?
-           )`,
-      ).run(generationId, generation.repository_id, activeGenerationId, generation.repository_id, generationId);
+               AND file_path IN (${paths.map(() => "?").join(", ")})${bindingFilter}`,
+          ).run(generationId, generation.repository_id, activeGenerationId, ...paths, generation.repository_id, generationId);
+          vectorsCopied += Number(result.changes);
+        }
+      }
+      const transactionCommitStartedAt = performance.now();
       this.database.exec("COMMIT;");
+      transactionCommitMs = performance.now() - transactionCommitStartedAt;
     } catch (error) {
       this.database.exec("ROLLBACK;");
       throw error;
     }
+    return { vectorsCopied, transactions: 1, transactionCommitMs };
   }
 
   private copyActiveGraphResolutionRows(generationId: string, repositoryId: string, activeGenerationId: string, paths?: readonly string[]): void {
@@ -1643,26 +1710,67 @@ export class AtlasStore {
     fileHashes: Map<string, string>,
     resolutionByFile?: Map<string, GraphResolutionFile>,
     reuseResolutionPaths?: readonly string[],
-  ): void {
+    dirtyPaths?: readonly string[],
+  ): { symbolsInserted: number; edgesInserted: number; symbolsCopied: number; edgesCopied: number; resolutionRowsCopied: number; transactions: number; transactionCommitMs: number } {
     const generation = this.generationRepository(generationId);
+    const activeGenerationId = this.getActiveGenerationId(generation.repository_id);
+    const dirty = new Set(dirtyPaths ?? []);
+    let symbolsInserted = 0;
+    let edgesInserted = 0;
+    let symbolsCopied = 0;
+    let edgesCopied = 0;
+    let resolutionRowsCopied = 0;
+    let transactionCommitMs: number;
     this.database.exec("BEGIN IMMEDIATE;");
     try {
       this.database.prepare("DELETE FROM generation_edges WHERE generation_id = ?").run(generationId);
       this.database.prepare("DELETE FROM generation_symbols WHERE generation_id = ?").run(generationId);
       if (this.hasTable("generation_graph_resolution_files")) {
         this.database.prepare("DELETE FROM generation_graph_resolution_files WHERE generation_id = ?").run(generationId);
-        const activeGenerationId = this.getActiveGenerationId(generation.repository_id);
         if (activeGenerationId && reuseResolutionPaths && reuseResolutionPaths.length > 0) {
           this.copyActiveGraphResolutionRows(generationId, generation.repository_id, activeGenerationId, reuseResolutionPaths);
+          const copied = this.database.prepare(
+            "SELECT COUNT(*) AS count FROM generation_graph_resolution_files WHERE repository_id = ? AND generation_id = ?",
+          ).get(generation.repository_id, generationId) as { count: number };
+          resolutionRowsCopied = copied.count;
         }
       }
+
+      if (activeGenerationId && dirtyPaths !== undefined) {
+        const nodeColumns = ["id", "type", "name", "qualified_name", "file_path", "start_line", "end_line"];
+        const reusableNodes = graph.nodes
+          .filter((node) => !dirty.has(node.file))
+          .map((node) => [node.id, node.type, node.name, node.qualifiedName ?? null, node.file, node.startLine ?? null, node.endLine ?? null]);
+        for (let offset = 0; offset < reusableNodes.length; offset += 50) {
+        const rows = reusableNodes.slice(offset, offset + 50);
+          const values = rows.map(() => `(${nodeColumns.map(() => "?").join(", ")})`).join(", ");
+          const exactMatch = nodeColumns.map((column) => `source.${column} IS expected.${column}`).join(" AND ");
+          symbolsCopied += Number(this.database.prepare(
+            `WITH expected (${nodeColumns.join(", ")}) AS (VALUES ${values})
+             INSERT INTO generation_symbols
+             (repository_id, generation_id, id, type, name, qualified_name, file_path, start_line, end_line)
+             SELECT source.repository_id, ?, source.id, source.type, source.name,
+                    source.qualified_name, source.file_path, source.start_line, source.end_line
+             FROM generation_symbols AS source
+             JOIN expected ON source.id = expected.id
+             WHERE source.repository_id = ? AND source.generation_id = ? AND ${exactMatch}`,
+          ).run(...rows.flat(), generationId, generation.repository_id, activeGenerationId).changes);
+        }
+      }
+
       const insertNode = this.database.prepare(
         `INSERT INTO generation_symbols
          (repository_id, generation_id, id, type, name, qualified_name, file_path, start_line, end_line)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
+      const candidateNodeIds = new Set((this.database.prepare(
+        "SELECT id FROM generation_symbols WHERE repository_id = ? AND generation_id = ?",
+      ).all(generation.repository_id, generationId) as Array<{ id: string }>).map(({ id }) => id));
       for (const node of graph.nodes) {
+        if (candidateNodeIds.has(node.id)) continue;
         insertNode.run(generation.repository_id, generationId, node.id, node.type, node.name, node.qualifiedName ?? null, node.file, node.startLine ?? null, node.endLine ?? null);
+        symbolsInserted += 1;
+        candidateNodeIds.add(node.id);
       }
       const insertEdge = this.database.prepare(
         `INSERT INTO generation_edges
@@ -1673,10 +1781,63 @@ export class AtlasStore {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       const nodes = new Map(graph.nodes.map((node) => [node.id, node]));
-      for (const edge of graph.edges) {
+
+      const edgeRow = (edge: GraphEdge): SQLInputValue[] => {
         const owner = nodes.get(edge.from)?.file;
         if (!owner) throw new Error(`Missing source node for edge: ${edge.from}`);
-        insertEdge.run(generation.repository_id, generationId, owner, edge.from, edge.to, edge.type, edge.resolutionMethod ?? null, edge.evidenceKind ?? null, edge.confidence ?? null, edge.resolutionSource?.file ?? null, edge.resolutionSource?.line ?? null, ...resolutionColumns(edge));
+        return [
+          owner, edge.from, edge.to, edge.type, edge.resolutionMethod ?? null, edge.evidenceKind ?? null,
+          edge.confidence ?? null, edge.resolutionSource?.file ?? null, edge.resolutionSource?.line ?? null,
+          ...resolutionColumns(edge),
+        ];
+      };
+      const edgeColumns = [
+        "owner_file", "from_symbol_id", "to_symbol_id", "type", "resolution_method", "evidence_kind",
+        "confidence", "resolution_file", "resolution_line", "resolution_strategy", "resolution_confidence",
+        "resolution_evidence_json", "resolution_version", "resolution_source_identity", "resolution_target_identity",
+      ];
+      const reusableEdgeRows: SQLInputValue[][] = activeGenerationId && dirtyPaths !== undefined
+        ? graph.edges.flatMap((edge) => {
+          const source = nodes.get(edge.from);
+          const target = nodes.get(edge.to);
+          if (!source || !target || dirty.has(source.file) || dirty.has(target.file)
+            || (edge.resolutionSource && dirty.has(edge.resolutionSource.file))) return [];
+          return [edgeRow(edge)];
+        })
+        : [];
+      for (let offset = 0; offset < reusableEdgeRows.length; offset += 40) {
+        const rows = reusableEdgeRows.slice(offset, offset + 40);
+        const values = rows.map(() => `(${edgeColumns.map(() => "?").join(", ")})`).join(", ");
+        const exactMatch = edgeColumns.map((column) => `source.${column} IS expected.${column}`).join(" AND ");
+        const parameters: SQLInputValue[] = [generationId, generation.repository_id, activeGenerationId!];
+        edgesCopied += Number(this.database.prepare(
+          `WITH expected (${edgeColumns.join(", ")}) AS (VALUES ${values})
+           INSERT INTO generation_edges
+           (repository_id, generation_id, owner_file, from_symbol_id, to_symbol_id, type,
+            resolution_method, evidence_kind, confidence, resolution_file, resolution_line,
+            resolution_strategy, resolution_confidence, resolution_evidence_json,
+            resolution_version, resolution_source_identity, resolution_target_identity)
+           SELECT source.repository_id, ?, source.owner_file, source.from_symbol_id, source.to_symbol_id, source.type,
+                  source.resolution_method, source.evidence_kind, source.confidence, source.resolution_file, source.resolution_line,
+                  source.resolution_strategy, source.resolution_confidence, source.resolution_evidence_json,
+                  source.resolution_version, source.resolution_source_identity, source.resolution_target_identity
+           FROM generation_edges AS source
+           JOIN expected ON source.owner_file = expected.owner_file
+             AND source.from_symbol_id = expected.from_symbol_id
+             AND source.to_symbol_id = expected.to_symbol_id
+             AND source.type = expected.type
+           WHERE source.repository_id = ? AND source.generation_id = ? AND ${exactMatch}`,
+        ).run(...rows.flat(), ...parameters).changes);
+      }
+      const copiedEdgeKeys = new Set((this.database.prepare(
+        `SELECT ${edgeColumns.join(", ")} FROM generation_edges WHERE repository_id = ? AND generation_id = ?`,
+      ).all(generation.repository_id, generationId) as Array<Record<string, unknown>>).map((row) => JSON.stringify(edgeColumns.map((column) => row[column]))));
+      for (const edge of graph.edges) {
+        const row = edgeRow(edge);
+        if (copiedEdgeKeys.has(JSON.stringify(row))) continue;
+        insertEdge.run(generation.repository_id, generationId, ...row);
+        edgesInserted += 1;
+        copiedEdgeKeys.add(JSON.stringify(row));
       }
       if (resolutionByFile && this.hasTable("generation_graph_resolution_files")) {
         for (const [file, resolution] of resolutionByFile) {
@@ -1684,11 +1845,104 @@ export class AtlasStore {
         }
       }
       void fileHashes;
+      const transactionCommitStartedAt = performance.now();
       this.database.exec("COMMIT;");
+      transactionCommitMs = performance.now() - transactionCommitStartedAt;
     } catch (error) {
       this.database.exec("ROLLBACK;");
       throw error;
     }
+    return { symbolsInserted, edgesInserted, symbolsCopied, edgesCopied, resolutionRowsCopied, transactions: 1, transactionCommitMs };
+  }
+
+  copyActiveGraphToCandidate(generationId: string): { symbolsCopied: number; edgesCopied: number; resolutionFilesCopied: number; transactions: number; transactionCommitMs: number } {
+    const generation = this.generationRepository(generationId);
+    const activeGenerationId = this.getActiveGenerationId(generation.repository_id);
+    if (!activeGenerationId) return { symbolsCopied: 0, edgesCopied: 0, resolutionFilesCopied: 0, transactions: 0, transactionCommitMs: 0 };
+
+    let symbolsCopied: number;
+    let edgesCopied: number;
+    let resolutionFilesCopied = 0;
+    let transactionCommitMs: number;
+    this.database.exec("BEGIN IMMEDIATE;");
+    try {
+      for (const table of ["generation_symbols", "generation_edges"]) {
+        this.database.prepare(`DELETE FROM ${table} WHERE repository_id = ? AND generation_id = ?`)
+          .run(generation.repository_id, generationId);
+      }
+      symbolsCopied = Number(this.database.prepare(
+        `INSERT INTO generation_symbols
+         (repository_id, generation_id, id, type, name, qualified_name, file_path, start_line, end_line)
+         SELECT repository_id, ?, id, type, name, qualified_name, file_path, start_line, end_line
+         FROM generation_symbols WHERE repository_id = ? AND generation_id = ?`,
+      ).run(generationId, generation.repository_id, activeGenerationId).changes);
+      edgesCopied = Number(this.database.prepare(
+        `INSERT INTO generation_edges
+         (repository_id, generation_id, owner_file, from_symbol_id, to_symbol_id, type,
+          resolution_method, evidence_kind, confidence, resolution_file, resolution_line,
+          resolution_strategy, resolution_confidence, resolution_evidence_json,
+          resolution_version, resolution_source_identity, resolution_target_identity)
+         SELECT repository_id, ?, owner_file, from_symbol_id, to_symbol_id, type,
+                resolution_method, evidence_kind, confidence, resolution_file, resolution_line,
+                resolution_strategy, resolution_confidence, resolution_evidence_json,
+                resolution_version, resolution_source_identity, resolution_target_identity
+         FROM generation_edges WHERE repository_id = ? AND generation_id = ?`,
+      ).run(generationId, generation.repository_id, activeGenerationId).changes);
+      if (this.hasTable("generation_graph_resolution_files")) {
+        this.database.prepare("DELETE FROM generation_graph_resolution_files WHERE repository_id = ? AND generation_id = ?")
+          .run(generation.repository_id, generationId);
+        this.copyActiveGraphResolutionRows(generationId, generation.repository_id, activeGenerationId);
+        resolutionFilesCopied = Number(this.database.prepare("SELECT changes() AS count").get()?.count ?? 0);
+      }
+      const transactionCommitStartedAt = performance.now();
+      this.database.exec("COMMIT;");
+      transactionCommitMs = performance.now() - transactionCommitStartedAt;
+    } catch (error) {
+      this.database.exec("ROLLBACK;");
+      throw error;
+    }
+    return { symbolsCopied, edgesCopied, resolutionFilesCopied, transactions: 1, transactionCommitMs };
+  }
+
+  copyActiveFrameworkToCandidate(generationId: string): { rowsCopied: number; transactions: number; transactionCommitMs: number } {
+    const generation = this.generationRepository(generationId);
+    const activeGenerationId = this.getActiveGenerationId(generation.repository_id);
+    if (!activeGenerationId) return { rowsCopied: 0, transactions: 0, transactionCommitMs: 0 };
+
+    let rowsCopied = 0;
+    let transactionCommitMs: number;
+    this.database.exec("BEGIN IMMEDIATE;");
+    try {
+      for (const table of [
+        "generation_framework_entities",
+        "generation_framework_relationships",
+        "generation_framework_classifications",
+        "generation_framework_diagnostics",
+        "generation_framework_coverage",
+        "generation_framework_state",
+        "generation_reliability_contributions",
+      ]) {
+        if (!this.hasTable(table)) continue;
+        const columns = this.database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+        if (columns.length === 0) continue;
+        const columnList = columns.map(({ name }) => `"${name.replaceAll('"', '""')}"`).join(", ");
+        const selectList = columns.map(({ name }) => name === "generation_id" ? "?" : `"${name.replaceAll('"', '""')}"`).join(", ");
+        this.database.prepare(`DELETE FROM ${table} WHERE repository_id = ? AND generation_id = ?`)
+          .run(generation.repository_id, generationId);
+        const result = this.database.prepare(
+          `INSERT INTO ${table} (${columnList})
+           SELECT ${selectList} FROM ${table} WHERE repository_id = ? AND generation_id = ?`,
+        ).run(generationId, generation.repository_id, activeGenerationId);
+        rowsCopied += Number(result.changes);
+      }
+      const transactionCommitStartedAt = performance.now();
+      this.database.exec("COMMIT;");
+      transactionCommitMs = performance.now() - transactionCommitStartedAt;
+    } catch (error) {
+      this.database.exec("ROLLBACK;");
+      throw error;
+    }
+    return { rowsCopied, transactions: 1, transactionCommitMs };
   }
 
   private loadMessageSourceFacts(repositoryId: string, generationId: string, paths: readonly string[]): ReadonlyMap<string, ParsedFactsBlob> {
@@ -1707,8 +1961,27 @@ export class AtlasStore {
     return result;
   }
 
-  writeCandidateFramework(generationId: string, materialization: FrameworkMaterialization): void {
+  writeCandidateFramework(generationId: string, materialization: FrameworkMaterialization): {
+    entitiesInserted: number;
+    relationshipsInserted: number;
+    classificationsInserted: number;
+    diagnosticsInserted: number;
+    coverageInserted: number;
+    stateRowsWritten: number;
+    transactions: number;
+    transactionCommitMs: number;
+  } {
     if (this.readOnly) throw new Error("AtlasStore is read-only");
+    let counts: {
+      entitiesInserted: number;
+      relationshipsInserted: number;
+      classificationsInserted: number;
+      diagnosticsInserted: number;
+      coverageInserted: number;
+      stateRowsWritten: number;
+      transactions: number;
+    } | undefined;
+    let transactionCommitMs: number;
     this.database.exec("BEGIN IMMEDIATE;");
     try {
       const generation = this.generationRepository(generationId);
@@ -1718,6 +1991,15 @@ export class AtlasStore {
       const languageNodes = new Map(languageNodeRows.map((row) => [row.id, { type: row.type, name: row.name, qualifiedName: row.qualified_name, file: row.file_path }]));
       const sourceFacts = this.loadMessageSourceFacts(generation.repository_id, generationId, messageConsumerFiles(materialization.entities));
       const normalized = normalizeMaterialization(materialization, languageNodes, generation.repository_id, sourceFacts);
+      counts = {
+        entitiesInserted: normalized.entities.length,
+        relationshipsInserted: normalized.relationships.length,
+        classificationsInserted: normalized.classifications.length,
+        diagnosticsInserted: normalized.diagnostics.length,
+        coverageInserted: normalized.coverage.length,
+        stateRowsWritten: 1,
+        transactions: 1,
+      };
 
       for (const table of [
         "generation_framework_entities",
@@ -1789,15 +2071,27 @@ export class AtlasStore {
         stableJson(normalized.dependencies, MAX_FRAMEWORK_STATE_JSON_LENGTH),
         normalized.complete ? 1 : 0,
       );
+      const transactionCommitStartedAt = performance.now();
       this.database.exec("COMMIT;");
+      transactionCommitMs = performance.now() - transactionCommitStartedAt;
     } catch (error) {
       this.database.exec("ROLLBACK;");
       throw error;
     }
+    if (!counts) throw new Error("Framework write counters are unavailable");
+    return { ...counts, transactionCommitMs };
   }
 
-  stageReliabilityContributions(generationId: string, contributions: readonly ReliabilityContribution[]): void {
+  stageReliabilityContributions(generationId: string, contributions: readonly ReliabilityContribution[]): {
+    contributionsInserted: number;
+    contributionsDeleted: number;
+    transactions: number;
+    transactionCommitMs: number;
+    } {
     if (this.readOnly) throw new Error("AtlasStore is read-only");
+    let contributionsInserted = 0;
+    let contributionsDeleted: number;
+    let transactionCommitMs: number;
     this.database.exec("BEGIN IMMEDIATE;");
     try {
       const generation = this.generationRepository(generationId);
@@ -1811,9 +2105,10 @@ export class AtlasStore {
         rows.set(contributionKey, contribution);
       }
 
-      this.database.prepare(
+      const deleted = this.database.prepare(
         "DELETE FROM generation_reliability_contributions WHERE repository_id = ? AND generation_id = ?",
       ).run(generation.repository_id, generationId);
+      contributionsDeleted = Number(deleted.changes);
       const insert = this.database.prepare(
         `INSERT INTO generation_reliability_contributions
          (repository_id, generation_id, contribution_key, owner_key, scope_key, output_key, payload_json)
@@ -1829,12 +2124,16 @@ export class AtlasStore {
           contribution.outputKey,
           stableJson(contribution),
         );
+        contributionsInserted += 1;
       }
+      const transactionCommitStartedAt = performance.now();
       this.database.exec("COMMIT;");
+      transactionCommitMs = performance.now() - transactionCommitStartedAt;
     } catch (error) {
       this.database.exec("ROLLBACK;");
       throw error;
     }
+    return { contributionsInserted, contributionsDeleted, transactions: 1, transactionCommitMs };
   }
 
   loadReliabilityContributions(repositoryId: string, generationId?: string): readonly ReliabilityContribution[] {
@@ -1870,10 +2169,19 @@ export class AtlasStore {
     }
   }
 
+  getTerminalDependencies(repositoryId: string): TerminalDependency[] | undefined {
+    const row = this.database.prepare("SELECT active_provenance_metadata FROM repository_index_state WHERE repository_id = ?")
+      .get(repositoryId) as { active_provenance_metadata: string } | undefined;
+    if (!row) return undefined;
+    try { return decodeTerminalDependencies((JSON.parse(row.active_provenance_metadata) as { terminalDependencies?: unknown }).terminalDependencies); }
+    catch { return undefined; }
+  }
+
   publishCandidateGeneration(generationId: string, options: {
     requireGraph?: boolean;
     requireLexical?: boolean;
     semanticEnabled?: boolean;
+    terminalDependencies?: TerminalDependency[];
     graphStaged?: boolean;
     frameworkStaged?: boolean;
     lexicalStaged?: boolean;
@@ -1882,7 +2190,14 @@ export class AtlasStore {
     deletedFiles?: string[];
     fileStates?: Array<{ file: string; capability: AtlasCapability; input: FileCapabilityStateInput }>;
     versions?: Partial<Record<AtlasIndexAxis, string>>;
-  } = {}): void {
+  } = {}): {
+    metadataFileStatesMs: number;
+    generationPublishMs: number;
+    transactionCommitMs: number;
+    metadataRowsUpdated: number;
+    metadataRowsDeleted: number;
+    transactions: number;
+  } {
     this.database.exec("BEGIN IMMEDIATE;");
     try {
       const generation = this.database.prepare(
@@ -1901,15 +2216,24 @@ export class AtlasStore {
       if (versions.reliabilityVersion && options.reliabilityStaged !== true && options.frameworkStaged !== true) {
         throw new Error("Candidate reliability contributions are missing");
       }
+      const metadataStartedAt = performance.now();
+      let metadataRowsUpdated = 0;
+      let metadataRowsDeleted = 0;
       for (const file of options.deletedFiles ?? []) {
-        for (const capability of ["graph", "lexical", "semantic"] as const) this.deleteCapabilityState(generation.repository_id, file, capability);
-        this.deleteOrphanFile(generation.repository_id, file);
+        for (const capability of ["graph", "lexical", "semantic"] as const) {
+          metadataRowsDeleted += this.deleteCapabilityState(generation.repository_id, file, capability);
+        }
+        metadataRowsDeleted += this.deleteOrphanFile(generation.repository_id, file);
       }
-      for (const state of options.fileStates ?? []) this.upsertCapabilityState(generation.repository_id, state.file, state.capability, state.input);
+      for (const state of options.fileStates ?? []) {
+        metadataRowsUpdated += this.upsertCapabilityState(generation.repository_id, state.file, state.capability, state.input);
+      }
       const updatedAt = new Date().toISOString();
       for (const [axis, version] of Object.entries(options.versions ?? {})) {
-        if (version) this.setVersionRow(generation.repository_id, axis as AtlasIndexAxis, version, updatedAt);
+        if (version) metadataRowsUpdated += this.setVersionRow(generation.repository_id, axis as AtlasIndexAxis, version, updatedAt);
       }
+      const metadataFileStatesMs = performance.now() - metadataStartedAt;
+      const generationPublishStartedAt = performance.now();
       this.database.prepare("UPDATE index_generations SET status = 'committed' WHERE id = ?").run(generationId);
       this.database.prepare(
         `INSERT INTO repository_index_state
@@ -1923,8 +2247,19 @@ export class AtlasStore {
            active_framework_resolution_version = excluded.active_framework_resolution_version,
            active_resolution_version = excluded.active_resolution_version, active_derived_version = excluded.active_derived_version,
            active_provenance_metadata = excluded.active_provenance_metadata`,
-      ).run(generation.repository_id, generationId, versions.schemaVersion, versions.factsVersion, versions.factsSchemaVersion ?? null, versions.frameworkResolutionVersion ?? null, versions.resolutionVersion, versions.derivedVersion, JSON.stringify({ semanticEnabled: options.semanticEnabled ?? false }));
+      ).run(generation.repository_id, generationId, versions.schemaVersion, versions.factsVersion, versions.factsSchemaVersion ?? null, versions.frameworkResolutionVersion ?? null, versions.resolutionVersion, versions.derivedVersion, JSON.stringify({ semanticEnabled: options.semanticEnabled ?? false, terminalDependencies: options.terminalDependencies }));
+      const generationPublishMs = performance.now() - generationPublishStartedAt;
+      const transactionCommitStartedAt = performance.now();
       this.database.exec("COMMIT;");
+      const transactionCommitMs = performance.now() - transactionCommitStartedAt;
+      return {
+        metadataFileStatesMs,
+        generationPublishMs,
+        transactionCommitMs,
+        metadataRowsUpdated,
+        metadataRowsDeleted,
+        transactions: 1,
+      };
     } catch (error) {
       this.database.exec("ROLLBACK;");
       throw error;
@@ -2179,6 +2514,32 @@ export class AtlasStore {
         .prepare("INSERT INTO semantic_vector_config (id, dimensions) VALUES (1, ?)")
         .run(dimensions);
     }
+  }
+
+  getActiveSemanticPoints(repositoryId: string, paths: readonly string[]): VectorPoint[] {
+    const activeGenerationId = this.getActiveGenerationId(repositoryId);
+    if (!activeGenerationId || paths.length === 0) return [];
+
+    const uniquePaths = [...new Set(paths)];
+    const points: VectorPoint[] = [];
+    for (let offset = 0; offset < uniquePaths.length; offset += 400) {
+      const chunk = uniquePaths.slice(offset, offset + 400);
+      const rows = this.database.prepare(
+        `SELECT point_id, vector, payload_json
+         FROM generation_semantic_vectors
+         WHERE repository_id = ? AND generation_id = ? AND file_path IN (${chunk.map(() => "?").join(", ")})
+         ORDER BY file_path ASC, point_id ASC`,
+      ).all(repositoryId, activeGenerationId, ...chunk) as Array<{ point_id: string; vector: Uint8Array; payload_json: string }>;
+      for (const row of rows) {
+        const values = new Float32Array(
+          row.vector.buffer,
+          row.vector.byteOffset,
+          row.vector.byteLength / Float32Array.BYTES_PER_ELEMENT,
+        );
+        points.push({ id: row.point_id, vector: Array.from(values), payload: JSON.parse(row.payload_json) as Record<string, unknown> });
+      }
+    }
+    return points;
   }
 
   searchSemanticVectors(
@@ -2587,8 +2948,8 @@ export class AtlasStore {
     };
   }
 
-  private upsertFile(file: string, repoId: string, fileHash: string): void {
-    this.database
+  private upsertFile(file: string, repoId: string, fileHash: string): number {
+    const result = this.database
       .prepare(
         `INSERT INTO files
          (repository_id, path, file_hash, indexed_at)
@@ -2597,6 +2958,7 @@ export class AtlasStore {
          DO UPDATE SET file_hash = excluded.file_hash, indexed_at = excluded.indexed_at`,
       )
       .run(repoId, file, fileHash, new Date().toISOString());
+    return Number(result.changes);
   }
 
   private upsertCapabilityState(
@@ -2604,12 +2966,13 @@ export class AtlasStore {
     file: string,
     capability: AtlasCapability,
     input: FileCapabilityStateInput,
-  ): void {
+  ): number {
+    let rowsChanged = 0;
     if (input.fileHash !== undefined) {
-      this.upsertFile(file, repoId, input.fileHash);
+      rowsChanged += this.upsertFile(file, repoId, input.fileHash);
     }
 
-    this.database
+    const result = this.database
       .prepare(
         `INSERT INTO file_capability_state
          (repository_id, file_path, capability, file_hash, version, state,
@@ -2638,6 +3001,7 @@ export class AtlasStore {
         input.lastError ?? null,
         new Date().toISOString(),
       );
+    return rowsChanged + Number(result.changes);
   }
 
   private deleteCapabilityStates(repoId: string, capability: AtlasCapability): void {
@@ -2652,13 +3016,14 @@ export class AtlasStore {
     repoId: string,
     file: string,
     capability: AtlasCapability,
-  ): void {
-    this.database
+  ): number {
+    const result = this.database
       .prepare(
         `DELETE FROM file_capability_state
          WHERE repository_id = ? AND file_path = ? AND capability = ?`,
       )
       .run(repoId, file, capability);
+    return Number(result.changes);
   }
 
   private deleteLexicalFile(repoId: string, file: string): void {
@@ -2683,8 +3048,8 @@ export class AtlasStore {
       .run(repoId);
   }
 
-  private deleteOrphanFile(repoId: string, file: string): void {
-    this.database
+  private deleteOrphanFile(repoId: string, file: string): number {
+    const result = this.database
       .prepare(
         `DELETE FROM files
          WHERE repository_id = ? AND path = ?
@@ -2695,6 +3060,7 @@ export class AtlasStore {
            )`,
       )
       .run(repoId, file);
+    return Number(result.changes);
   }
 
   private setVersionRow(
@@ -2702,8 +3068,8 @@ export class AtlasStore {
     axis: AtlasIndexAxis,
     version: string,
     updatedAt: string,
-  ): void {
-    this.database
+  ): number {
+    const result = this.database
       .prepare(
         `INSERT INTO index_versions (repository_id, axis, version, updated_at)
          VALUES (?, ?, ?, ?)
@@ -2711,6 +3077,7 @@ export class AtlasStore {
          DO UPDATE SET version = excluded.version, updated_at = excluded.updated_at`,
       )
       .run(repoId, axis, version, updatedAt);
+    return Number(result.changes);
   }
 
   private createInsertNodeStatement() {

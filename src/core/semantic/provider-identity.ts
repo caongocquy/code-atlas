@@ -2,7 +2,7 @@ import type { EmbeddingProvider } from "./embedding-provider.js";
 import { VECTOR_INDEX_VERSION } from "../../config/constants.js";
 
 export function embeddingProviderIdentity(provider: Pick<EmbeddingProvider, "id" | "version" | "dimensions">): string {
-  return [provider.id, provider.version, provider.dimensions].join("@");
+  return JSON.stringify([provider.id, provider.version, provider.dimensions]);
 }
 
 export function semanticGenerationIdentity(

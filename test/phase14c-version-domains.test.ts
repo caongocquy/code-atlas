@@ -42,7 +42,7 @@ test("owns one independent framework resolution version domain", () => {
     "derivedVersion",
     "factsSchemaVersion",
     "factsVersion",
-    "frameworkResolutionVersion",
+    "frameworkConfigIntegrityVersion", "frameworkResolutionVersion",
     "resolutionVersion",
     "schemaVersion",
   ]);

@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
@@ -51,6 +52,7 @@ export type LanguageFixtureResolverState = {
   context: GenerationResolverContext;
   evidence: readonly SemanticEvidenceBatch[];
   memoHitCount: number;
+  roots: Array<{ memo: ResolverMemo; budget: BudgetLedger }>;
 };
 
 const source = (language: LanguageId): string => {
@@ -244,7 +246,7 @@ function createFixtureResolverState(
   adapter: LanguageSemanticAdapter,
   budgetOverrides: Partial<ResolverBudgets>,
 ): LanguageFixtureResolverState {
-  const state = { memoHitCount: 0 } as LanguageFixtureResolverState;
+  const state = { memoHitCount: 0, roots: [] } as LanguageFixtureResolverState;
   const backingMemo = createResolverMemo();
   state.memo = {
     get: (key) => {
@@ -258,6 +260,11 @@ function createFixtureResolverState(
   state.budget = createBudgetLedger({ candidateExpansions: 1000, bindingHops: 1000, returnDepth: 1000, inheritanceDepth: 1000, memberCandidates: 1000, expressionNodes: 1000, propagationRounds: 1000, ...budgetOverrides });
   state.evidence = evidence;
   state.typeEnvironment = createTypeEnvironment({ generationId: `fixture:${fixture.name}`, symbols: symbolsFor(fixture, facts), evidence, budget: state.budget, memo: state.memo });
+  const fork = state.typeEnvironment.fork!;
+  state.typeEnvironment = { ...state.typeEnvironment, fork: (budget, memo) => {
+    state.roots.push({ budget, memo });
+    return fork(budget, memo);
+  } };
   state.context = createGenerationResolverContext({
     generationId: `fixture:${fixture.name}:${memoMode}`,
     repositoryIdentity,
@@ -269,4 +276,14 @@ function createFixtureResolverState(
     resolutionVersion: "14b-2",
   });
   return state;
+}
+
+/** Observe actual root instances; generation memo is deliberately not used by resolveSite. */
+export function assertRootMemoIsolation(state: LanguageFixtureResolverState): void {
+  assert.equal(state.memo.size(), 0);
+  assert.equal(state.memoHitCount, 0);
+  assert.ok(state.roots.length > 0);
+  assert.equal(new Set(state.roots.map(root => root.memo)).size, state.roots.length);
+  assert.equal(new Set(state.roots.map(root => root.budget)).size, state.roots.length);
+  assert.ok(state.roots.every(root => root.memo !== state.memo && root.budget !== state.budget));
 }

@@ -28,7 +28,9 @@ import {
 } from "./repository-identity.js";
 import {
   repositoryRelativePath,
+  resolveRepositoryExcludes,
   scanRepo,
+  type RepositoryExcludeResolution,
 } from "./repository-files.js";
 import { detectChangeDetectionMode } from "../indexing/change-detector.js";
 import { scanModuleConfigFiles } from "../indexing/filesystem-change-detector.js";
@@ -44,6 +46,8 @@ import { createConfiguredProviders, closeConfiguredProviders } from "../../infra
 
 export type RepositoryStatus = {
   changeDetection: "git" | "filesystem";
+  indexState: "current" | "stale" | "not_indexed";
+  excludes: { stacks: string[]; summary: string };
   repository: {
     path: string;
     repoId: string;
@@ -126,6 +130,7 @@ async function emptyStatus(
   repoPath: string,
   sourceFiles: number,
   changeDetection: RepositoryStatus["changeDetection"],
+  excludes: RepositoryExcludeResolution,
   providers: RepositoryStatusProviders,
   semanticConfig?: SemanticConfig,
 ): Promise<RepositoryStatus> {
@@ -137,6 +142,8 @@ async function emptyStatus(
   const rerankerReady = await providerAvailable(providers.rerankerProvider);
   return {
     changeDetection,
+    indexState: "not_indexed",
+    excludes: { stacks: excludes.stacks, summary: excludes.summary },
     repository: { path: repoPath, repoId, sourceFiles },
     capabilities: {
       languages: getSupportedLanguages(),
@@ -181,16 +188,18 @@ async function emptyStatus(
 async function currentHashes(
   repoPath: string,
   files: string[],
-): Promise<Map<string, string>> {
-  const hashes = new Map<string, string>();
+): Promise<{ all: Map<string, string>; source: Map<string, string> }> {
+  const all = new Map<string, string>();
+  const source = new Map<string, string>();
 
   for (const filePath of files) {
     const relativePath = repositoryRelativePath(repoPath, filePath);
-    if (!getLanguageAdapter(relativePath)) continue;
-    hashes.set(relativePath, createFileHash(await fs.readFile(filePath, "utf8")));
+    const hash = createFileHash(await fs.readFile(filePath, "utf8"));
+    all.set(relativePath, hash);
+    if (getLanguageAdapter(relativePath)) source.set(relativePath, hash);
   }
 
-  return hashes;
+  return { all, source };
 }
 
 function hasChanges(
@@ -364,6 +373,7 @@ async function getCapabilitySummaries(
   repoId: string,
   hashes: Map<string, string>,
   graphHashes: Map<string, string>,
+  semanticHashes: Map<string, string>,
   store: AtlasStore,
   providers: RepositoryStatusProviders,
   semanticConfig?: SemanticConfig,
@@ -385,7 +395,7 @@ async function getCapabilitySummaries(
       LEXICAL_INDEX_VERSION,
       hashes,
     ),
-    semantic: await getSemanticCapability(repoId, hashes, store, providers, semanticConfig),
+    semantic: await getSemanticCapability(repoId, semanticHashes, store, providers, semanticConfig),
     reranker: await getRerankerCapability(repoId, store, providers),
   };
 }
@@ -396,9 +406,11 @@ export async function getRepositoryStatus(
   options: { readOnly?: boolean } = { readOnly: true },
 ): Promise<RepositoryStatus> {
   const repoPath = canonicalRepositoryPath(path.resolve(inputPath));
-  const files = await scanRepo(repoPath);
-  const hashes = await currentHashes(repoPath, files);
-  const graphHashes = new Map(hashes);
+  const excludes = await resolveRepositoryExcludes(repoPath);
+  const files = await scanRepo(repoPath, excludes);
+  const current = await currentHashes(repoPath, files);
+  const hashes = current.all;
+  const graphHashes = new Map(current.all);
   for (const file of await scanModuleConfigFiles(repoPath)) {
     graphHashes.set(file, createFileHash(await fs.readFile(path.join(repoPath, file), "utf8")));
   }
@@ -409,7 +421,7 @@ export async function getRepositoryStatus(
     try {
       await fs.access(databasePath);
     } catch {
-      return emptyStatus(repoPath, files.length, changeDetection, providers, semanticConfig);
+      return emptyStatus(repoPath, files.length, changeDetection, excludes, providers, semanticConfig);
     }
   }
   const store = new AtlasStore(databasePath, options);
@@ -418,7 +430,7 @@ export async function getRepositoryStatus(
     : store.ensureRepository(getRepositoryIdentity(repoPath));
   if (!repository) {
     store.close();
-    return emptyStatus(repoPath, files.length, changeDetection, providers, semanticConfig);
+    return emptyStatus(repoPath, files.length, changeDetection, excludes, providers, semanticConfig);
   }
   const repoId = repository.id;
   let configuredProviders: Awaited<ReturnType<typeof createConfiguredProviders>> | undefined;
@@ -439,6 +451,7 @@ export async function getRepositoryStatus(
       repoId,
       hashes,
       graphHashes,
+      current.source,
       store,
       effectiveProviders,
       semanticConfig,
@@ -446,7 +459,7 @@ export async function getRepositoryStatus(
     const vector = await getVectorStatus(
       repoId,
       store,
-      hashes,
+      current.source,
       store.getMetadata(repoId, "semantic"),
       store.getFileCapabilityStates(repoId, "semantic"),
       capabilities.semantic.state,
@@ -458,6 +471,12 @@ export async function getRepositoryStatus(
 
     return {
       changeDetection,
+      indexState: capabilities.graph.state === "ready" && capabilities.lexical.state === "ready"
+        ? "current"
+        : capabilities.graph.state === "stale" || capabilities.lexical.state === "stale"
+          ? "stale"
+          : "not_indexed",
+      excludes: { stacks: excludes.stacks, summary: excludes.summary },
       repository: {
         path: repoPath,
         repoId,

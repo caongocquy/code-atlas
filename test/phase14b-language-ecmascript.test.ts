@@ -192,5 +192,5 @@ test("anonymous functions and arrows get deterministic AST-local callable owners
   assert.deepEqual(parameterOwners, returnOwners);
   assert.equal(new Set(parameterOwners).size, 2);
   assert.ok(parameterOwners.every((owner) => owner !== "symbol:0"));
-  assert.ok(parameterOwners.every((owner) => owner.startsWith("symbol:arrow_function:")));
+  assert.ok(parameterOwners.every((owner) => /^symbol:[1-9]\d*$/.test(owner) && outcome.facts.symbols.some((symbol) => symbol.localId === owner && symbol.name.startsWith("arrow_function@"))));
 });
