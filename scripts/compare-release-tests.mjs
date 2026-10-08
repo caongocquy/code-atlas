@@ -85,14 +85,12 @@ function normalizeText(value, roots = []) {
       text = text.replaceAll(spelling, '<ROOT>');
     }
   }
-  // TAP single-quoted Windows paths may escape separators even though YAML does not require it.
-  text = text.replace(/[\\]{2,}/g, '\\');
   return text
-    .replace(/(?:[A-Z]:)?[\\/](?:Users[\\/][^\\/]+[\\/])?AppData[\\/]Local[\\/]Temp[\\/]/gi, '<TMP>\\')
-    .replace(/(?:[A-Z]:)?[\\/]Windows[\\/]Temp[\\/]/gi, '<TMP>\\')
+    .replace(/(?:[A-Z]:)?[/\\]{1,2}(?:Users[/\\]{1,2}[^/\\]+[/\\]{1,2})?AppData[/\\]{1,2}Local[/\\]{1,2}Temp[/\\]{1,2}/gi, match => `<TMP>${/[/\\]{1,2}$/.exec(match)?.[0] ?? '/'}`)
+    .replace(/(?:[A-Z]:)?[/\\]{1,2}Windows[/\\]{1,2}Temp[/\\]{1,2}/gi, match => `<TMP>${/[/\\]{1,2}$/.exec(match)?.[0] ?? '/'}`)
     .replace(/\/var\/folders\/[^/]+\/[^/]+\/T\//g, '<TMP>/')
     .replace(/\/(?:private\/)?tmp\//g, '<TMP>/')
-    .replace(/<TMP>([\\/])([^\\/]+?)-[A-Za-z0-9]{6}(?=[\\/\s:'"),]|$)/g, '<TMP>$1$2-<ID>');
+    .replace(/<TMP>([/\\]{1,2})([^/\\]+?)-[A-Za-z0-9]{6}(?=(?:[/\\]{1,2})|[\s:'"),]|$)/g, '<TMP>$1$2-<ID>');
 }
 
 function failureIdentity(item, roots = []) {

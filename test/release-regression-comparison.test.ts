@@ -83,6 +83,15 @@ test('normalizes only generated temp roots while preserving nested filenames', (
   );
 });
 
+test('preserves escaped Windows separators inside assertion snapshots while normalizing temp roots', () => {
+  const before = String.raw`{"file":"C:\\Users\\runner\\AppData\\Local\\Temp\\code-atlas-fixture-abcdef\\src\\a.ts"}`;
+  const after = String.raw`{"file":"C:\\Users\\runner\\AppData\\Local\\Temp\\code-atlas-fixture-uvwxyz\\src\\a.ts"}`;
+  const normalized = normalizeText(before);
+  assert.equal(normalized, normalizeText(after));
+  assert.deepEqual(JSON.parse(normalized), { file: '<TMP>\\code-atlas-fixture-<ID>\\src\\a.ts' });
+  assert.notEqual(normalized, normalizeText(before.replace(String.raw`src\\a.ts`, String.raw`src\\b.ts`)));
+});
+
 test('does not hide a changed assertion filename under equivalent temp fixture roots', () => {
   const before = parseTap(tap('checks generated source', assertionFields({ expected: '/tmp/code-atlas-fixture-abcdef/out/a.ts' }), {
     file: '/tmp/code-atlas-fixture-abcdef/test/sample.test.ts:4:3',
