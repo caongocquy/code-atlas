@@ -189,10 +189,11 @@ function verifiedLazyNamedExport(
   if (declarations.length !== 1
     || !helperFacts.exports.some((item) => item.exportedName === "lazyRouteNamed" && item.localName === "lazyRouteNamed")
     || !helperFacts.imports.some((item) => item.moduleSpecifier === "react" && item.importedName === "lazy" && item.localName === "lazy")
-    || !helperFacts.expressions.some((item) => item.kind === "call" && item.text && /^\s*lazy\s*\(/s.test(item.text)
-      && item.range.startLine >= declarations[0]!.range.startLine && item.range.endLine <= declarations[0]!.range.endLine
-      && /importWithChunkRetry\s*\(\s*importer\s*\)\s*\.then\s*\(/s.test(item.text)
-      && /default\s*:\s*module\s*\[\s*exportName\s*\]/s.test(item.text))) return result;
+    || !helperFacts.returns.some((returned) => returned.ownerSymbolId === declarations[0]!.localId
+      && helperFacts.expressions.some((item) => item.localId === returned.expressionId && item.text
+        && /^\s*lazy\s*\(/s.test(item.text)
+        && /importWithChunkRetry\s*\(\s*importer\s*\)\s*\.then\s*\(/s.test(item.text)
+        && /default\s*:\s*module\s*\[\s*exportName\s*\]/s.test(item.text)))) return result;
   consulted.add(canonicalGraphPath(helper.relativePath));
 
   const importedTarget = importTarget(ctx, file, specifier);
