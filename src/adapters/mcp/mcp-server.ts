@@ -770,14 +770,14 @@ export function createMcpServer(): McpServer {
     projection: CONTEXT_AWARE_SOURCE_PROJECTION,
   }));
 
-  registerJsonTool(server, "compile_task_context", "Assemble bounded task evidence; use search_code for matching-code lookup and context_read to deliver a selected file.", z.object({
+  registerJsonTool(server, "compile_task_context", "Assemble bounded task evidence for explicit file/symbol anchors. Example: {task: 'Audit lazy routes', anchors: [{kind: 'file', path: 'src/app/router/routes.tsx'}]}. Use changedPaths for known changed files; inspect_change instead analyzes Git revisions, not file lists. Use search_code for matching-code lookup and context_read to deliver a selected file.", z.object({
     task: z.string().min(1),
     repoPath: repoInput,
     anchors: z.array(z.union([
       z.object({ kind: z.literal("file"), path: z.string().min(1) }).strict(),
       z.object({ kind: z.literal("symbol"), path: z.string().min(1).optional(), name: z.string().min(1) }).strict(),
-    ])).describe("Known file or symbol anchors that seed task evidence.").optional(),
-    changedPaths: z.array(z.string().min(1)).describe("Known changed paths to include as task evidence.").optional(),
+    ])).describe("Known file or symbol anchors that seed task evidence, e.g. [{kind: 'file', path: 'src/app/router/routes.tsx'}]. Use this instead of paths on inspect_change.").optional(),
+    changedPaths: z.array(z.string().min(1)).describe("Known changed paths to include as task evidence, e.g. ['src/app/router/routes.tsx']. inspect_change does not accept this argument.").optional(),
     budget: z.object({ maxItems: z.number().int().positive().optional(), maxEstimatedTokens: z.number().int().positive().optional() }).strict().optional(),
     detail: z.enum(["compact", "full"]).describe("compact returns bounded output; full returns all available details.").optional(),
   }).strict(), async (args) => {
@@ -867,7 +867,7 @@ export function createMcpServer(): McpServer {
     ...changeSourceShape,
     maxDepth: z.number().int().min(0).max(10).describe("Bound structural traversal depth while mapping changed-symbol impact.").optional(),
   }).strict().superRefine(validateChangeSource);
-  registerJsonTool(server, "inspect_change", "Inspect Git changes and map changed symbols to their structural blast radius.", inspectChangeSchema, async (args) => {
+  registerJsonTool(server, "inspect_change", "Inspect Git working/staged/commit/range changes and map changed symbols to their structural blast radius. No paths field: for explicit files use compile_task_context({task: 'Audit router', anchors: [{kind: 'file', path: 'src/app/router/routes.tsx'}]}); for Git changes use inspect_change({mode: 'working'}) or inspect_change({mode: 'range', base: 'main', head: 'HEAD'}).", inspectChangeSchema, async (args) => {
     const detail = args.detail as McpDetail | undefined;
     const mode = (args.mode as InspectChangeInput["mode"] | undefined) ?? "working";
     const result = mode === "commit"

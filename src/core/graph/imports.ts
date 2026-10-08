@@ -70,11 +70,12 @@ export function resolveImportCandidates(
     ];
   }
 
-  if (extension) {
+  if ([".ts", ".tsx", ".jsx", ".mjs", ".cjs", ".json", ".css"].includes(extension)) {
     return [resolvedBase];
   }
 
   return [
+    ...(extension ? [resolvedBase] : []),
     `${resolvedBase}.ts`,
     `${resolvedBase}.tsx`,
     `${resolvedBase}.js`,

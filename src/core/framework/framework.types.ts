@@ -248,6 +248,8 @@ export interface FrameworkDetectionContext {
 }
 
 export interface FrameworkAnalysisContext extends FrameworkDetectionContext {
+  /** Read-only, compatible facts from this candidate generation; never analysis targets. */
+  lookupFacts?: readonly MaterializedFileFacts[];
   generationId: string;
   frameworkResolutionVersion: string;
   detections: readonly DetectionResult[];

@@ -87,7 +87,7 @@ test("init indexes once and installs guidance without a refresh pass", async () 
     const result = await runCli(repoPath, ["init"]);
     assert.equal(count(result.stdout, /Refreshing index after guidance update/g), 0);
     assert.ok(count(result.stdout, /Scanning repository/g) < 4);
-    assert.match(await readFile(path.join(repoPath, "AGENTS.md"), "utf8"), /### CLI/);
+    assert.match(await readFile(path.join(repoPath, "AGENTS.md"), "utf8"), /sync once against the final tree/);
   } finally {
     await rm(repoPath, { recursive: true, force: true });
   }

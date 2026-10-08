@@ -123,7 +123,7 @@ test("semantic indexing uses injected providers and preserves unrelated graph st
       assert.equal(stateStore.getFileCapabilityState(identity.id, "source.ts", "graph")?.state, "ready");
       assert.equal(
         stateStore.getFileCapabilityState(identity.id, "source.ts", "semantic")?.providerIdentity,
-        "test-embedding@1@2",
+        '["test-embedding","1",2]',
       );
     } finally {
       stateStore.close();

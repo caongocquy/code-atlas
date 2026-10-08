@@ -26,6 +26,7 @@ test("candidate failure leaves active generation unchanged", async () => {
     AtlasStore.prototype.writeCandidateGraph = function failCandidateGraphWrite(): never {
       throw new Error("injected candidate graph failure");
     };
+    await writeFile(path.join(root, "source.ts"), "export function source() { return false; }\n");
     const failed = await syncRepository(root, { skipGit: true });
     assert.equal(failed.kind, "failed");
     assert.equal(failed.published, false);

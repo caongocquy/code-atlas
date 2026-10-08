@@ -132,7 +132,7 @@ export function formatSummary(
 }
 
 export function formatIndexResult(result: IndexPipelineResult): string {
-  const title = result.operation === "index" ? "Index complete" : "Sync complete";
+  const title = result.generationReused ? "Indexes current" : result.operation === "reindex" ? "Reindex complete" : result.operation === "index" ? "Index complete" : "Sync complete";
   const capabilities = getTerminalCapabilities();
   const repository: PresentationRow[] = [
     { label: "Repository", value: result.repoPath, tone: "muted" },
@@ -141,17 +141,22 @@ export function formatIndexResult(result: IndexPipelineResult): string {
     { label: "Relationships", value: result.graph.edges },
   ];
   const capabilityRows: PresentationRow[] = [
-    { label: "Graph", value: capabilityStatus(result.graph.status) },
-    { label: "Lexical", value: capabilityStatus(result.lexical.status) },
-    { label: "Semantic", value: result.semantic ? capabilityStatus(result.semantic.status) : "- not configured", tone: "muted" },
+    { label: "Graph", value: result.generationReused ? "current · reused" : capabilityStatus(result.graph.status) },
+    { label: "Lexical", value: result.generationReused ? "current · reused" : capabilityStatus(result.lexical.status) },
+    { label: "Semantic", value: result.semantic ? result.generationReused ? "current · reused" : capabilityStatus(result.semantic.status) : "- not configured", tone: result.semantic ? undefined : "muted" },
+    ...(result.generationReused ? [
+      { label: "Framework", value: "reused when configured" },
+      { label: "SCIP", value: "reused when configured" },
+    ] : []),
   ];
   const sections = [
     renderSection("Repository", renderKeyValueRows(repository, capabilities), capabilities),
     renderSection("Capabilities", renderKeyValueRows(capabilityRows, capabilities), capabilities),
   ];
 
-  if (result.operation === "sync") {
+  if (result.operation !== "index" || result.generationReused) {
     sections.push(renderSection("Changes", [
+      ...(result.generationReused ? ["No source changes; existing generation reused."] : []),
       formatIncrementalSync(
         result.changes.addedFiles.length,
         result.changes.changedFiles.length,
@@ -165,8 +170,8 @@ export function formatIndexResult(result: IndexPipelineResult): string {
   return sections.join("\n\n");
 }
 
-export function formatIndexFailure(operation: "index" | "sync", error: unknown): string {
-  const action = operation === "index" ? "Index" : "Sync";
+export function formatIndexFailure(operation: "index" | "sync" | "reindex", error: unknown): string {
+  const action = operation === "index" ? "Index" : operation === "reindex" ? "Reindex" : "Sync";
   const reason = error instanceof Error ? error.message : String(error);
   return [
     `${cliTheme.error(cliIcons.error)} ${cliTheme.error(`${action} failed`)}`,
@@ -194,6 +199,9 @@ export function formatRepositoryStatus(status: RepositoryStatus): string {
     renderSection("Repository", renderKeyValueRows([
       { label: "Path", value: status.repository.path, tone: "muted" },
       { label: "Files", value: status.repository.sourceFiles },
+      { label: "Index", value: status.indexState },
+      { label: "Detected stacks", value: status.excludes.stacks.join(", ") || "none" },
+      { label: "Effective excludes", value: status.excludes.summary, tone: "muted" },
     ], capabilities), capabilities),
     renderSection("Capabilities", [
       renderStatusLine("Graph", complete ? "ready" : status.graph.status, graph, capabilities),

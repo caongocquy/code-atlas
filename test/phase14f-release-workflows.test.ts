@@ -79,7 +79,7 @@ test("publish workflow validates the exact tag and package contract", () => {
 
 test("public package metadata points to the canonical repository", () => {
   assert.equal(packageJson.name, "@showdar2112/code-atlas");
-  assert.equal(packageJson.version, "1.5.0");
+  assert.equal(packageJson.version, "1.6.0");
   assert.deepEqual(packageJson.bin, { "code-atlas": "dist/cli.js" });
   assert.deepEqual(packageJson.publishConfig, { access: "public" });
   assert.equal(packageJson.license, "ISC");
@@ -140,6 +140,6 @@ test("release workflow requires npm first and safely handles duplicate releases"
   assert.match(release, /--latest/);
   assert.match(release, /Existing GitHub Release does not match/);
   assert.match(release, /HTTP\/\[\^ \]\+ 404|status code 404/);
-  assert.match(release, /for attempt in \{1\.\.12\}/);
+  assert.match(release, /for attempt in \{1\.\.60\}/);
   assert.match(release, /sleep 10/);
 });

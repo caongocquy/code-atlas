@@ -4,7 +4,7 @@ import test from "node:test";
 
 import { extractRustFacts, rustFactExtractor } from "../src/core/facts/extractors/rust.js";
 import { RUST_CAPABILITIES, rustSemanticAdapter } from "../src/core/graph/resolver/adapters/rust.js";
-import { factExtractorInput, runFixtureThroughResolver } from "./helpers/phase14b-language-fixtures.js";
+import { assertRootMemoIsolation, factExtractorInput, runFixtureThroughResolver } from "./helpers/phase14b-language-fixtures.js";
 
 const filePath = "phase14b/rust/main.rs";
 const source = readFileSync(new URL("./fixtures/phase14b/rust/main.rs", import.meta.url), "utf8");
@@ -82,7 +82,7 @@ test("Rust extraction and resolver output are deterministic across cold and warm
   assert.deepEqual(warm.normalizedFacts, cold.normalizedFacts);
   assert.deepEqual(warm.decisions, cold.decisions);
   assert.equal(warm.resolverState, cold.resolverState);
-  assert.ok(warm.resolverState.memoHitCount > 0);
+  assertRootMemoIsolation(warm.resolverState);
   const budgetSource = "struct Thing;\nimpl Thing { fn get(&self) {} }\nfn main() { let item = Thing; item.get(); }\n";
   const budgetPath = "phase14b/rust/budget.rs";
   const budgetOutcome = rustFactExtractor.extract(factExtractorInput({ filePath: budgetPath, source: budgetSource, language: "rust" }));

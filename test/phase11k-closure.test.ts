@@ -39,10 +39,9 @@ test("init indexes graph and lexical capabilities by default", async () => {
     assert.equal(output.lexical.status, "ready");
     assert.equal(status.graph.status, "ready");
     assert.equal(status.capabilities.lexical.state, "ready");
-    assert.match(guidance, /- graph: ready/);
-    assert.match(guidance, /- lexical: ready/);
-    assert.match(guidance, /find_callers/);
-    assert.equal(guidance.match(/### Reporting/g)?.length, 1);
+    assert.match(guidance, /structural and relationship analysis/);
+    assert.match(guidance, /sync once against the final tree/);
+    assert.equal(guidance.match(/sync once against the final tree/g)?.length, 1);
   } finally {
     await rm(repoPath, { recursive: true, force: true });
   }
@@ -62,9 +61,8 @@ test("init --no-index skips graph and lexical indexing", async () => {
     assert.equal(output.lexical.status, "not_indexed");
     assert.equal(status.graph.status, "not_indexed");
     assert.equal(status.capabilities.lexical.state, "not_indexed");
-    assert.match(guidance, /- graph: not-indexed/);
-    assert.match(guidance, /- lexical: not-indexed/);
-    assert.match(guidance, /code-atlas index/);
+    assert.match(guidance, /structural and relationship analysis/);
+    assert.match(guidance, /sync once against the final tree/);
   } finally {
     await rm(repoPath, { recursive: true, force: true });
   }

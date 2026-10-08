@@ -98,7 +98,11 @@ export type IndexDiagnosticPhase =
   | "lexicalBuild"
   | "lexicalPersistence"
   | "semanticBuild"
-  | "publishFinalize";
+  | "publishFinalize"
+  | "semanticPersistence"
+  | "metadataFileStates"
+  | "generationPublish"
+  | "transactionCommit";
 
 export type IndexDiagnosticTimings = Partial<Record<IndexDiagnosticPhase, number>>;
 
@@ -132,6 +136,21 @@ export type IndexFailure = {
   activeGenerationId?: string;
 };
 
+export type CapabilityDirtyScope = {
+  mode: "reuse" | "delta" | "full";
+  dirtyPaths: readonly string[];
+  reusedPaths: readonly string[];
+  reasons: readonly string[];
+};
+
+export type IncrementalCapabilityPlan = {
+  graph: CapabilityDirtyScope;
+  lexical: CapabilityDirtyScope;
+  semantic: CapabilityDirtyScope;
+  framework: CapabilityDirtyScope;
+  scip: { rerun: boolean; fingerprint: string; reasons: readonly string[] };
+};
+
 export type PublishedIndexRun = {
   kind: "published";
   repositoryId: string;
@@ -139,6 +158,7 @@ export type PublishedIndexRun = {
   plan: InvalidationPlan;
   published: true;
   counters: Readonly<IndexWorkCounters>;
+  incrementalPlan?: IncrementalCapabilityPlan;
   phaseTimingsMs?: Readonly<IndexDiagnosticTimings>;
 };
 

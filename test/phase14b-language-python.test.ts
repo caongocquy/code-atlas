@@ -12,7 +12,7 @@ import { createResolverMemo } from "../src/core/graph/resolver/memo.js";
 import { pythonSemanticAdapter } from "../src/core/graph/resolver/adapters/python.js";
 import { resolveSite } from "../src/core/graph/resolver/resolver.js";
 import { createTypeEnvironment } from "../src/core/graph/resolver/type-environment.js";
-import { factExtractorInput, runFixtureThroughResolver } from "./helpers/phase14b-language-fixtures.js";
+import { assertRootMemoIsolation, factExtractorInput, runFixtureThroughResolver } from "./helpers/phase14b-language-fixtures.js";
 
 const source = `
 from services import Service as ImportedService
@@ -188,10 +188,10 @@ test("Python resolver reports budget exhaustion and repeats cold/warm determinis
   assert.ok(member);
   const fixture = { name: "python-repeat", cases: [{ filePath: input.filePath, source, language: "python" as const }], sites: [{ sourceUnit, localId: member.localId }] };
   const cold = await runFixtureThroughResolver(fixture, [outcome.facts], pythonSemanticAdapter, "cold", false);
-  assert.ok(cold.resolverState.memo.size() > 0);
+  assert.ok(cold.resolverState.roots.some(root => root.memo.size() > 0));
   const warm = await runFixtureThroughResolver(fixture, [outcome.facts], pythonSemanticAdapter, "warm", true, cold.resolverState);
   assert.strictEqual(warm.resolverState, cold.resolverState);
-  assert.ok(warm.resolverState.memoHitCount > 0);
+  assertRootMemoIsolation(warm.resolverState);
   assert.deepEqual(warm.decisions, cold.decisions);
   assert.deepEqual(warm.normalizedFacts, cold.normalizedFacts);
 });

@@ -32,6 +32,7 @@ export type CliCommand =
   | "hook"
   | "init"
   | "index"
+  | "reindex"
   | "inspect-change"
   | "integrations"
   | "status"
@@ -55,6 +56,7 @@ const commandSubtitles: Record<CliCommand, string> = {
   hook: "Agent integration",
   init: "Repository indexing",
   index: "Repository indexing",
+  reindex: "Repository indexing",
   "inspect-change": "Change intelligence",
   integrations: "Agent integrations",
   status: "Repository status",

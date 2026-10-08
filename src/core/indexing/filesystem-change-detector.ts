@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import { getLanguageAdapter } from "../graph/parsers/registry.js";
 import type { AtlasCapability, AtlasFileCapabilityState } from "../../storage/atlas/atlas.types.js";
 import type { AtlasStore } from "../../storage/atlas/atlas.store.js";
 import type { ProgressRunner } from "../progress/progress.types.js";
@@ -10,6 +11,7 @@ import type { ParsedFactsBlob } from "../facts/facts.types.js";
 import {
   repositoryRelativePath,
   scanRepo,
+  resolveRepositoryExcludes,
 } from "../repository/repository-files.js";
 import type {
   ChangeDetectionMode,
@@ -31,20 +33,20 @@ export type ChangeDetectorOptions = {
 
 type FileStates = Map<IndexCapability, Map<string, AtlasFileCapabilityState>>;
 
-const CONFIG_SCAN_IGNORED_DIRECTORIES = new Set([
-  ".git", ".codeatlas", ".code-rag", "node_modules", "dist", "build", ".next", ".turbo",
-  "coverage", ".dart_tool", "Pods", "DerivedData", ".gradle", ".venv", "venv", "vendor",
-  ".opencode", ".codex", ".claude", ".omo", ".agents", ".local", ".playwright-mcp",
-  ".jarvis-chat-session",
-]);
-
 export function isModuleConfigPath(relativePath: string): boolean {
   const name = path.posix.basename(relativePath);
   return name === "package.json" || /^(?:tsconfig|jsconfig)(?:\.[^/]+)?\.json$/i.test(name);
 }
 
+export function isIndexConfigPath(relativePath: string): boolean {
+  const name = path.posix.basename(relativePath);
+  return isModuleConfigPath(relativePath) || /^next\.config\.(js|mjs|ts)$/.test(name)
+    || ["pom.xml", "build.gradle", "build.gradle.kts", "pubspec.yaml", "codeatlas.config.json", ".gitignore"].includes(name);
+}
+
 export async function scanModuleConfigFiles(repoPath: string): Promise<string[]> {
   const found: string[] = [];
+  const excludes = await resolveRepositoryExcludes(repoPath);
 
   async function visit(directory: string): Promise<void> {
     for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
@@ -52,8 +54,8 @@ export async function scanModuleConfigFiles(repoPath: string): Promise<string[]>
       const fullPath = path.join(directory, entry.name);
       const relativePath = path.relative(repoPath, fullPath).split(path.sep).join("/");
       if (entry.isDirectory()) {
-        if (!CONFIG_SCAN_IGNORED_DIRECTORIES.has(entry.name)) await visit(fullPath);
-      } else if (entry.isFile() && isModuleConfigPath(relativePath)) {
+        if (!excludes.matches(relativePath, true)) await visit(fullPath);
+      } else if (entry.isFile() && isIndexConfigPath(relativePath) && !excludes.matches(relativePath)) {
         found.push(relativePath);
       }
     }
@@ -61,12 +63,6 @@ export async function scanModuleConfigFiles(repoPath: string): Promise<string[]>
 
   await visit(repoPath);
   return found;
-}
-
-async function moduleConfigPaths(repoPath: string, persistedFiles: ReadonlySet<string>): Promise<string[]> {
-  const paths = new Set([...persistedFiles].filter(isModuleConfigPath));
-  for (const file of await scanModuleConfigFiles(repoPath)) paths.add(file);
-  return [...paths].sort();
 }
 
 export type SourceRead = { source: string; contentHash: string };
@@ -161,7 +157,7 @@ export async function detectFilesystemChanges(
     options.store.getGenerationManifest(options.repoId)?.files.map((file) => [file.relativePath, file]) ?? [],
   );
   const candidateHint = options.candidateFiles;
-  const configPaths = await moduleConfigPaths(repoPath, persistedFiles);
+  const configPaths = await scanModuleConfigFiles(repoPath);
   // The unified pipeline needs hashes for every current file to materialize
   // generation bindings and distinguish fact reuse from a parser miss.
   const shouldHashAll = true;
@@ -213,7 +209,7 @@ export async function detectFilesystemChanges(
     const hash = fileHashes.get(relativeFile);
     const persisted = persistedFiles.has(relativeFile);
     const needsIndex = options.forceFullScan || options.capabilities.some((capability) =>
-      stateNeedsIndex(
+      (capability !== "semantic" || getLanguageAdapter(relativeFile) !== null) && stateNeedsIndex(
         states.get(capability)?.get(relativeFile),
         capability === "graph" || capability === "lexical" ? activeBindings.get(relativeFile) : undefined,
         capability,
@@ -244,8 +240,8 @@ export async function detectFilesystemChanges(
     if (!persistedFiles.has(relativeFile)) addedFiles.push(relativeFile);
     else if (needsIndex) changedFiles.push(relativeFile);
   }
-  const moduleConfigChanged = configPaths.some((file) =>
-    (fileHashes.has(file) && candidateFiles.has(file)) || deletedFiles.includes(file),
+  const moduleConfigChanged = deletedFiles.some(isModuleConfigPath) || configPaths.some((file) =>
+    isModuleConfigPath(file) && ((fileHashes.has(file) && candidateFiles.has(file)) || deletedFiles.includes(file)),
   );
 
   return {
@@ -254,8 +250,8 @@ export async function detectFilesystemChanges(
     relativeFiles,
     candidateFiles: Array.from(candidateFiles).sort(),
     fileHashes,
-    addedFiles: addedFiles.sort(),
-    changedFiles: changedFiles.sort(),
+    addedFiles: [...new Set(addedFiles)].sort(),
+    changedFiles: [...new Set(changedFiles)].sort(),
     deletedFiles,
     ...(moduleConfigChanged ? { moduleConfigChanged: true } : {}),
   };
