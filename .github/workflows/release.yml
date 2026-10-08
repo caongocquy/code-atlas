@@ -48,7 +48,7 @@ jobs:
           set -euo pipefail
           query_file="$RUNNER_TEMP/code-atlas-npm-release-query.json"
           error_file="$RUNNER_TEMP/code-atlas-npm-release-query.err"
-          for attempt in {1..12}; do
+          for attempt in {1..60}; do
             set +e
             npm view "@showdar2112/code-atlas@$VERSION" version --json > "$query_file" 2> "$error_file"
             query_status=$?
@@ -65,7 +65,7 @@ jobs:
               cat "$error_file" >&2
               exit "$query_status"
             fi
-            echo "@showdar2112/code-atlas@$VERSION is not visible in npm yet; retry $attempt/12"
+            echo "@showdar2112/code-atlas@$VERSION is not visible in npm yet; retry $attempt/60"
             sleep 10
           done
           echo "@showdar2112/code-atlas@$VERSION was not published after waiting for npm visibility" >&2
