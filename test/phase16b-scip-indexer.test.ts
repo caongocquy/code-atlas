@@ -134,7 +134,7 @@ test("SCIP index runs into a temporary artifact with project cwd and JS inferenc
     assert.ok(evidence.some((item) => item.target.relativePath === "target.js"));
     const invocation = JSON.parse(await readFile(fixture.invocation, "utf8")) as { args: string[]; cwd: string };
     assert.equal(invocation.args[0], "index");
-    assert.equal(invocation.cwd, await realpath(fixture.root));
+    assert.equal(await realpath(invocation.cwd), await realpath(fixture.root));
     assert.ok(invocation.args.includes("--cwd"));
     assert.ok(invocation.args.includes("--output"));
     assert.ok(invocation.args.includes("--infer-tsconfig"));

@@ -137,6 +137,25 @@ Raw local committed candidate: `/private/tmp/code-atlas-release-6030d65-node24.t
 and `/private/tmp/code-atlas-release-6030d65-comparison.json`.
 The follow-up still requires a complete native rerun. **NO-GO** until qualified.
 
+### Follow-up native run 37773118412 (9cff9e7)
+
+https://github.com/caongocquy/code-atlas/actions/runs/37773118412
+
+The SCIP output-limit cleanup regression passed on native Windows. Two remaining
+focused failures were test-harness defects: 8.3 versus long Windows directory
+spellings, and fixture removal before the MCP child released its current directory.
+The tests now compare actual filesystem realpaths, close MCP stdin, wait for the
+child close event and assert a zero exit code before cleanup. No product assertions
+were dropped. Local Node24 focused suite: 21 pass, 1 pre-existing optional SCIP skip.
+
+Full local 9cff9e7 suite: 1373 tests, 1321 pass / 49 fail / 3 skip, with zero new or
+changed failure assertions against the exact release base. Evidence:
+`/private/tmp/code-atlas-release-9cff9e7-node24.tap` and
+`/private/tmp/code-atlas-release-9cff9e7-comparison.json`.
+
+The failed intermediate run is superseded by a complete matrix on the corrected
+fixture commit. Its unfinished jobs are not counted as qualification successes.
+
 `doctor` remains absent in the release base; its explicit unknown-command/exit-1
 contract is tested. This task does not add a new command or claim doctor passed.
 

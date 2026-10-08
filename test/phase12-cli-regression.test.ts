@@ -310,6 +310,9 @@ test("guidance refresh removes internal newline metadata and preserves the final
 
 test("Codex MCP configuration launches with a minimal PATH and clean JSON-RPC stdout", async () => {
   const repoPath = await fixture("codex-launch");
+  let child: ReturnType<typeof spawn> | undefined;
+  let childClosed: Promise<void> | undefined;
+  let initializeTimeout: NodeJS.Timeout | undefined;
   try {
     const result = await runCli(repoPath, "connect", "codex", "--no-guidance", "--json");
     assert.doesNotThrow(() => JSON.parse(result.stdout));
@@ -326,7 +329,7 @@ test("Codex MCP configuration launches with a minimal PATH and clean JSON-RPC st
 
     const systemPath = process.env.SystemRoot ? path.join(process.env.SystemRoot, "System32") : undefined;
     const minimalPath = [path.dirname(process.execPath), systemPath].filter(Boolean).join(path.delimiter);
-    const child = spawn(entry.command, entry.args, {
+    child = spawn(entry.command, entry.args, {
       cwd: repoPath,
       env: {
         PATH: minimalPath,
@@ -339,6 +342,11 @@ test("Codex MCP configuration launches with a minimal PATH and clean JSON-RPC st
       shell: process.platform === "win32" ? process.env.ComSpec ?? "cmd.exe" : false,
       stdio: ["pipe", "pipe", "pipe"],
     });
+    childClosed = new Promise<void>((resolve, reject) => {
+      child!.once("error", reject);
+      child!.once("close", () => resolve());
+    });
+    void childClosed.catch(() => undefined);
     let stdout = "";
     let stderr = "";
     child.stdout.setEncoding("utf8");
@@ -346,26 +354,24 @@ test("Codex MCP configuration launches with a minimal PATH and clean JSON-RPC st
     child.stdout.on("data", (chunk) => { stdout += chunk; });
     child.stderr.on("data", (chunk) => { stderr += chunk; });
     const response = await new Promise<Record<string, any>>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        child.kill();
+      initializeTimeout = setTimeout(() => {
+        child!.kill();
         reject(new Error(`MCP initialize timed out. stderr: ${stderr}`));
       }, 10_000);
-      child.on("error", (error) => {
-        clearTimeout(timeout);
-        reject(error);
-      });
-      child.on("close", (code) => {
-        clearTimeout(timeout);
-        if (code !== 0 && !stdout.trim()) {
-          reject(new Error(`MCP exited with ${code}. stderr: ${stderr}`));
+      childClosed!.then(() => {
+        if (initializeTimeout) clearTimeout(initializeTimeout);
+        if (!stdout.trim()) {
+          reject(new Error(`MCP exited before responding. stderr: ${stderr}`));
         }
+      }, (error) => {
+        if (initializeTimeout) clearTimeout(initializeTimeout);
+        reject(error);
       });
       child.stdout.on("data", () => {
         const line = stdout.trim().split("\n").find(Boolean);
         if (!line) return;
         try {
           const parsed = JSON.parse(line) as Record<string, any>;
-          child.kill();
           resolve(parsed);
         } catch {
           // Wait for a complete JSON-RPC line.
@@ -382,6 +388,7 @@ test("Codex MCP configuration launches with a minimal PATH and clean JSON-RPC st
         },
       })}\n`);
     });
+    if (initializeTimeout) clearTimeout(initializeTimeout);
     assert.equal(response.jsonrpc, "2.0");
     assert.equal(response.id, 1);
     assert.equal(response.result.serverInfo.name, "code-atlas");
@@ -393,7 +400,34 @@ test("Codex MCP configuration launches with a minimal PATH and clean JSON-RPC st
         return false;
       }
     }));
+    child.stdin.end();
+    let closeTimeout: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        childClosed,
+        new Promise<never>((_, reject) => {
+          closeTimeout = setTimeout(() => reject(new Error("MCP process did not exit after stdin closed")), 10_000);
+        }),
+      ]);
+    } finally {
+      if (closeTimeout) clearTimeout(closeTimeout);
+    }
+    assert.equal(child.exitCode, 0);
   } finally {
+    if (initializeTimeout) clearTimeout(initializeTimeout);
+    if (child && !child.stdin.destroyed) child.stdin.end();
+    if (child && child.exitCode === null && child.signalCode === null) child.kill();
+    if (childClosed) {
+      let cleanupTimeout: NodeJS.Timeout | undefined;
+      try {
+        await Promise.race([
+          childClosed.catch(() => undefined),
+          new Promise<void>((resolve) => { cleanupTimeout = setTimeout(resolve, 10_000); }),
+        ]);
+      } finally {
+        if (cleanupTimeout) clearTimeout(cleanupTimeout);
+      }
+    }
     await rm(repoPath, { recursive: true, force: true });
   }
 });
