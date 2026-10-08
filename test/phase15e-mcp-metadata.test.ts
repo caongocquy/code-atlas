@@ -159,6 +159,16 @@ test("MCP tools/list distinguishes adjacent tools and guides material inputs", a
     assert.match(property("trace", "mode")?.description ?? "", /explanatory.*inverse edges/i);
     assert.match(description("compile_task_context"), /search_code.*matching-code lookup/i);
     assert.match(description("compile_task_context"), /assemble.*task evidence/i);
+    assert.match(description("compile_task_context"), /anchors:.*kind.*file/i);
+    assert.match(description("compile_task_context"), /inspect_change.*Git revisions/i);
+    assert.match(description("inspect_change"), /No paths field/i);
+    assert.match(description("inspect_change"), /compile_task_context/i);
+    assert.match(description("inspect_change"), /mode: 'working'/i);
+    assert.match(description("inspect_change"), /mode: 'range'/i);
+    assert.equal(property("inspect_change", "paths"), undefined);
+    assert.equal(property("inspect_change", "changedPaths"), undefined);
+    assert.match(property("compile_task_context", "anchors")?.description ?? "", /Use this instead of paths on inspect_change/i);
+    assert.match(property("compile_task_context", "changedPaths")?.description ?? "", /inspect_change does not accept/i);
   } finally {
     await client.close();
     await server.close();
