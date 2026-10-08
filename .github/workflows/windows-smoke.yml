@@ -107,14 +107,14 @@ jobs:
           $installedCli = Join-Path $consumer "node_modules/@showdar2112/code-atlas/dist/cli.js"
           node $installedCli --version
           if ($LASTEXITCODE -ne 0) { throw "Packed consumer CLI failed" }
-          @"
+          @'
           Code Atlas Windows test artifact
           Git commit: ${{ github.sha }}
           Package version: 1.5.0 (testing unreleased develop/PR code; NOT npm latest)
           This is an npm tarball, not a standalone EXE. Requires Node.js >=22 (24 recommended).
 
           From the folder containing the downloaded .tgz, in PowerShell:
-          npm install --prefix "$env:TEMP\code-atlas-test" .\$packageFile
+          npm install --prefix "$env:TEMP\code-atlas-test" .\[[TARBALL]]
           & "$env:TEMP\code-atlas-test\node_modules\.bin\code-atlas.cmd" --version
 
           In your own workspace, test with that absolute .cmd path:
@@ -122,7 +122,7 @@ jobs:
 
           Keep your current config, indexes and uncommitted source safe; back up first.
           Do not publish this tarball as npm latest.
-          "@ | Set-Content -Path (Join-Path $bundle "INSTALL-WINDOWS.txt")
+          '@.Replace("[[TARBALL]]", $packageFile) | Set-Content -Path (Join-Path $bundle "INSTALL-WINDOWS.txt")
 
       - name: Upload Windows test artifact
         uses: actions/upload-artifact@v4
@@ -138,8 +138,8 @@ jobs:
         run: |
           "## Code Atlas Windows smoke" >> $env:GITHUB_STEP_SUMMARY
           "" >> $env:GITHUB_STEP_SUMMARY
-          "- Revision: \`${{ github.sha }}\`" >> $env:GITHUB_STEP_SUMMARY
-          "- Job result: \`${{ job.status }}\`" >> $env:GITHUB_STEP_SUMMARY
+          "- Revision: $env:GITHUB_SHA" >> $env:GITHUB_STEP_SUMMARY
+          "- Job result: ${{ job.status }}" >> $env:GITHUB_STEP_SUMMARY
           "- Full suite intentionally omitted (12 existing canonical failures)." >> $env:GITHUB_STEP_SUMMARY
           "- ONNX executes on develop pushes or opted-in manual dispatch; not on PRs." >> $env:GITHUB_STEP_SUMMARY
           "- Artifact is a test npm tarball, **not an executable** and not a published release." >> $env:GITHUB_STEP_SUMMARY
