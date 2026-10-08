@@ -33,11 +33,20 @@ function runCli(args, timeout = 180000) {
   }
   const diagnostics = result.stderr.split(/\r?\n/).filter((line) => line.startsWith("CODEATLAS_"));
   console.log(JSON.stringify({ command: args.join(" "), elapsedMs, diagnostics }));
+  let output;
   try {
-    return JSON.parse(result.stdout);
+    output = JSON.parse(result.stdout);
   } catch {
     throw new Error("Expected JSON-only CLI output: " + result.stdout);
   }
+  // Work counters are a stderr diagnostic contract, not part of JSON stdout.
+  if (args.includes("--diagnostic-timings") && output.kind === "published") {
+    const prefix = "CODEATLAS_WORK_COUNTERS=";
+    const entry = diagnostics.find((line) => line.startsWith(prefix));
+    assert.ok(entry, "Missing CLI work-counter diagnostics");
+    return { ...output, counters: JSON.parse(entry.slice(prefix.length)) };
+  }
+  return output;
 }
 
 function assertNoop(value) {
@@ -90,7 +99,7 @@ try {
     assert.equal(reindex.kind, "published");
     assert.equal(reindex.graph.fullRebuild, true);
     assert.notEqual(reindex.generationId, delta.generationId);
-    assertNoop(runCli(["sync", "--skip-git", "--json"]));
+    assertNoop(runCli(["sync", "--skip-git", "--json", "--diagnostic-timings"]));
 
     const status = runCli(["status", "--json"]);
     assert.ok(status && typeof status === "object");
