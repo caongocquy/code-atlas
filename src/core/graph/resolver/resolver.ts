@@ -1,3 +1,4 @@
+import { createResolverMemo } from "./memo.js";
 import type { ResolutionDecision, ResolverInput } from "./decision.js";
 import { uniqueTargetGate } from "./decision.js";
 import type { ResolutionSiteIdentity } from "./identities.js";
@@ -14,6 +15,12 @@ export type {
 export type { GenerationResolverContext } from "./generation-context.js";
 
 export function resolveSite(input: ResolverInput, site: ResolutionSiteIdentity): ResolutionDecision {
+  if (input.environment.fork) {
+    const budget = input.context.budget.fork();
+    const memo = createResolverMemo();
+    const environment = input.environment.fork(budget, memo);
+    input = { ...input, environment, context: { ...input.context, budget, memo, typeEnvironment: environment } };
+  }
   const hasScipEvidence = input.context.scipEvidenceBySite?.has(scipBindingKey(site.sourceUnit, site.localId)) ?? false;
   const strategies: readonly ResolutionStrategyId[] = hasScipEvidence ? ["scip", ...ORDERED_STRATEGIES] : ORDERED_STRATEGIES;
   const attempted: ResolutionStrategyId[] = [];

@@ -57,59 +57,46 @@ export async function prepareSemanticCandidateFromFacts(
   units: IndexedSourceUnit[],
   embeddingProvider: EmbeddingProvider,
   vectorStore: VectorStore,
+  reusableVectors: ReadonlyMap<string, readonly number[]> = new Map(),
 ): Promise<SemanticCandidate> {
   const providerIdentity = embeddingProviderIdentity(embeddingProvider);
   await vectorStore.ensureCollection(embeddingProvider.dimensions);
   const chunks = units.flatMap((unit) => codeChunksFromFacts(unit).flatMap(splitLargeSymbol).map((chunk) => ({
-    repoId,
-    relativePath: unit.relativePath,
-    fileHash: unit.facts.contentHash,
-    generationId,
-    chunk,
+    relativePath: unit.relativePath, fileHash: unit.facts.contentHash, chunk,
+    text: buildEmbeddingText(unit.relativePath, chunk),
   })));
-  const batches = chunkArray(chunks, EMBEDDING_BATCH_SIZE);
-  const points: VectorPoint[] = [];
-
+  const dirtyChunks = chunks.filter(({ text }) => !reusableVectors.has(text));
+  const batches = chunkArray(dirtyChunks, EMBEDDING_BATCH_SIZE);
+  const vectorsByText = new Map(reusableVectors);
   for (const batch of batches) {
-    const vectors = await embeddingProvider.embedBatch(batch.map(({ relativePath, chunk }) => buildEmbeddingText(relativePath, chunk)));
+    const vectors = await embeddingProvider.embedBatch(batch.map(({ text }) => text));
     if (vectors.length !== batch.length) throw new Error(`Embedding batch mismatch: expected ${batch.length}, received ${vectors.length}`);
     for (let index = 0; index < batch.length; index += 1) {
-      const item = batch[index];
-      const vector = vectors[index];
+      const item = batch[index], vector = vectors[index];
       if (!item || !vector) throw new Error(`Missing embedding result at batch index ${index}`);
-      points.push({
-        id: createPointId(repoId, item.relativePath, item.chunk.symbolType, item.chunk.symbolName, item.chunk.part ?? 1, generationId),
-        vector,
-        payload: {
-          repoId,
-          file: item.relativePath,
-          fileHash: item.fileHash,
-          generationId,
-          indexVersion: VECTOR_INDEX_VERSION,
-          language: item.chunk.language,
-          symbolName: item.chunk.symbolName,
-          symbolType: item.chunk.symbolType,
-          startLine: item.chunk.startLine,
-          endLine: item.chunk.endLine,
-          content: item.chunk.content,
-          part: item.chunk.part,
-          totalParts: item.chunk.totalParts,
-        },
-      });
+      vectorsByText.set(item.text, vector);
     }
   }
-
-  for (const batch of chunkArray(points, UPSERT_BATCH_SIZE)) {
-    await vectorStore.upsert(batch);
-  }
-
+  const points: VectorPoint[] = chunks.map((item) => {
+    const vector = vectorsByText.get(item.text);
+    if (!vector || vector.length !== embeddingProvider.dimensions || vector.some((value) => !Number.isFinite(value))) {
+      throw new Error(`Invalid embedding for ${item.relativePath}`);
+    }
+    return {
+      id: createPointId(repoId, item.relativePath, item.chunk.symbolType, item.chunk.symbolName, item.chunk.part ?? 1, generationId),
+      vector: [...vector],
+      payload: {
+        repoId, file: item.relativePath, fileHash: item.fileHash, generationId, indexVersion: VECTOR_INDEX_VERSION,
+        language: item.chunk.language, symbolName: item.chunk.symbolName, symbolType: item.chunk.symbolType,
+        startLine: item.chunk.startLine, endLine: item.chunk.endLine, content: item.chunk.content,
+        part: item.chunk.part, totalParts: item.chunk.totalParts,
+      },
+    };
+  });
+  for (const batch of chunkArray(points, UPSERT_BATCH_SIZE)) await vectorStore.upsert(batch);
   return {
-    files: units.length,
-    points,
-    chunks: chunks.length,
-    embeddedSymbols: points.length,
-    embeddingBatches: batches.length,
-    providerIdentity,
+    files: units.length, points, chunks: chunks.length, embeddedSymbols: dirtyChunks.length,
+    embeddingBatches: batches.length, providerIdentity,
   };
 }
 

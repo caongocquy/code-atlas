@@ -6,7 +6,7 @@ import { extractParsedFacts } from "../src/core/facts/facts-extractor.js";
 import { cFactExtractor } from "../src/core/facts/extractors/c.js";
 import { cppFactExtractor } from "../src/core/facts/extractors/cpp.js";
 import { C_CAPABILITIES, CPP_CAPABILITIES, cFamilySemanticAdapter } from "../src/core/graph/resolver/adapters/c-family.js";
-import { factExtractorInput, runFixtureThroughResolver } from "./helpers/phase14b-language-fixtures.js";
+import { assertRootMemoIsolation, factExtractorInput, runFixtureThroughResolver } from "./helpers/phase14b-language-fixtures.js";
 
 const cSource = `#include <stdio.h>\ntypedef int Number;\nstruct Point { int x; };\nint add(int value) { return value; }\nint main(void) { struct Point point = {1}; int (*ok)(int) = add; int (*bad)(double) = add; int value = 1; int *p = &value; return add(point.x); }\n`;
 const cppSource = `namespace demo { using Number = int; using Alias = demo::Number; using demo::Thing; struct Base {}; class Child : public Base { int value; public: Child(int input) : value(input) {} int run() { return value; } }; template<class T> T identity(T value) { return value; } } int pick(int value) { return value; } double pick(double value) { return value; } int main() { demo::Child child(1); int (*pointer)(int) = pick; return child.run(); }`;
@@ -67,5 +67,5 @@ test("C-family extraction is deterministic and warm memo reuse/budget exhaustion
   const first = cFactExtractor.extract(input); const second = cFactExtractor.extract(input); assert.deepEqual(second, first); assert.equal(first.kind, "facts"); if (first.kind !== "facts") return;
   const call = first.facts.callSites.find((item) => item.calleeText === "add")!; const fixture = { name: "c-budget", cases: [{ filePath: input.filePath, source: cSource, language: "c" as const }], sites: [{ sourceUnit: { repositoryId: "phase14b-fixtures", relativePath: input.filePath, language: "c" as const }, localId: call.localId }] };
   const cold = await runFixtureThroughResolver(fixture, [first.facts], cFamilySemanticAdapter); const warm = await runFixtureThroughResolver(fixture, [first.facts], cFamilySemanticAdapter, "warm", true, cold.resolverState); const exhausted = await runFixtureThroughResolver(fixture, [first.facts], cFamilySemanticAdapter, "cold", false, undefined, { candidateExpansions: 0 });
-  assert.deepEqual(warm.decisions, cold.decisions); assert.ok(warm.resolverState.memoHitCount > 0); assert.ok(exhausted.decisions.some((item) => item.status === "budget_exhausted"));
+  assert.deepEqual(warm.decisions, cold.decisions); assertRootMemoIsolation(warm.resolverState); assert.ok(exhausted.decisions.some((item) => item.status === "budget_exhausted"));
 });

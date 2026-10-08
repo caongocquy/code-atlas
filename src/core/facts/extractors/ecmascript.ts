@@ -121,10 +121,10 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
       const declaredName = nameOf(declaration);
       if (declaredName) {
         const isDefault = node.children.some((child) => child.type === "default" && child.text === "default");
-        exports.push({ localId: isDefault ? id("export-default", node.startIndex) : next("export"), exportedName: isDefault ? "default" : declaredName, localName: declaredName, kind: "declaration", range: range(node) });
+        exports.push({ localId: next("export"), exportedName: isDefault ? "default" : declaredName, localName: declaredName, kind: "declaration", range: range(node) });
       } else if (node.children.some((child) => child.type === "default" && child.text === "default")) {
         const defaultBinding = node.childForFieldName("value");
-        if (defaultBinding?.type === "identifier") exports.push({ localId: id("export-default", node.startIndex), exportedName: "default", localName: defaultBinding.text, kind: "declaration", range: range(node) });
+        if (defaultBinding?.type === "identifier") exports.push({ localId: next("export"), exportedName: "default", localName: defaultBinding.text, kind: "declaration", range: range(node) });
       }
     };
     const visit = (node: Parser.SyntaxNode): void => {
@@ -156,7 +156,7 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
       }
       if (node.type === "method_signature" && nodeName) symbolFor(node, "method", nodeName);
       if (isCallable && !callable) {
-        const localId = `symbol:${node.type}:${node.startIndex}` as FactLocalId;
+        const localId = next("symbol");
         callable = { localId, name: `${node.type}@${node.startIndex}`, kind: "function", range: range(node), scopeId: scopeStack.at(-1), declaredQualifiedName: `${node.type}@${node.startIndex}` };
         symbols.push(callable);
       }
@@ -240,7 +240,7 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
     const collectDiagnostics = (node: Parser.SyntaxNode): void => { if (node.type === "ERROR" || node.isMissing) parserDiagnostics.push(`${node.type}@${node.startPosition.row + 1}:${node.startPosition.column}`); for (const child of node.children) collectDiagnostics(child); };
     collectDiagnostics(parsed.tree.rootNode);
     const uniqueDiagnostics = [...new Set(parserDiagnostics)];
-    modules.push({ localId: next("module"), name: input.filePath, moduleKind: "file", exported: exports.length > 0, range: range(parsed.tree.rootNode) });
+    modules.push({ localId: next("module"), name: "", moduleKind: "file", exported: exports.length > 0, range: range(parsed.tree.rootNode) });
     const facts: ParsedFactsBlob = {
       factsSchemaVersion: input.factsSchemaVersion, factsVersion: input.factsVersion, contentHash: input.contentHash, language: input.language,
       parserIdentity: { language: parsed.adapter.language, ...parsed.adapter.metadata }, parseStatus: parsed.tree.rootNode.hasError || uniqueDiagnostics.length > 0 ? "deterministic_partial" : "complete", parserDiagnostics: uniqueDiagnostics,

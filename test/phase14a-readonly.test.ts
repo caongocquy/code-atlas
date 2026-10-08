@@ -141,7 +141,7 @@ test("read-only status sees a freshly written WAL-backed repository", async () =
   }
 });
 
-test("status ignores unsupported documentation files for indexed freshness", async () => {
+test("status accounts for new scanned documentation without phantom additions", async () => {
   const repoPath = await mkdtemp(path.join(tmpdir(), "code-atlas-phase-14a-doc-status-"));
   try {
     await writeFile(path.join(repoPath, "source.ts"), "export const source = true;\n");
@@ -150,8 +150,8 @@ test("status ignores unsupported documentation files for indexed freshness", asy
 
     await writeFile(path.join(repoPath, "AGENTS.md"), "# Guidance\n");
     const status = await getRepositoryStatusReadOnly(repoPath);
-    assert.equal(status.graph.status, "ready");
-    assert.equal(status.capabilities.lexical.state, "ready");
+    assert.equal(status.graph.status, "stale");
+    assert.equal(status.capabilities.lexical.state, "stale");
   } finally {
     await rm(repoPath, { recursive: true, force: true });
   }

@@ -240,6 +240,8 @@ export function resolveIndexedUnits(input: {
     bucket.push(event);
     priorTrace.set(key, bucket);
   }
+  let resolved = 0;
+  const total = input.allUnits.filter((unit) => input.resolvePaths.has(unit.relativePath)).length;
   for (let index = 0; index < input.allUnits.length; index += 1) {
     const unit = input.allUnits[index];
     if (!unit) continue;
@@ -282,7 +284,7 @@ export function resolveIndexedUnits(input: {
       decisions,
       trace: [...existingTrace, ...newTrace],
     }));
-    input.reporter?.setProgress(index + 1, input.allUnits.length);
+    input.reporter?.setProgress(++resolved, total);
   }
   return result;
 }
@@ -546,7 +548,7 @@ export async function buildCodeGraphWithResolutionFromFacts(
   });
   if (resolutionStartedAt !== undefined) onPhaseTiming?.("resolveIndexedUnits", performance.now() - resolutionStartedAt);
   const assemblyStartedAt = onPhaseTiming ? performance.now() : undefined;
-  const graph = assembleFactsGraph(repoPath, canonical, resolutionByFile, reporter, repositoryId);
+  const graph = assembleFactsGraph(repoPath, canonical, resolutionByFile, undefined, repositoryId);
   if (assemblyStartedAt !== undefined) onPhaseTiming?.("graphAssembly", performance.now() - assemblyStartedAt);
   return { graph, resolutionByFile };
 }

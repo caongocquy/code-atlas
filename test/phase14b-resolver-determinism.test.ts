@@ -64,12 +64,12 @@ test("resolver uses the fixed strategy order exactly once", () => {
 test("budget exhaustion and warm memoization preserve deterministic semantics", () => {
   const coldMemo = createResolverMemo();
   const cold = resolveFixture(coldMemo);
-  assert.equal(cold.status, "resolved");
+  assert.equal(cold.status, "budget_exhausted");
   assert.equal(coldMemo.size(), 1);
   const warmMemo = createResolverMemo();
   const warmFirst = resolveFixture(warmMemo);
   const warmSecond = resolveFixture(warmMemo);
-  assert.equal(warmFirst.status, "resolved");
+  assert.equal(warmFirst.status, "budget_exhausted");
   assert.deepEqual(warmFirst, warmSecond);
   assert.equal(warmMemo.size(), 1);
 });

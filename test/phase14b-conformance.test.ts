@@ -4,7 +4,7 @@ import test from "node:test";
 import { getLanguageFactExtractor } from "../src/core/facts/language-fact-extractor.js";
 import { getSemanticAdapter } from "../src/core/graph/resolver/adapter-registry.js";
 import { symbolIdentityKey } from "../src/core/graph/resolver/identities.js";
-import { factExtractorInput, runFixtureThroughResolver, targetLanguages } from "./helpers/phase14b-language-fixtures.js";
+import { assertRootMemoIsolation, factExtractorInput, runFixtureThroughResolver, targetLanguages } from "./helpers/phase14b-language-fixtures.js";
 import { loadPhase14bExpectedFixture, normalizeDecision, normalizeDiagnostic, runConcurrentPhase14bFixtures, runPhase14bFixture, type ParallelFixtureResult } from "./helpers/phase14b-conformance.js";
 
 test("TypeScript conformance resolves real extends and implements facts", async () => {
@@ -67,10 +67,8 @@ test("all target-language fixtures satisfy the applicable semantic floor", async
 });
 
 test("conformance decisions and persisted edge projections are deterministic across cold, warm, and parallel runs", async () => {
-  let warmMemoHits = 0;
   for (const language of targetLanguages) {
     const cold = await runPhase14bFixture(language, { memoMode: "cold", parallel: false });
-    const coldMemoHits = cold.counters.memoHits;
     const warm = await runPhase14bFixture(language, { memoMode: "warm", parallel: false });
     const projection = (result: typeof cold) => ({
       decisions: result.decisions.map(normalizeDecision),
@@ -78,11 +76,11 @@ test("conformance decisions and persisted edge projections are deterministic acr
       diagnostics: result.diagnostics.map(normalizeDiagnostic),
       mayBeIncomplete: result.mayBeIncomplete,
     });
-    assert.ok(warm.counters.memoHits >= coldMemoHits, language);
-    warmMemoHits += warm.counters.memoHits - coldMemoHits;
+    assertRootMemoIsolation(warm.resolverState);
+    assert.equal(warm.counters.memoHits, 0);
+    assert.equal(cold.counters.memoHits, 0);
     assert.deepEqual(projection(warm), projection(cold), language);
   }
-  assert.ok(warmMemoHits > 0, "warm conformance runs must exercise the shared resolver memo cache");
 });
 
 test("independent worker resolver jobs overlap and remain deterministically equivalent", async () => {

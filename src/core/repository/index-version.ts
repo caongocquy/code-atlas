@@ -10,8 +10,9 @@ export type VectorRefreshMode = "semantic-reindex" | "incremental";
 
 export const INDEX_SCHEMA_VERSION = "2.0.0";
 export const FACTS_SCHEMA_VERSION = "3.0.0";
-export const FACTS_VERSION = "3.1.0";
+export const FACTS_VERSION = "3.1.1";
 export const FRAMEWORK_RESOLUTION_VERSION = "1.7.0";
+export const FRAMEWORK_CONFIG_INTEGRITY_VERSION = "1.0.0";
 export const RELIABILITY_VERSION = "1.0.0";
 
 export const CURRENT_INDEX_VERSION_DOMAINS: IndexVersionDomains = {
@@ -20,6 +21,7 @@ export const CURRENT_INDEX_VERSION_DOMAINS: IndexVersionDomains = {
   factsVersion: FACTS_VERSION,
   resolutionVersion: RESOLUTION_VERSION,
   frameworkResolutionVersion: FRAMEWORK_RESOLUTION_VERSION,
+  frameworkConfigIntegrityVersion: FRAMEWORK_CONFIG_INTEGRITY_VERSION,
   derivedVersion: `${LEXICAL_INDEX_VERSION}:${VECTOR_INDEX_VERSION}`,
 };
 

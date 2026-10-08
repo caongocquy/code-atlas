@@ -5,7 +5,7 @@ import test from "node:test";
 
 import { extractGoFacts, goFactExtractor } from "../src/core/facts/extractors/go.js";
 import { GO_CAPABILITIES, goSemanticAdapter } from "../src/core/graph/resolver/adapters/go.js";
-import { factExtractorInput, runLanguageFixture } from "./helpers/phase14b-language-fixtures.js";
+import { assertRootMemoIsolation, factExtractorInput, runLanguageFixture } from "./helpers/phase14b-language-fixtures.js";
 
 const fixturePath = new URL("./fixtures/phase14b/go/main.go", import.meta.url);
 const expectedPath = new URL("./fixtures/phase14b/go/expected.json", import.meta.url);
@@ -65,7 +65,7 @@ test("Go budget, cold/warm memo reuse, and deterministic extraction are observab
   assert.deepEqual(warm.normalizedFacts, cold.normalizedFacts);
   assert.deepEqual(warm.decisions, cold.decisions);
   assert.strictEqual(warm.resolverState, cold.resolverState);
-  assert.ok(warm.resolverState.memoHitCount > 0);
+  assertRootMemoIsolation(warm.resolverState);
   assert.ok(budgeted.decisions.some((decision) => decision.status === "budget_exhausted"));
   assert.equal(cold.usedSourceSemanticFallback, false);
 });

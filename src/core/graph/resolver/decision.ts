@@ -153,6 +153,11 @@ export function uniqueTargetGate(
     input.context.diagnostics.add({ site, status: "ambiguous", reason: decision.reason });
     return decision;
   }
+  const exhausted = budgetReason(input);
+  if (exhausted) {
+    input.context.diagnostics.add({ site, status: "budget_exhausted", reason: exhausted });
+    return { ...decisionBase, status: "budget_exhausted", reason: exhausted };
+  }
   if (ordered.length === 1) {
     const candidate = ordered[0];
     return { ...decisionBase, status: "resolved", target: candidate.target, strategy: candidate.strategy, confidence: candidate.confidence as "exact" | "strong" };
@@ -163,7 +168,6 @@ export function uniqueTargetGate(
     return decision;
   }
   const weak = candidates.some((candidate) => candidate.confidence === "weak");
-  const exhausted = budgetReason(input);
   const reason = exhausted ? "budget_exhausted" : weak ? "weak_only" : unsupportedLanguage(input, attemptedStrategies) ? "unsupported" : "unknown";
   if (reason === "budget_exhausted" && exhausted) {
     input.context.diagnostics.add({ site, status: "budget_exhausted", reason: exhausted });

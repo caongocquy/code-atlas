@@ -429,9 +429,9 @@ test("init is idempotent, protects generated state, and does not index", async (
     const first = await initializeRepository(root);
     const second = await initializeRepository(root);
     assert.equal(first.gitRepository, true);
-    assert.equal(first.rootGitignoreChanged, true);
+    assert.equal(first.rootGitignoreChanged, false);
     assert.equal(second.rootGitignoreChanged, false);
-    assert.equal(await readFile(path.join(root, ".gitignore"), "utf8"), ".codeatlas/\n");
+    await assert.rejects(() => readFile(path.join(root, ".gitignore"), "utf8"), { code: "ENOENT" });
     assert.equal(await readFile(path.join(root, ".codeatlas", ".gitignore"), "utf8"), "*\n!.gitignore\n");
     const db = path.join(root, ".codeatlas", "atlas.db");
     await (await import("node:fs/promises")).access(db);

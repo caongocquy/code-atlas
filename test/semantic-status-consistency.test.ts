@@ -44,7 +44,7 @@ test("persisted semantic configuration controls status even without an Atlas dat
     assert.equal(enabled.capabilities.semantic.configured, true);
     assert.equal(enabled.capabilities.semantic.enabled, true);
     assert.equal(enabled.graph.reachable, false);
-    assert.match(formatRepositoryStatus(enabled), /Semantic\s+! not_indexed/);
+    assert.match(formatRepositoryStatus(enabled), /Semantic\s+○ not_indexed/);
 
     const lifecycle = await getSemanticStatus(root);
     assert.equal(lifecycle.configured, true);

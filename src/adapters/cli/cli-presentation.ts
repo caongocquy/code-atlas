@@ -62,11 +62,11 @@ export function renderBrandHeader(
 ): string {
   if (!capabilities.interactive) return "";
   const width = capabilities.columns ?? 80;
-  if (width < 60) return renderHeader("CODEATLAS", undefined, capabilities);
-  if (width < 80) return renderHeader("CODEATLAS", subtitle, capabilities);
+  if (width < 60) return `\n${renderHeader("CODEATLAS", undefined, capabilities)}`;
+  if (width < 80) return `\n${renderHeader("CODEATLAS", subtitle, capabilities)}`;
 
   const pc = colors(capabilities);
-  return [pc.bold(pc.cyan(PIXEL_WORDMARK.join("\n"))), pc.gray(subtitle)].join("\n");
+  return `\n${[pc.bold(pc.cyan(PIXEL_WORDMARK.join("\n"))), pc.gray(subtitle)].join("\n")}`;
 }
 
 export function renderSection(
@@ -96,8 +96,10 @@ export function renderStatusLine(
   detail?: string,
   capabilities: TerminalCapabilities = getTerminalCapabilities(),
 ): string {
-  const marker = state === "ready" || state === "success" ? "✓" : state === "error" || state === "failed" ? "✗" : "!";
-  const markerColor = marker === "✓" ? colors(capabilities).green : marker === "✗" ? colors(capabilities).red : colors(capabilities).yellow;
+  const marker = state === "ready" || state === "success" ? "✓"
+    : state === "error" || state === "failed" ? "✗"
+      : ["not_configured", "not_indexed", "disabled"].includes(state) ? "○" : "!";
+  const markerColor = marker === "✓" ? colors(capabilities).green : marker === "✗" ? colors(capabilities).red : marker === "!" ? colors(capabilities).yellow : colors(capabilities).gray;
   return `${colors(capabilities).gray(label)}  ${markerColor(marker)} ${state}${detail ? `  ${colors(capabilities).gray(detail)}` : ""}`;
 }
 

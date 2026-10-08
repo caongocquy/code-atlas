@@ -21,6 +21,7 @@ const budgetKinds: readonly BudgetKind[] = [
 ];
 
 export type BudgetLedger = {
+  fork(): BudgetLedger;
   consume(kind: BudgetKind, amount?: number): boolean;
   remaining(kind: BudgetKind): number;
   snapshot(): Readonly<ResolverBudgets>;
@@ -38,9 +39,11 @@ export function createBudgetLedger(budgets: ResolverBudgets): BudgetLedger {
   for (const kind of budgetKinds) {
     assertValidOperationCount(budgets[kind], kind);
   }
-  const state: ResolverBudgets = { ...budgets };
+  const limits = { ...budgets };
+  const state: ResolverBudgets = { ...limits };
   const failures = new Set<BudgetKind>();
   return {
+    fork: () => createBudgetLedger(limits),
     consume(kind, amount = 1) {
       assertValidOperationCount(amount, "amount");
       if (state[kind] < amount) {

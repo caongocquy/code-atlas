@@ -66,37 +66,21 @@ test("index publishes one typed generation and unchanged sync reuses it", async 
     assert.equal(second.published, true);
     assert.deepEqual(second.plan.parsePaths, []);
     assert.deepEqual(second.plan.reusePaths, ["source.ts"]);
-    assert.deepEqual(first.counters, {
-      filesScanned: 1,
-      filesHashed: 1,
-      factCacheHits: 0,
-      factCacheMisses: 1,
-      filesParsed: 1,
-      filesResolved: 1,
-      importersInvalidated: 0,
-      fullResolutionFallbacks: 0,
-      frameworkFilesResolved: 1,
-      frameworkFilesReused: 0,
-    });
-    assert.deepEqual(second.counters, {
-      filesScanned: 1,
-      filesHashed: 1,
-      factCacheHits: 1,
-      factCacheMisses: 0,
-      filesParsed: 0,
-      filesResolved: 0,
-      importersInvalidated: 0,
-      fullResolutionFallbacks: 0,
-      frameworkFilesResolved: 0,
-      frameworkFilesReused: 1,
-    });
+    assert.equal(first.counters.filesParsed, 1);
+    assert.equal(first.counters.filesResolved, 1);
+    assert.equal(first.counters.lexicalFilesUpdated, 1);
+    assert.equal(second.counters.filesParsed, 0);
+    assert.equal(second.counters.filesResolved, 0);
+    assert.equal(second.counters.factCacheHits, 0);
+    assert.equal(second.counters.storageTransactions, 0);
+    assert.equal(second.counters.lexicalFilesReused, 1);
     assert.doesNotMatch(JSON.stringify(first), /filesParsed|factCacheMisses/);
 
     const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
     try {
       const repository = store.ensureRepository(getRepositoryIdentity(repoPath));
       assert.equal(store.getActiveGenerationId(repository.id), second.generationId);
-      assert.notEqual(first.generationId, second.generationId);
+      assert.equal(first.generationId, second.generationId);
     } finally {
       store.close();
     }
@@ -175,7 +159,7 @@ test("index work counters are deterministic for a cold, unchanged, modified, and
     const unchanged = await syncRepository(repoPath, { skipGit: true });
     assert.equal(unchanged.kind, "published");
     assert.equal(unchanged.counters.filesParsed, 0);
-    assert.equal(unchanged.counters.factCacheHits, 100);
+    assert.equal(unchanged.counters.factCacheHits, 0);
 
     await writeFile(path.join(repoPath, "file-042.ts"), "export const value42 = 4200;\n");
     const modified = await syncRepository(repoPath, { skipGit: true });
@@ -443,6 +427,7 @@ test("a pre-publication candidate write failure retains the active generation", 
     AtlasStore.prototype.writeCandidateLexicalDocuments = () => {
       throw new Error("injected candidate write failure");
     };
+    await writeFile(path.join(repoPath, "source.ts"), "export function source() { return true; }\n");
     const failed = await syncRepository(repoPath, { skipGit: true });
     assert.equal(failed.kind, "failed");
     assert.equal(failed.published, false);

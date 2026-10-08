@@ -59,7 +59,7 @@ test("publishes exact-byte package hash and JSONC configs under framework 1.7.0"
         const row = db.prepare("SELECT versions_json FROM " + table + " WHERE " + key + " = ?").get(output.generationId) as { versions_json: string };
         const versions = JSON.parse(row.versions_json);
         assert.deepEqual({ schema: versions.schemaVersion, facts: versions.factsVersion, factsSchema: versions.factsSchemaVersion, resolution: versions.resolutionVersion, framework: versions.frameworkResolutionVersion, reliability: versions.reliabilityVersion },
-          { schema: "2.0.0", facts: "3.1.0", factsSchema: "3.0.0", resolution: "1.2.0", framework: "1.7.0", reliability: "1.0.0" });
+          { schema: "2.0.0", facts: "3.1.1", factsSchema: "3.0.0", resolution: "1.2.2", framework: "1.7.0", reliability: "1.0.0" });
       }
       assert.equal((db.prepare("SELECT version FROM atlas_schema WHERE id = 1").get() as { version: string }).version, "3");
     } finally { db.close(); }

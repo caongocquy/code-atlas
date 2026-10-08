@@ -237,6 +237,7 @@ export type IndexVersionDomains = {
   resolutionVersion: string;
   derivedVersion: string;
   frameworkResolutionVersion?: string;
+  frameworkConfigIntegrityVersion?: string;
   reliabilityVersion?: string;
   scipFingerprint?: string;
   scipStatus?: "ready" | "unavailable" | "failed";

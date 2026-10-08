@@ -68,7 +68,7 @@ for (const [name, input] of [
 });
 
 test("resolution 1.1.0 re-resolves unchanged TypeScript facts without changing facts/framework domains", async () => {
-  assert.equal(RESOLUTION_VERSION, "1.2.0"); assert.equal(FACTS_VERSION, "3.1.0"); assert.equal(FACTS_SCHEMA_VERSION, "3.0.0"); assert.equal(FRAMEWORK_RESOLUTION_VERSION, "1.7.0");
+  assert.equal(RESOLUTION_VERSION, "1.2.2"); assert.equal(FACTS_VERSION, "3.1.1"); assert.equal(FACTS_SCHEMA_VERSION, "3.0.0"); assert.equal(FRAMEWORK_RESOLUTION_VERSION, "1.7.0");
   const { repoPath, loaded } = await indexedSource(source);
   try {
     const generationId = loaded.evidenceState.generationId;
@@ -85,7 +85,7 @@ test("resolution 1.1.0 re-resolves unchanged TypeScript facts without changing f
     assert.ok(renewed.plan.reasons.includes("resolution_version_changed"));
     const fresh = await loadIndexedGraphReadOnly(repoPath);
     assert.notEqual(fresh.evidenceState.generationId, generationId);
-    assert.equal(fresh.graph.edges.find((edge) => edge.type === "calls")?.resolution?.resolutionVersion, "1.2.0");
+    assert.equal(fresh.graph.edges.find((edge) => edge.type === "calls")?.resolution?.resolutionVersion, "1.2.2");
   } finally { await rm(repoPath, { recursive: true, force: true }); }
 });
 

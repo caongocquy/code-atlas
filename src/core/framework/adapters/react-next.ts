@@ -155,7 +155,7 @@ function exportedComponentTargets(
   const fileNodeIds = new Set(ctx.graph.nodes.filter((node) => node.type === "file" && canonicalGraphPath(node.file) === file).map((node) => node.id));
   const localTargets = (name: string) => ctx.graph.nodes.filter((node) => node.type !== "file" && node.name === name && Boolean(node.qualifiedName)
     && canonicalGraphPath(node.file) === file && ctx.graph.edges.some((edge) => edge.type === "contains" && fileNodeIds.has(edge.from) && edge.to === node.id));
-  const fileFacts = ctx.facts.find((item) => canonicalGraphPath(item.relativePath) === file);
+  const fileFacts = (ctx.lookupFacts ?? ctx.facts).find((item) => canonicalGraphPath(item.relativePath) === file);
   const matching = (fileFacts?.facts.exports ?? []).filter((item) => item.exportedName === exportName || (item.kind === "star" && item.exportedName === "*" && exportName !== "default"));
   const nodes: FrameworkAnalysisContext["graph"]["nodes"][number][] = [];
   if (matching.length === 0 && exportName !== "default") nodes.push(...localTargets(exportName));

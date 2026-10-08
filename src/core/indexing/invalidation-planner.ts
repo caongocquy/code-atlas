@@ -21,6 +21,7 @@ export type InvalidationInput = {
   currentFiles: Map<string, { contentHash: string; language: SupportedLanguage }>;
   previousBindings: Map<string, FileFactBinding>;
   directImporters: Map<string, Set<string>>;
+  additionalDirtyPaths?: readonly string[];
   unsafeTopologyReasons?: ReadonlySet<UnsafeTopologyReason>;
   versions: IndexVersionDomains;
   previousVersions?: IndexVersionDomains;
@@ -124,10 +125,10 @@ function compatibleBinding(
   return binding?.contentHash === current.contentHash && binding.language === current.language;
 }
 
-function unsafeTopologyReasons(input: InvalidationInput): InvalidationReasonCode[] {
+function unsafeTopologyReasons(input: InvalidationInput, affected: ReadonlySet<string>): InvalidationReasonCode[] {
   const reasons = new Set<InvalidationReasonCode>(input.unsafeTopologyReasons);
-  for (const target of input.directImporters.keys()) {
-    if (target.startsWith("unresolved:")) reasons.add("unresolved_import_ownership");
+  for (const [target, importers] of input.directImporters) {
+    if (target.startsWith("unresolved:") && [...importers].some((file) => affected.has(file))) reasons.add("unresolved_import_ownership");
   }
   return [...reasons].sort();
 }
@@ -175,12 +176,30 @@ export function planInvalidation(input: InvalidationInput): InvalidationPlan {
     changedPaths.push(file);
   }
 
+  changedPaths.push(...(input.additionalDirtyPaths ?? []).filter((file) => currentPathSet.has(file)));
   const directChanges = new Set([...changedPaths, ...removedPaths]);
-  const importersInvalidated = sorted(
-    [...directChanges].flatMap((target) => [...(input.directImporters.get(target) ?? [])])
-      .filter((file) => currentPathSet.has(file)),
-  );
-  const topologyReasons = unsafeTopologyReasons(input);
+  const impacted = new Set<string>();
+  const pending = [...directChanges];
+  for (let index = 0; index < pending.length; index += 1) {
+    for (const importer of new Set([...(input.directImporters.get(pending[index]!) ?? []), ...(input.directImporters.get(`unresolved:${pending[index]!}`) ?? [])])) {
+      if (!currentPathSet.has(importer) || impacted.has(importer)) continue;
+      impacted.add(importer);
+      pending.push(importer);
+    }
+  }
+  const importersInvalidated = sorted(impacted);
+  const affected = new Set([...directChanges, ...impacted]);
+  // Include known forward ownership dependencies when judging uncertainty.
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const [target, importers] of input.directImporters) {
+      if (currentPathSet.has(target) && !affected.has(target) && [...importers].some((file) => affected.has(file))) {
+        affected.add(target); grew = true;
+      }
+    }
+  }
+  const topologyReasons = unsafeTopologyReasons(input, affected);
   const dependencyImpact: DependencyImpact = topologyReasons.length > 0
     ? "uncertain"
     : "bounded";

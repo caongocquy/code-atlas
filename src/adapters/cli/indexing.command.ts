@@ -4,13 +4,13 @@ import { createCliCommandReporter } from "./cli-command-reporter.js";
 import { createInlineProgressRunner } from "./cli-progress-reporter.js";
 import { formatIndexFailure, formatIndexResult, formatRepositoryStatus } from "./cli-output.js";
 import { getRepositoryStatusReadOnly } from "../../core/repository/repository-status.service.js";
-import { indexRepository, syncRepository, type IndexPipelineResult } from "../../core/indexing/index-pipeline.service.js";
+import { indexRepository, reindexRepository, syncRepository, type IndexPipelineResult } from "../../core/indexing/index-pipeline.service.js";
 import { createConfiguredProviders, closeConfiguredProviders } from "../../infrastructure/semantic/repository-providers.js";
 import { readRepositoryConfig } from "../../infrastructure/semantic/semantic-config.store.js";
 import type { DefaultProviderSet } from "../../infrastructure/provider-defaults.js";
 
 export async function runIndexingCommand(
-  operation: "index" | "sync" | "status",
+  operation: "index" | "sync" | "reindex" | "status",
   args: string[],
   repoPath = path.resolve("."),
 ): Promise<void> {
@@ -26,17 +26,18 @@ export async function runIndexingCommand(
   }
   const index = operation === "index"
     ? indexRepository
-    : syncRepository;
+    : operation === "reindex" ? reindexRepository : syncRepository;
   const quiet = args.includes("--quiet");
   const diagnosticTimings = args.includes("--diagnostic-timings");
-  const reporter = createCliCommandReporter({ command: operation === "sync" ? "sync" : "index", json, quiet });
-  reporter.start(operation === "index" ? "CodeAtlas Index" : "CodeAtlas Sync");
+  const reporter = createCliCommandReporter({ command: operation, json, quiet });
+  const action = operation === "index" ? "Index" : operation === "reindex" ? "Reindex" : "Sync";
+  reporter.start(`CodeAtlas ${action}`);
   let cancelled = false;
   const onSigint = () => {
     cancelled = true;
     process.exitCode = 130;
     if (json) reporter.output({ cancelled: true, operation });
-    else reporter.failure(`! ${operation === "index" ? "Index" : "Sync"} cancelled`);
+    else reporter.failure(`! ${action} cancelled`);
   };
   process.once("SIGINT", onSigint);
   let providers: DefaultProviderSet | undefined;
@@ -46,7 +47,7 @@ export async function runIndexingCommand(
     const includeSemantic = config.semantic?.enabled === true;
     if (includeSemantic) providers = await createConfiguredProviders(targetPath);
     const result = await reporter.run(
-      operation === "index" ? "Indexing repository" : "Syncing repository",
+      action === "Reindex" ? "Rebuilding repository indexes" : action === "Index" ? "Indexing repository" : "Syncing repository",
       (progressReporter) => index(targetPath, {
         progress: createInlineProgressRunner(progressReporter),
         skipGit: args.includes("--skip-git"),
@@ -60,6 +61,9 @@ export async function runIndexingCommand(
     );
     if (diagnosticTimings && result.phaseTimingsMs) {
       process.stderr.write(`CODEATLAS_PHASE_TIMINGS_MS=${JSON.stringify(result.phaseTimingsMs)}\n`);
+    }
+    if (diagnosticTimings && result.kind === "published" && result.counters) {
+      process.stderr.write(`CODEATLAS_WORK_COUNTERS=${JSON.stringify(result.counters)}\n`);
     }
     if (result.kind === "failed") {
       process.exitCode = 1;

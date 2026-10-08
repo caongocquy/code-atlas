@@ -150,13 +150,27 @@ test("ambiguous star exports force repository resolution from current facts", as
     await writeFile(path.join(root, "b.ts"), "export function duplicate() { return 2; }\n");
     await writeFile(path.join(root, "barrel.ts"), 'export * from "./a.js";\nexport * from "./b.js";\n');
     await writeFile(path.join(root, "consumer.ts"), 'import { duplicate } from "./barrel.js"; export function value() { return duplicate(); }\n');
+    await writeFile(path.join(root, "healthy.ts"), "export function healthy() { return 1; }\n");
     await indexRepository(root, { skipGit: true });
+    const noOp = await syncRepository(root, { skipGit: true });
+    assert.equal(noOp.counters.filesResolved, 0);
+    const before = new AtlasStore(path.join(root, ".codeatlas", "atlas.db"));
+    const diagnostics = before.getGraphResolutionDiagnostics(getRepositoryIdentity(root).id).filter(d => d.source.file === "consumer.ts");
+    before.close();
+    await writeFile(path.join(root, "healthy.ts"), "export function healthy() { return 2; }\n");
+    const unrelated = await syncRepository(root, { skipGit: true });
+    assert.equal(unrelated.plan.fullGraphResolution, false);
+    assert.deepEqual(unrelated.plan.resolvePaths, ["healthy.ts"]);
+    const retained = new AtlasStore(path.join(root, ".codeatlas", "atlas.db"));
+    assert.deepEqual(retained.getGraphResolutionDiagnostics(getRepositoryIdentity(root).id).filter(d => d.source.file === "consumer.ts"), diagnostics);
+    retained.close();
+    await writeFile(path.join(root, "consumer.ts"), 'import { duplicate } from "./barrel.js"; export function value() { return duplicate() + 1; }\n');
     const result = await syncRepository(root, { skipGit: true });
     assert.equal(result.kind, "published");
     assert.equal(result.plan.fullGraphResolution, true);
     assert.ok(result.plan.reasons.includes("export_ambiguous"));
-    assert.equal(result.counters.filesParsed, 0);
-    assert.equal(result.counters.filesResolved, 4);
+    assert.equal(result.counters.filesParsed, 1);
+    assert.equal(result.counters.filesResolved, 5);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -215,7 +229,7 @@ test("pipeline resolves only changed file and direct importer while retaining un
   }
 });
 
-test("incomplete semantic provenance forces repository resolution on unchanged sync", async () => {
+test("incomplete semantic provenance is retained until its affected closure changes", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase14b-legacy-edge-"));
   const dependency = path.join(root, "src", "dep.ts");
 
@@ -254,24 +268,38 @@ test("incomplete semantic provenance forces repository resolution on unchanged s
 
     const unchanged = await syncRepository(root, { skipGit: true });
     assert.equal(unchanged.kind, "published");
-    assert.equal(unchanged.plan.fullGraphResolution, true);
+    assert.equal(unchanged.plan.fullGraphResolution, false);
     assert.equal(unchanged.counters.filesParsed, 0);
-    assert.equal(unchanged.counters.filesResolved, 3);
+    assert.equal(unchanged.counters.filesResolved, 0);
     const afterUnchanged = new AtlasStore(path.join(root, ".codeatlas", "atlas.db"));
     const afterUnchangedGraph = afterUnchanged.loadGraph(repositoryId);
     assert.ok(afterUnchangedGraph.edges.some((edge) =>
       edge.type === "calls"
-      && edge.resolution?.resolutionVersion === CURRENT_INDEX_VERSION_DOMAINS.resolutionVersion
+      && edge.resolution === undefined
       && afterUnchangedGraph.nodes.find((node) => node.id === edge.from)?.file === "src/unrelated.c",
     ));
+    const retainedDiagnostics = afterUnchanged.getGraphResolutionDiagnostics(repositoryId).filter(d => d.source.file === "src/unrelated.c");
     afterUnchanged.close();
 
     await writeFile(dependency, "export function dep() { return false; }\n");
     const result = await syncRepository(root, { skipGit: true });
     assert.equal(result.kind, "published");
+    assert.equal(result.plan.fullGraphResolution, false);
+    assert.deepEqual(result.plan.resolvePaths, ["src/consumer.ts", "src/dep.ts"]);
     const after = new AtlasStore(path.join(root, ".codeatlas", "atlas.db"));
-    assert.ok(semanticEdgeKeys(after, repositoryId).some((edge) => edge.includes("src/unrelated.c")));
+    const retainedGraph = after.loadGraph(repositoryId);
+    assert.ok(retainedGraph.edges.some(edge => edge.type === "calls" && edge.resolution === undefined && retainedGraph.nodes.find(n => n.id === edge.from)?.file === "src/unrelated.c"));
+    assert.deepEqual(after.getGraphResolutionDiagnostics(repositoryId).filter(d => d.source.file === "src/unrelated.c"), retainedDiagnostics);
     after.close();
+    await writeFile(path.join(root, "src", "unrelated.c"), "int stable() { return 2; }\nint use() { return stable(); }\n");
+    const intersecting = await syncRepository(root, { skipGit: true });
+    assert.equal(intersecting.kind, "published");
+    assert.equal(intersecting.plan.fullGraphResolution, true);
+    assert.ok(intersecting.plan.reasons.includes("dependency_provenance_incomplete"));
+    assert.equal(intersecting.counters.filesResolved, 3);
+    const repaired = new AtlasStore(path.join(root, ".codeatlas", "atlas.db"));
+    assert.ok(repaired.loadGraph(repositoryId).edges.some(edge => edge.type === "calls" && edge.resolution?.resolutionVersion === CURRENT_INDEX_VERSION_DOMAINS.resolutionVersion));
+    repaired.close();
   } finally {
     await rm(root, { recursive: true, force: true });
   }

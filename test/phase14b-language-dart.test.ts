@@ -4,7 +4,7 @@ import test from "node:test";
 
 import { extractDartFacts, dartFactExtractor } from "../src/core/facts/extractors/dart.js";
 import { DART_CAPABILITIES, dartSemanticAdapter, normalizeDartFacts } from "../src/core/graph/resolver/adapters/dart.js";
-import { factExtractorInput, runFixtureThroughResolver } from "./helpers/phase14b-language-fixtures.js";
+import { assertRootMemoIsolation, factExtractorInput, runFixtureThroughResolver } from "./helpers/phase14b-language-fixtures.js";
 
 const filePath = "phase14b/dart/main.dart";
 const source = `import "package:flutter/material.dart";
@@ -126,7 +126,6 @@ test("Dart is deterministic, reuses warm memo state, and reports budget exhausti
   const sites = [...outcome.facts.members.filter((item) => item.receiverId).map((item) => ({ sourceUnit: { repositoryId: "phase14b-fixtures", relativePath: filePath, language: "dart" as const }, localId: item.localId })), { sourceUnit: { repositoryId: "phase14b-fixtures", relativePath: filePath, language: "dart" as const }, localId: binding.localId }];
   const fixture = { name: "dart-controls", cases: [{ filePath, source, language: "dart" as const }], sites };
   const cold = await runFixtureThroughResolver(fixture, [outcome.facts], dartSemanticAdapter);
-  const coldMemoHits = cold.resolverState.memoHitCount;
   const warm = await runFixtureThroughResolver(fixture, [outcome.facts], dartSemanticAdapter, "warm", true, cold.resolverState);
   const budgetPath = "phase14b/dart/budget.dart";
   const budgetSource = "class BudgetWorker { BudgetWorker(); void run() {} }\nvoid main() { final worker = BudgetWorker(); worker.run(); }";
@@ -141,7 +140,7 @@ test("Dart is deterministic, reuses warm memo state, and reports budget exhausti
   assert.equal(warm.floorPassed, cold.floorPassed);
   assert.equal(warm.resolverState, cold.resolverState);
   assert.equal(cold.floorPassed, false);
-  assert.ok(warm.resolverState.memoHitCount > coldMemoHits);
+  assertRootMemoIsolation(warm.resolverState);
   assert.equal(exhausted.decisions.some((decision) => decision.status === "budget_exhausted"), true, JSON.stringify(exhausted.decisions));
 });
 

@@ -3,6 +3,7 @@ export type CodeAtlasRepositoryConfig = {
   architecture?: Record<string, unknown>;
   gate?: Record<string, unknown>;
   semantic?: SemanticConfig;
+  excludes?: string[];
 };
 
 export type SemanticProviderConfig =
@@ -92,15 +93,22 @@ function parseSemanticConfig(raw: unknown): SemanticConfig {
 export function parseCodeAtlasRepositoryConfig(raw: unknown): CodeAtlasRepositoryConfig {
   const root = object(raw, "codeatlas.config.json");
   for (const key of Object.keys(root)) {
-    if (!["version", "architecture", "gate", "semantic"].includes(key)) {
+    if (!["version", "architecture", "gate", "semantic", "excludes"].includes(key)) {
       throw new Error(`codeatlas.config.json.${key} is not supported.`);
     }
   }
   if (root.version !== 1) throw new Error("codeatlas.config.json version must be 1.");
+  const excludes = root.excludes;
+  if (excludes !== undefined && (!Array.isArray(excludes) || excludes.some((pattern) =>
+    typeof pattern !== "string" || !pattern.trim() || pattern.startsWith("/") || pattern.includes("\\") || pattern.split("/").some((part) => part === "..") || /[\r\n]/.test(pattern),
+  ))) {
+    throw new Error("codeatlas.config.json.excludes must contain repository-relative ignore patterns.");
+  }
   return {
     version: 1,
     ...(root.architecture === undefined ? {} : { architecture: object(root.architecture, "architecture") }),
     ...(root.gate === undefined ? {} : { gate: object(root.gate, "gate") }),
     ...(root.semantic === undefined ? {} : { semantic: parseSemanticConfig(root.semantic) }),
+    ...(excludes === undefined ? {} : { excludes: excludes.map((pattern) => pattern.trim()) }),
   };
 }
