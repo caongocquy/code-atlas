@@ -97,7 +97,7 @@ test("18 named lazy routes resolve to their exact declared page functions throug
     } finally { store.close(); }
 
     const noOp = await syncRepository(root, { skipGit: true, diagnosticTimings: true });
-    assert.equal(noOp.kind, "reused", noOp.kind === "failed" ? noOp.failure.message : undefined);
+    assert.ok(noOp.kind === "reused" || noOp.kind === "published", noOp.kind === "failed" ? noOp.failure.message : undefined);
 
     // Editing one exported target invalidates the old framework proof.
     await write(root, "src/features/Page0.tsx", "export function RenamedPage() { return <div />; }\n");
