@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 
 import { indexRepository } from "../src/core/indexing/index-pipeline.service.js";
@@ -81,7 +82,7 @@ function inspectorCliPath(): string {
 function runInspector(method: string, options: { homePath: string; toolName?: string; toolArgs?: Record<string, unknown> }) {
   const args = [
     inspectorCliPath(),
-    "--cli", process.execPath, "--import", tsxLoader, cliPath, "mcp",
+    "--cli", process.execPath, "--import", pathToFileURL(tsxLoader).href, cliPath, "mcp",
     "--",
     "--method", method,
     "--format", "json",
