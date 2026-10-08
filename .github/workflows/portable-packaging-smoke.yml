@@ -13,9 +13,14 @@ on:
       - src/adapters/cli/**
       - src/cli.ts
       - scripts/verify-release-archive.mjs
+      - scripts/build-onnx-darwin-x64.mjs
+      - scripts/onnx-darwin-x64.mjs
+      - scripts/compare-release-tests.mjs
       - .github/workflows/portable-packaging-smoke.yml
       - package.json
       - pnpm-lock.yaml
+      - test/onnx-darwin-x64-packaging.test.ts
+      - test/release-regression-comparison.test.ts
 
 permissions:
   contents: read
@@ -125,7 +130,11 @@ jobs:
           else
             echo "$?" > .evidence/candidate-tests.exit
           fi
-          node scripts/compare-release-tests.mjs --normalize-root "$GITHUB_WORKSPACE/.release-base" --normalize-root "$GITHUB_WORKSPACE" .evidence/baseline-tests.log .evidence/candidate-tests.log .evidence/regression-comparison.json
+          if node scripts/compare-release-tests.mjs --normalize-root "$GITHUB_WORKSPACE/.release-base" --normalize-root "$GITHUB_WORKSPACE" .evidence/baseline-tests.log .evidence/candidate-tests.log .evidence/regression-comparison.json; then
+            echo 0 > .evidence/regression-comparison.exit
+          else
+            echo "$?" > .evidence/regression-comparison.exit
+          fi
       - name: Set up pinned Python for ONNX macOS x64 build
         if: matrix.platform == 'darwin' && matrix.arch == 'x64'
         uses: actions/setup-python@v5
@@ -214,6 +223,7 @@ jobs:
         run: |
           node --input-type=module -e 'import fs from "node:fs"; import crypto from "node:crypto"; const archive=fs.readdirSync(".").find(name=>/^portable-candidate\.(tar\.gz|zip)$/.test(name)); const bytes=fs.readFileSync(archive); const inventory=JSON.parse(fs.readFileSync(".release/integrity.json")); const metrics={node:process.version,platform:process.platform,arch:process.arch,archive,archiveBytes:bytes.length,sha256:crypto.createHash("sha256").update(bytes).digest("hex"),installedLogicalBytes:inventory.logicalBytes,installedAllocatedBytes:inventory.allocatedBytes}; fs.writeFileSync(".release/metrics.json", JSON.stringify(metrics,null,2)); console.log(metrics);'
       - name: Upload review artifacts and pruning decisions
+        id: review-artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -229,6 +239,12 @@ jobs:
             .evidence/baseline-metrics.json
             .evidence/baseline-integrity.json
             .evidence/regression-comparison.json
+            .evidence/regression-comparison.exit
           include-hidden-files: true
           if-no-files-found: ignore
           compression-level: 0
+      - name: Enforce full-suite regression gate
+        if: always() && steps.review-artifacts.outcome == 'success'
+        shell: bash
+        run: |
+          node --input-type=module -e 'import fs from "node:fs"; const report=JSON.parse(fs.readFileSync(".evidence/regression-comparison.json")); if(report.passed!==true) { console.error(`Full-suite regression gate failed: ${report.added.length} added, ${report.changed.length} changed, ${report.addedSkips.length} new skips.`); process.exit(1); }'
