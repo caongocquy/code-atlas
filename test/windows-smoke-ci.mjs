@@ -3,7 +3,10 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { URL, fileURLToPath } from "node:url";
+import process from "node:process";
+import console from "node:console";
+import { performance } from "node:perf_hooks";
 
 const cli = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
 const runOnnxOnly = process.argv.includes("--onnx-only");
