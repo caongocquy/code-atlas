@@ -48,6 +48,7 @@ export function createOnnxDarwinX64BuildArguments(sourceDir, buildDir, parallel 
     "--cmake_extra_defines",
     "CMAKE_OSX_ARCHITECTURES=x86_64",
     `CMAKE_OSX_DEPLOYMENT_TARGET=${DARWIN_X64_MINIMUM_VERSION}`,
+    "CMAKE_CXX_FLAGS=-Wno-error=unguarded-availability-new",
     "CMAKE_OBJCXX_FLAGS=-Wno-error=unguarded-availability-new",
   ];
 }
