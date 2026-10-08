@@ -2,6 +2,13 @@ name: Release smoke
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [develop, master]
+    paths:
+      - package.json
+      - CHANGELOG.md
+      - .github/workflows/release-smoke.yml
+      - test/phase14f-release-workflows.test.ts
 
 permissions:
   contents: read
@@ -11,10 +18,9 @@ jobs:
     name: Verify packed npm consumer
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout current master
+      - name: Checkout candidate revision
         uses: actions/checkout@v4
         with:
-          ref: master
           fetch-depth: 1
 
       - name: Set up Node.js 24
@@ -38,6 +44,14 @@ jobs:
           set -euo pipefail
           pnpm run build
           pnpm exec tsc --noEmit
+          # A durable absolute CLI path is required for agent integration tests.
+          cli_dir="$GITHUB_WORKSPACE/node_modules/.bin"
+          mkdir -p "$cli_dir"
+          chmod +x "$GITHUB_WORKSPACE/dist/cli.js"
+          ln -sf "$GITHUB_WORKSPACE/dist/cli.js" "$cli_dir/code-atlas"
+          export PATH="$cli_dir:$PATH"
+          export CODE_ATLAS_CLI="$cli_dir/code-atlas"
+          command -v code-atlas
           pnpm run lint
           pnpm exec node --import tsx/esm --test \
             test/phase14f-release-workflows.test.ts \
@@ -80,7 +94,8 @@ jobs:
             throw new Error(`Local-only runtime dependency specifier found: ${serialized}`);
           }
           if (manifest.name !== "@showdar2112/code-atlas") throw new Error(`Unexpected package name: ${manifest.name}`);
-          if (manifest.version !== "1.5.0") throw new Error(`Unexpected package version: ${manifest.version}`);
+          const expectedVersion = JSON.parse(fs.readFileSync("package.json", "utf8")).version;
+          if (manifest.version !== expectedVersion) throw new Error(`Unexpected package version: ${manifest.version}; expected ${expectedVersion}`);
           if (manifest.bin?.["code-atlas"] !== "dist/cli.js") throw new Error("Unexpected CLI bin target");
           if (manifest.publishConfig?.access !== "public") throw new Error("Package is not public");
           console.log(JSON.stringify({ name: manifest.name, version: manifest.version, bin: manifest.bin }, null, 2));
@@ -116,8 +131,9 @@ jobs:
             run_clean "$bin" "$flag" > "$RUNNER_TEMP/code-atlas-$flag.stdout" 2> "$RUNNER_TEMP/code-atlas-$flag.stderr"
             test ! -s "$RUNNER_TEMP/code-atlas-$flag.stderr"
           done
-          test "$(cat "$RUNNER_TEMP/code-atlas---version.stdout")" = "1.5.0"
-          test "$(cat "$RUNNER_TEMP/code-atlas--v.stdout")" = "1.5.0"
+          expected_version="$(node -p "require('./package.json').version")"
+          test "$(cat "$RUNNER_TEMP/code-atlas---version.stdout")" = "$expected_version"
+          test "$(cat "$RUNNER_TEMP/code-atlas--v.stdout")" = "$expected_version"
           grep -q 'Usage: code-atlas' "$RUNNER_TEMP/code-atlas---help.stdout"
           grep -q 'Usage: code-atlas' "$RUNNER_TEMP/code-atlas--h.stdout"
           run_clean "$bin" context-compile --help > "$RUNNER_TEMP/code-atlas-context-compile-help.stdout" 2> "$RUNNER_TEMP/code-atlas-context-compile-help.stderr"
@@ -146,7 +162,7 @@ jobs:
             cat "$RUNNER_TEMP/npm-global-install.stderr" >&2
             exit 1
           fi
-          HOME="$RUNNER_TEMP/global-home" XDG_CONFIG_HOME="$RUNNER_TEMP/global-xdg" "$prefix/bin/code-atlas" --version | grep -qx '1.5.0'
+          HOME="$RUNNER_TEMP/global-home" XDG_CONFIG_HOME="$RUNNER_TEMP/global-xdg" "$prefix/bin/code-atlas" --version | grep -qx "$(node -p "require('./package.json').version")"
           HOME="$RUNNER_TEMP/global-home" XDG_CONFIG_HOME="$RUNNER_TEMP/global-xdg" "$prefix/bin/code-atlas" --help | grep -q 'Usage: code-atlas'
 
       - name: Publish release smoke summary
@@ -156,9 +172,10 @@ jobs:
           WARNING_COUNT: ${{ steps.consumer.outputs.warning_count }}
         run: |
           {
-            echo '## CodeAtlas 1.5.0 release smoke'
+            version="$(node -p "require('./package.json').version")"
+            echo "## CodeAtlas $version release smoke"
             echo
-            echo 'Package: `@showdar2112/code-atlas@1.5.0`'
+            echo "Package: \`@showdar2112/code-atlas@$version\`"
             echo
             echo '| Check | Result |'
             echo '| --- | --- |'
