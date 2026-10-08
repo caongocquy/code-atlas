@@ -1,4 +1,4 @@
-name: Windows smoke (pre-1.6)
+name: Windows smoke
 
 on:
   push:
@@ -110,7 +110,7 @@ jobs:
           $instructions = @'
           Code Atlas Windows test artifact
           Git commit: ${{ github.sha }}
-          Package version: 1.5.0 (testing unreleased develop/PR code; NOT npm latest)
+          Package version: [[VERSION]] (testing unreleased develop/PR code; NOT npm latest)
           This is an npm tarball, not a standalone EXE. Requires Node.js >=22 (24 recommended).
 
           From the folder containing the downloaded .tgz, in PowerShell:
@@ -123,7 +123,9 @@ jobs:
           Keep your current config, indexes and uncommitted source safe; back up first.
           Do not publish this tarball as npm latest.
           '@
-          $instructions.Replace("[[TARBALL]]", $packageFile) | Set-Content -Path (Join-Path $bundle "INSTALL-WINDOWS.txt")
+          $version = node -p "require('./package.json').version"
+          if ($LASTEXITCODE -ne 0) { throw "Cannot read package version" }
+          $instructions.Replace("[[TARBALL]]", $packageFile).Replace("[[VERSION]]", $version.Trim()) | Set-Content -Path (Join-Path $bundle "INSTALL-WINDOWS.txt")
 
       - name: Upload Windows test artifact
         uses: actions/upload-artifact@v4
