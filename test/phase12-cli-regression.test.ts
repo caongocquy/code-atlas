@@ -37,6 +37,8 @@ async function runCli(repoPath: string, ...args: string[]): Promise<{ stdout: st
     ...process.env,
     CODEX_HOME: path.join(repoPath, ".codex-home"),
     XDG_CONFIG_HOME: path.join(repoPath, ".xdg"),
+    USERPROFILE: repoPath,
+    APPDATA: path.join(repoPath, ".appdata"),
     HOME: repoPath,
     NO_COLOR: "1",
   };
@@ -191,7 +193,8 @@ async function integrationConfig(root: string, id: "codex" | "opencode" | "claud
     return parseToml(await readFile(path.join(root, ".codex-home", "config.toml"), "utf8"));
   }
   if (id === "opencode") {
-    return parseJsonc(await readFile(path.join(root, ".xdg", "opencode", "opencode.json"), "utf8"));
+    const configRoot = process.platform === "win32" ? ".appdata" : ".xdg";
+    return parseJsonc(await readFile(path.join(root, configRoot, "opencode", "opencode.json"), "utf8"));
   }
   if (id === "gemini") return parseJsonc(await readFile(path.join(root, ".gemini", "settings.json"), "utf8"));
   if (id === "cursor") return parseJsonc(await readFile(path.join(root, ".cursor", "mcp.json"), "utf8"));
@@ -314,21 +317,26 @@ test("Codex MCP configuration launches with a minimal PATH and clean JSON-RPC st
     const entry = config.mcp_servers["code-atlas"];
 
     assert.ok(path.isAbsolute(entry.command));
-    assert.equal(path.basename(entry.command), "code-atlas");
+    assert.equal(path.basename(entry.command), process.platform === "win32" ? "code-atlas.cmd" : "code-atlas");
     assert.equal(entry.args.length, 1);
     await access(entry.command);
     assert.equal(entry.args[0], "mcp");
     assert.equal(isEphemeralMcpPath(entry.command), false);
     assert.equal(entry.cwd, undefined);
 
+    const systemPath = process.env.SystemRoot ? path.join(process.env.SystemRoot, "System32") : undefined;
+    const minimalPath = [path.dirname(process.execPath), systemPath].filter(Boolean).join(path.delimiter);
     const child = spawn(entry.command, entry.args, {
       cwd: repoPath,
       env: {
-        PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`,
+        PATH: minimalPath,
         HOME: repoPath,
+        USERPROFILE: repoPath,
+        APPDATA: path.join(repoPath, ".appdata"),
         CODEX_HOME: path.join(repoPath, ".codex-home"),
         CODE_ATLAS_CLI: entry.command,
       },
+      shell: process.platform === "win32" ? process.env.ComSpec ?? "cmd.exe" : false,
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";
@@ -411,13 +419,15 @@ test("Codex reports an absolute launcher with missing files as stale", async () 
   try {
     const home = path.join(repoPath, "home");
     const bin = path.join(repoPath, "bin");
+    const missingNode = path.resolve(repoPath, "missing-node");
+    const missingCli = path.resolve(repoPath, "missing-cli.js");
     await mkdir(path.join(home, ".codex"), { recursive: true });
     const configPath = path.join(home, ".codex", "config.toml");
-    await writeFile(configPath, `[mcp_servers.code-atlas]\ncommand = "${path.join(repoPath, "missing-node")}"\nargs = [ "${path.join(repoPath, "missing-cli.js")}", "mcp" ]\nenabled = true\n`);
+    await writeFile(configPath, `[mcp_servers.code-atlas]\ncommand = ${JSON.stringify(missingNode)}\nargs = ${JSON.stringify([missingCli, "mcp"])}\nenabled = true\n`);
     const status = await createAgentIntegrationService({
       cwd: repoPath,
       home,
-      env: { PATH: bin },
+      env: { PATH: bin, USERPROFILE: home },
       platform: process.platform,
     }).status("codex", { repoPath });
     assert.equal(status.state, "stale");

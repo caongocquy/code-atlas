@@ -87,6 +87,7 @@ function runProcess(
     let stderr: Buffer<ArrayBufferLike> = Buffer.alloc(0);
     let outputBytes = 0;
     let settled = false;
+    let pendingError: Error | undefined;
     const finish = (error?: Error, result?: ProcessResult) => {
       if (settled) return;
       settled = true;
@@ -94,23 +95,32 @@ function runProcess(
       if (error) reject(error);
       else resolve(result!);
     };
+    const terminate = (error: Error) => {
+      if (pendingError) return;
+      pendingError = error;
+      child.kill("SIGKILL");
+    };
     const append = (current: Buffer<ArrayBufferLike>, chunk: Buffer, channel: "stdout" | "stderr"): Buffer<ArrayBufferLike> => {
       outputBytes += chunk.byteLength;
       if (outputBytes > options.maxOutputBytes) {
-        child.kill("SIGKILL");
-        finish(new Error(`scip-typescript ${channel} exceeded ${options.maxOutputBytes} bytes`));
+        terminate(new Error(`scip-typescript ${channel} exceeded ${options.maxOutputBytes} bytes`));
         return current;
       }
       return Buffer.concat([current, chunk]);
     };
     const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      finish(new Error(`scip-typescript timed out after ${options.timeoutMs}ms`));
+      terminate(new Error(`scip-typescript timed out after ${options.timeoutMs}ms`));
     }, options.timeoutMs);
     child.stdout.on("data", (chunk: Buffer) => { stdout = append(stdout, chunk, "stdout"); });
     child.stderr.on("data", (chunk: Buffer) => { stderr = append(stderr, chunk, "stderr"); });
-    child.once("error", (error) => finish(new Error(`scip-typescript could not start: ${error.message}`)));
+    child.once("error", (error) => {
+      pendingError ??= new Error(`scip-typescript could not start: ${error.message}`);
+    });
     child.once("close", (code, signal) => {
+      if (pendingError) {
+        finish(pendingError);
+        return;
+      }
       if (code !== 0) {
         const details = stderr.toString("utf8").trim().slice(-2_000);
         finish(new Error(`scip-typescript exited with ${signal ?? code}${details ? `: ${details}` : ""}`));

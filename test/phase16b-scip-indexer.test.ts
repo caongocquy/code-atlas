@@ -41,7 +41,7 @@ async function makeFixture(): Promise<{ root: string; bin: string; fixture: stri
 }
 
 async function writeExecutable(file: string, version: string): Promise<void> {
-  const script = `const fs = require("node:fs");\nconst args = process.argv.slice(2);\nif (args[0] === "--version") { process.stdout.write(${JSON.stringify(version)} + "\\n"); process.exit(0); }\nfs.writeFileSync(process.env.SCIP_INVOCATION_FILE, JSON.stringify({ args, cwd: process.cwd() }));\nif (process.env.SCIP_MODE === "flood") process.stdout.write("x".repeat(4096));\nconst output = args[args.indexOf("--output") + 1];\nif (process.env.SCIP_MODE === "empty") fs.writeFileSync(output, Buffer.alloc(0));\nelse fs.copyFileSync(process.env.SCIP_FIXTURE_FILE, output);\n`;
+  const script = `const fs = require("node:fs");\nconst args = process.argv.slice(2);\nif (args[0] === "--version") { process.stdout.write(${JSON.stringify(version)} + "\\n"); process.exit(0); }\nfs.writeFileSync(process.env.SCIP_INVOCATION_FILE, JSON.stringify({ args, cwd: fs.realpathSync(process.cwd()) }));\nif (process.env.SCIP_MODE === "flood") process.stdout.write("x".repeat(4096));\nconst output = args[args.indexOf("--output") + 1];\nif (process.env.SCIP_MODE === "empty") fs.writeFileSync(output, Buffer.alloc(0));\nelse fs.copyFileSync(process.env.SCIP_FIXTURE_FILE, output);\n`;
   if (process.platform === "win32") {
     await writeFile(path.join(path.dirname(file), "scip-typescript.js"), script);
     await writeFile(file, `@echo off\r\nnode "%~dp0\\scip-typescript.js" %*\r\n`);

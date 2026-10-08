@@ -128,7 +128,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/code-atlas-onnx-native
-          key: onnx-1.30.0-f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7-macos15-x64-coreml-webgpu-cmake3.31.8-v1
+          key: onnx-1.30.0-f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7-macos15-x64-coreml-webgpu-cmake3.31.8-minos13.5-v2
       - name: Check out exact ONNX Runtime source and submodules
         if: matrix.platform == 'darwin' && matrix.arch == 'x64' && steps.onnx-cache.outputs.cache-hit != 'true'
         uses: actions/checkout@v4
@@ -141,7 +141,17 @@ jobs:
         if: matrix.platform == 'darwin' && matrix.arch == 'x64' && steps.onnx-cache.outputs.cache-hit != 'true'
         shell: bash
         run: |
-          python3 -m pip install cmake==3.31.8 -r .onnx-source/tools/ci_build/github/linux/docker/scripts/requirements.txt
+          cmake_archive="$RUNNER_TEMP/cmake-3.31.8-macos-universal.tar.gz"
+          curl --fail --location --silent --show-error \
+            https://github.com/Kitware/CMake/releases/download/v3.31.8/cmake-3.31.8-macos-universal.tar.gz \
+            --output "$cmake_archive"
+          echo "d1449f969c54d5c00886d5b643340d493dfb3c81cb39ee29b35453395c11ebf7  $cmake_archive" | shasum -a 256 --check
+          tar -xzf "$cmake_archive" -C "$RUNNER_TEMP"
+          cmake_bin="$RUNNER_TEMP/cmake-3.31.8-macos-universal/CMake.app/Contents/bin"
+          echo "$cmake_bin" >> "$GITHUB_PATH"
+          export PATH="$cmake_bin:$PATH"
+          cmake --version
+          python3 -m pip install -r .onnx-source/tools/ci_build/github/linux/docker/scripts/requirements.txt
           env -u VCPKG_INSTALLATION_ROOT -u VCPKG_ROOT node scripts/build-onnx-darwin-x64.mjs .onnx-source "$RUNNER_TEMP/code-atlas-onnx-native"
       - name: Select validated ONNX payload for macOS x64 packaging
         if: matrix.platform == 'darwin' && matrix.arch == 'x64'

@@ -47,7 +47,7 @@ excluded from the canonical comparison.
 | Equivalent setup | Total | Pass | Fail | Skip | Cancelled / TODO |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Release base | 1349 | 1297 | 49 | 3 | 0 / 0 |
-| Candidate | 1370 | 1318 | 49 | 3 | 0 / 0 |
+| Candidate (6030d65) | 1373 | 1321 | 49 | 3 | 0 / 0 |
 
 The comparison passes: zero new failure identities, zero changed assertions
 within existing failing tests, zero resolved failures and zero new skips.
@@ -102,6 +102,40 @@ allocated installed bytes (496.953 MiB); 11792 inventory entries. Real artifact
 smoke passed all nine groups, including external SCIP and builtin model embedding.
 This local measurement is separate from the pending same-run native CI comparison.
 
+
+### Native run 37763317039 (6030d65)
+
+https://github.com/caongocquy/code-atlas/actions/runs/37763317039
+
+- macOS ARM64: PASS, including both 9-group runtime smokes and archive inventory.
+- Linux x64: PASS, including both runtime smokes and archive inventory.
+- macOS x64: full regression comparison PASS; native setup failed before compile
+  because PyPI does not provide `cmake==3.31.8`. Replaced that install in both
+  workflows with Kitware's official universal macOS archive, pinned SHA-256
+  `d1449f969c54d5c00886d5b643340d493dfb3c81cb39ee29b35453395c11ebf7`.
+- Windows x64: focused suite failed on remaining profile/path/shim fixtures and
+  a real subprocess cleanup race. The candidate fixes Windows fixture inputs
+  without dropping assertions. SCIP now waits for child `close` after output-limit
+  or timeout termination, preserving the original error before temporary cleanup;
+  previously cleanup could fail with EBUSY and mask the output-limit diagnostic.
+
+All three completed native full-suite comparisons are exact: base 1349 tests,
+1297 pass / 49 fail / 3 skip; candidate 1373 tests, 1321 pass / 49 fail / 3 skip.
+Zero added/changed/resolved failures and zero added skips. Their comparison JSONs
+have identical SHA-256 `ff54dcb4bd2e43475dd2358105203892693a5edfa8d211f835d2b7a4f0bb7fef`.
+Windows did not reach its full-suite comparison; it remains unqualified.
+
+Native same-run sizes (MiB; installed allocation is runner filesystem-specific):
+
+| Platform | Archive | Installed logical | Installed allocated |
+| --- | ---: | ---: | ---: |
+| darwin-arm64 | 228.58 -> 116.09 | 912.53 -> 444.45 | 967.71 -> 488.12 |
+| linux-x64 | 448.00 -> 327.12 | 1187.61 -> 669.60 | 1219.90 -> 700.87 |
+
+Native evidence JSONs: `/private/tmp/code-atlas-ci-evidence-6030d65/`.
+Raw local committed candidate: `/private/tmp/code-atlas-release-6030d65-node24.tap`
+and `/private/tmp/code-atlas-release-6030d65-comparison.json`.
+The follow-up still requires a complete native rerun. **NO-GO** until qualified.
 
 `doctor` remains absent in the release base; its explicit unknown-command/exit-1
 contract is tested. This task does not add a new command or claim doctor passed.
