@@ -79,15 +79,20 @@ function normalizeText(value, roots = []) {
   for (const root of roots.filter(Boolean).sort((a, b) => b.length - a.length)) {
     const windowsRoot = /^[A-Za-z]:[\\/]/.test(root) ? root : null;
     const nativeRoot = windowsRoot ? root : path.resolve(root);
-    for (const spelling of new Set([nativeRoot, nativeRoot.replaceAll('\\', '/'), nativeRoot.replaceAll('/', '\\')])) {
+    const spellings = new Set([nativeRoot, nativeRoot.replaceAll('\\', '/'), nativeRoot.replaceAll('/', '\\')]);
+    for (const spelling of [...spellings]) spellings.add(spelling.replaceAll('\\', '\\\\'));
+    for (const spelling of [...spellings].sort((a, b) => b.length - a.length)) {
       text = text.replaceAll(spelling, '<ROOT>');
     }
   }
+  // TAP single-quoted Windows paths may escape separators even though YAML does not require it.
+  text = text.replace(/[\\]{2,}/g, '\\');
   return text
-    .replace(/(?:[A-Z]:)?[\\/](?:Users[\\/][^\\/]+[\\/])?AppData[\\/]Local[\\/]Temp[\\/][^\\s:'"),]*/gi, '<TMP>\\')
-    .replace(/(?:[A-Z]:)?[\\/]Windows[\\/]Temp[\\/][^\\s:'"),]*/gi, '<TMP>\\')
-    .replace(/\/var\/folders\/[^/]+\/[^/]+\/T\/(?:[^\s:'"),]+\/?)+/g, '<TMP>/')
-    .replace(/\/(?:private\/)?tmp\/(?:[^\s:'"),]+\/?)+/g, '<TMP>/');
+    .replace(/(?:[A-Z]:)?[\\/](?:Users[\\/][^\\/]+[\\/])?AppData[\\/]Local[\\/]Temp[\\/]/gi, '<TMP>\\')
+    .replace(/(?:[A-Z]:)?[\\/]Windows[\\/]Temp[\\/]/gi, '<TMP>\\')
+    .replace(/\/var\/folders\/[^/]+\/[^/]+\/T\//g, '<TMP>/')
+    .replace(/\/(?:private\/)?tmp\//g, '<TMP>/')
+    .replace(/<TMP>([\\/])([^\\/]+?)-[A-Za-z0-9]{6}(?=[\\/\s:'"),]|$)/g, '<TMP>$1$2-<ID>');
 }
 
 function failureIdentity(item, roots = []) {

@@ -67,8 +67,41 @@ test('allows a complete all-green baseline', () => {
 
 test('normalizes Windows roots and temp paths while preserving regular paths', () => {
   assert.equal(normalizeText('C:\\a\\work\\repo\\test\\x.ts', ['C:\\a\\work\\repo']), '<ROOT>\\test\\x.ts');
-  assert.match(normalizeText('C:\\Users\\runner\\AppData\\Local\\Temp\\run-123\\file.ts'), /<TMP>/);
+  assert.equal(normalizeText('C:\\Users\\runner\\AppData\\Local\\Temp\\code-atlas-run-abcdef\\file.ts'), '<TMP>\\code-atlas-run-<ID>\\file.ts');
   assert.equal(normalizeText('expected /Users/leo/project/file.ts'), 'expected /Users/leo/project/file.ts');
+});
+
+test('normalizes only generated temp roots while preserving nested filenames', () => {
+  assert.equal(
+    normalizeText('/private/tmp/code-atlas-fixture-abcdef/out/a.ts'),
+    normalizeText('/tmp/code-atlas-fixture-uvwxyz/out/a.ts'),
+  );
+  assert.notEqual(normalizeText('/tmp/a.ts'), normalizeText('/tmp/b.ts'));
+  assert.notEqual(
+    normalizeText('/tmp/code-atlas-fixture-abcdef/out/a.ts'),
+    normalizeText('/tmp/code-atlas-fixture-uvwxyz/out/b.ts'),
+  );
+});
+
+test('does not hide a changed assertion filename under equivalent temp fixture roots', () => {
+  const before = parseTap(tap('checks generated source', assertionFields({ expected: '/tmp/code-atlas-fixture-abcdef/out/a.ts' }), {
+    file: '/tmp/code-atlas-fixture-abcdef/test/sample.test.ts:4:3',
+  }));
+  const after = parseTap(tap('checks generated source', assertionFields({ expected: '/tmp/code-atlas-fixture-uvwxyz/out/b.ts' }), {
+    file: '/tmp/code-atlas-fixture-uvwxyz/test/sample.test.ts:4:3',
+  }));
+  const report = compareParsed(before, after);
+  assert.equal(report.passed, false);
+  assert.equal(report.changed.length, 1);
+});
+
+test('does not merge failures from different test source filenames under temp roots', () => {
+  const before = parseTap(tap('same test title', assertionFields(), { file: '/tmp/fixture-abcdef/test/alpha.test.ts:4:3' }));
+  const after = parseTap(tap('same test title', assertionFields(), { file: '/tmp/fixture-uvwxyz/test/beta.test.ts:4:3' }));
+  const report = compareParsed(before, after);
+  assert.equal(report.passed, false);
+  assert.equal(report.added.length, 1);
+  assert.equal(report.resolved.length, 1);
 });
 
 test('rejects incomplete TAP logs and hidden cancellations', () => {

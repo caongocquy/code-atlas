@@ -69,6 +69,7 @@ test("pinned ONNX source build keeps full Node, CoreML, WebGPU and x86_64 runtim
   }
   assert.ok(args.includes("CMAKE_OSX_ARCHITECTURES=x86_64"));
   assert.ok(args.includes(`CMAKE_OSX_DEPLOYMENT_TARGET=${DARWIN_X64_MINIMUM_VERSION}`));
+  assert.ok(args.includes("CMAKE_OBJCXX_FLAGS=-Wno-error=unguarded-availability-new"));
   assert.ok(args.includes("--skip_tests"));
   assert.ok(args.includes("--skip_nodejs_tests"));
   assert.equal(args.includes("--minimal_build"), false);
