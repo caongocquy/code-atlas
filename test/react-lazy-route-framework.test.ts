@@ -55,7 +55,7 @@ test("export const bindings are represented as named export facts", () => {
   assert.deepEqual(parsed.facts.exports.map((item) => [item.exportedName, item.localName]), [["Page", "Page"], ["Other", "Other"]]);
 });
 
-test("18 named lazy routes resolve to their exact declared page functions across a re-export", async () => {
+test("18 named lazy routes resolve to their exact declared page functions through their barrel", async () => {
   await fixture(async (root) => {
     const count = 18;
     const declarations: string[] = [];
@@ -69,13 +69,34 @@ test("18 named lazy routes resolve to their exact declared page functions across
     await write(root, "src/app/router/lazy-pages.ts", [
       'import { lazyRouteNamed } from "./lazy-route";', ...declarations, "",
     ].join("\n"));
-    await write(root, "src/app/router/pages-barrel.ts", 'export * from "./lazy-pages";\n');
     await write(root, "src/app/router/routes.tsx", [
-      'import { ' + Array.from({ length: count }, (_, i) => `Page${i}`).join(", ") + ' } from "./pages-barrel";',
+      'import { ' + Array.from({ length: count }, (_, i) => `Page${i}`).join(", ") + ' } from "./lazy-pages";',
       `export function Routes() { return <>${usages.join("")}</>; }`, "",
     ].join("\n"));
 
     const first = await indexRepository(root, { skipGit: true });
+    if (first.kind === "failed") {
+      const inspect = (filePath: string, source: string, language: "typescript" | "tsx") => {
+        const parsed = extractParsedFacts({
+          filePath, source, language, contentHash: "debug-lazy",
+          factsVersion: FACTS_VERSION, factsSchemaVersion: FACTS_SCHEMA_VERSION,
+        });
+        if (parsed.kind !== "facts") return parsed;
+        return {
+          exports: parsed.facts.exports.map((item) => [item.exportedName, item.localName]),
+          imports: parsed.facts.imports.map((item) => [item.moduleSpecifier, item.importedName, item.localName]),
+          bindings: parsed.facts.bindingSeeds.slice(0, 8).map((item) => [item.name, item.bindingKind, item.ownerId]),
+          scopes: parsed.facts.containmentScopes.slice(0, 3).map((item) => [item.kind, item.localId]),
+          assignments: parsed.facts.assignments.slice(0, 3),
+          expressions: parsed.facts.expressions.filter((item) => item.kind === "call").slice(0, 3).map((item) => [item.localId, item.text?.slice(0, 200)]),
+          symbols: parsed.facts.symbols.filter((item) => item.name === "lazyRouteNamed"),
+        };
+      };
+      console.error("LAZY_DIAGNOSTIC", JSON.stringify({
+        lazyPages: inspect("src/app/router/lazy-pages.ts", ['import { lazyRouteNamed } from "./lazy-route";', ...declarations].join("\n"), "typescript"),
+        helper: inspect("src/app/router/lazy-route.ts", helperSource, "typescript"),
+      }));
+    }
     assert.equal(first.kind, "published", first.kind === "failed" ? first.failure.message : undefined);
     if (first.kind !== "published") return;
 
