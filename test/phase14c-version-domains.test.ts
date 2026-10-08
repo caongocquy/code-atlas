@@ -36,7 +36,7 @@ function planFor(
 }
 
 test("owns one independent framework resolution version domain", () => {
-  assert.equal(FRAMEWORK_RESOLUTION_VERSION, "1.7.0");
+  assert.equal(FRAMEWORK_RESOLUTION_VERSION, "1.7.1");
   assert.equal(CURRENT_INDEX_VERSION_DOMAINS.frameworkResolutionVersion, FRAMEWORK_RESOLUTION_VERSION);
   assert.deepEqual(Object.keys(CURRENT_INDEX_VERSION_DOMAINS).sort(), [
     "derivedVersion",
