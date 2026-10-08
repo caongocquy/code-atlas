@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { extractParsedFacts } from "../src/core/facts/facts-extractor.js";
-import { indexRepository } from "../src/core/indexing/index-pipeline.service.js";
+import { indexRepository, syncRepository } from "../src/core/indexing/index-pipeline.service.js";
 import { FACTS_SCHEMA_VERSION, FACTS_VERSION } from "../src/core/repository/index-version.js";
 import { getRepositoryIdentity } from "../src/core/repository/repository-identity.js";
 import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
@@ -30,7 +30,8 @@ async function fixture(callback: (root: string) => Promise<void>): Promise<void>
   const root = await mkdtemp(path.join(tmpdir(), "code-atlas-react-lazy-"));
   try {
     await write(root, "package.json", JSON.stringify({ dependencies: { react: "19.0.0" } }));
-    await write(root, "tsconfig.json", JSON.stringify({ compilerOptions: { jsx: "react-jsx", paths: { "@/*": ["./src/*"] } }, include: ["src/**/*"] }));
+    await write(root, "tsconfig.json", JSON.stringify({ files: [], references: [{ path: "./tsconfig.app.json" }] }));
+    await write(root, "tsconfig.app.json", JSON.stringify({ compilerOptions: { jsx: "react-jsx", paths: { "@/*": ["./src/*"] } }, include: ["src/**/*"] }));
     await write(root, "src/app/router/lazy-route.ts", helperSource);
     await callback(root);
   } finally {
@@ -75,28 +76,6 @@ test("18 named lazy routes resolve to their exact declared page functions throug
     ].join("\n"));
 
     const first = await indexRepository(root, { skipGit: true });
-    if (first.kind === "failed") {
-      const inspect = (filePath: string, source: string, language: "typescript" | "tsx") => {
-        const parsed = extractParsedFacts({
-          filePath, source, language, contentHash: "debug-lazy",
-          factsVersion: FACTS_VERSION, factsSchemaVersion: FACTS_SCHEMA_VERSION,
-        });
-        if (parsed.kind !== "facts") return parsed;
-        return {
-          exports: parsed.facts.exports.map((item) => [item.exportedName, item.localName]),
-          imports: parsed.facts.imports.map((item) => [item.moduleSpecifier, item.importedName, item.localName]),
-          bindings: parsed.facts.bindingSeeds.slice(0, 8).map((item) => [item.name, item.bindingKind, item.ownerId]),
-          scopes: parsed.facts.containmentScopes.slice(0, 3).map((item) => [item.kind, item.localId]),
-          assignments: parsed.facts.assignments.slice(0, 3),
-          expressions: parsed.facts.expressions.filter((item) => item.kind === "call").slice(0, 3).map((item) => [item.localId, item.text?.slice(0, 200)]),
-          symbols: parsed.facts.symbols.filter((item) => item.name === "lazyRouteNamed"),
-        };
-      };
-      console.error("LAZY_DIAGNOSTIC", JSON.stringify({
-        lazyPages: inspect("src/app/router/lazy-pages.ts", ['import { lazyRouteNamed } from "./lazy-route";', ...declarations].join("\n"), "typescript"),
-        helper: inspect("src/app/router/lazy-route.ts", helperSource, "typescript"),
-      }));
-    }
     assert.equal(first.kind, "published", first.kind === "failed" ? first.failure.message : undefined);
     if (first.kind !== "published") return;
 
@@ -117,12 +96,12 @@ test("18 named lazy routes resolve to their exact declared page functions throug
       }
     } finally { store.close(); }
 
-    const noOp = await indexRepository(root, { skipGit: true, diagnosticTimings: true });
+    const noOp = await syncRepository(root, { skipGit: true, diagnosticTimings: true });
     assert.equal(noOp.kind, "reused", noOp.kind === "failed" ? noOp.failure.message : undefined);
 
     // Editing one exported target invalidates the old framework proof.
     await write(root, "src/features/Page0.tsx", "export function RenamedPage() { return <div />; }\n");
-    const invalid = await indexRepository(root, { skipGit: true });
+    const invalid = await syncRepository(root, { skipGit: true });
     assert.equal(invalid.kind, "failed");
     if (invalid.kind !== "failed") return;
     assert.match(invalid.failure.message, /Candidate framework materialization is incomplete/);
