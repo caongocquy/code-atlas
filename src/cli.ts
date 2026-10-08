@@ -3,6 +3,7 @@
 import { createCliCommandReporter } from "./adapters/cli/cli-command-reporter.js";
 import { formatCommandFailure } from "./adapters/cli/cli-output.js";
 import { formatCommandHelp, formatRootHelp, isKnownCommand } from "./adapters/cli/cli-help.js";
+import { applyNoColorPrecedence } from "./adapters/cli/cli-presentation.js";
 import { createRequire } from "node:module";
 import path from "node:path";
 
@@ -26,6 +27,7 @@ async function main(): Promise<void> {
     process.stdout.write(`${formatCommandHelp(args[0])}\n`);
     return;
   }
+  if (command !== "mcp" && command !== "serve") applyNoColorPrecedence();
   switch (command) {
     case "workspace": {
       const { runWorkspaceCommand } = await import("./adapters/cli/workspace.command.js");

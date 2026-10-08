@@ -1,3 +1,4 @@
+import { stripVTControlCharacters } from "node:util";
 import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -6,6 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
 import { promisify } from "node:util";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 
 import { formatIndexResult, formatInitResult } from "../src/adapters/cli/cli-output.js";
@@ -15,7 +17,7 @@ import type { IndexPipelineResult } from "../src/core/indexing/index-pipeline.se
 
 const execFile = promisify(execFileCallback);
 const cliPath = path.resolve("src/cli.ts");
-const tsxLoader = createRequire(import.meta.url).resolve("tsx/esm");
+const tsxLoader = pathToFileURL(createRequire(import.meta.url).resolve("tsx/esm")).href;
 
 async function fixture(name: string): Promise<string> {
   return mkdtemp(path.join(tmpdir(), `code-atlas-cli-ux-${name}-`));
@@ -189,7 +191,7 @@ test("TTY progress keeps one final row per phase", async () => {
       await new Promise((resolve) => setTimeout(resolve, 150));
     }, "graph"),
   ]));
-  assert.match(streamResult.output, /Index complete/);
+  assert.match(stripVTControlCharacters(streamResult.output), /Index complete/);
   assert.match(streamResult.output, /100%/);
   // Windows uses the deterministic stream assertion above; Unix also spawns the CLI under a real PTY.
   if (process.platform === "win32") return;
@@ -248,7 +250,7 @@ test("CI progress stays plain and reports bounded updates", async () => {
   const repoPath = await fixture("ci");
   try {
     await writeFile(path.join(repoPath, "source.ts"), "export function source() { return true; }\n");
-    const result = await runCli(repoPath, ["index"], { CI: "true" });
+    const result = await runCli(repoPath, ["index"], { CI: "true", FORCE_COLOR: "1" });
     assert.match(result.stdout, /Index complete/);
     assert.ok(count(result.stdout, /Scanning repository/g) <= 2);
     assert.doesNotMatch(result.stdout, /\u001b\[/);
@@ -275,7 +277,7 @@ test("non-TTY progress is plain and bounded", async () => {
   const repoPath = await fixture("plain");
   try {
     await writeFile(path.join(repoPath, "source.ts"), "export function source() { return true; }\n");
-    const result = await runCli(repoPath, ["index"]);
+    const result = await runCli(repoPath, ["index"], { FORCE_COLOR: "1" });
     assert.doesNotMatch(result.stdout, /\u001b\[/);
     assert.ok(count(result.stdout, /Scanning repository/g) <= 2);
   } finally {

@@ -5,10 +5,30 @@ import path from "node:path";
 import test from "node:test";
 
 import { extractParsedFacts } from "../src/core/facts/facts-extractor.js";
-import { LocalScipIndexer, localScipIndexer } from "../src/infrastructure/scip/local-scip-indexer.js";
+import { LocalScipIndexer, localScipIndexer, windowsNodeEntryPoint } from "../src/infrastructure/scip/local-scip-indexer.js";
 import { encodeScipDocument, encodeScipIndex, type ScipFixtureOccurrence } from "./helpers/phase16b-scip-fixture.js";
 
 const targetSymbol = "scip-typescript npm fixture 1.0.0 src/target().";
+const executableName = process.platform === "win32" ? "scip-typescript.cmd" : "scip-typescript";
+
+test("Windows SCIP shims resolve npm and pnpm Node entry points", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "code-atlas-scip-shim-"));
+  try {
+    const entryPoint = path.join(root, "scip-typescript.js");
+    await writeFile(entryPoint, "process.exit(0);\n");
+    const expected = await realpath(entryPoint);
+    for (const [name, shim] of [
+      ["npm.cmd", '@echo off\r\nnode "%dp0%\\scip-typescript.js" %*\r\n'],
+      ["pnpm.cmd", '@echo off\r\nnode "%~dp0\\scip-typescript.js" %*\r\n'],
+    ]) {
+      const shimPath = path.join(root, name);
+      await writeFile(shimPath, shim);
+      assert.equal(await windowsNodeEntryPoint(shimPath), expected, `${name} entry point`);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 async function makeFixture(): Promise<{ root: string; bin: string; fixture: string; invocation: string }> {
   const root = await mkdtemp(path.join(tmpdir(), "code-atlas-phase16b-scip-"));
@@ -21,8 +41,13 @@ async function makeFixture(): Promise<{ root: string; bin: string; fixture: stri
 }
 
 async function writeExecutable(file: string, version: string): Promise<void> {
-const script = `#!/usr/bin/env node\nimport fs from "node:fs";\nconst args = process.argv.slice(2);\nif (args[0] === "--version") { process.stdout.write(${JSON.stringify(version)} + "\\n"); process.exit(0); }\nfs.writeFileSync(process.env.SCIP_INVOCATION_FILE, JSON.stringify({ args, cwd: process.cwd() }));\nif (process.env.SCIP_MODE === "flood") process.stdout.write("x".repeat(4096));\nconst output = args[args.indexOf("--output") + 1];\nif (process.env.SCIP_MODE === "empty") fs.writeFileSync(output, Buffer.alloc(0));\nelse fs.copyFileSync(process.env.SCIP_FIXTURE_FILE, output);\n`;
-  await writeFile(file, script);
+  const script = `const fs = require("node:fs");\nconst args = process.argv.slice(2);\nif (args[0] === "--version") { process.stdout.write(${JSON.stringify(version)} + "\\n"); process.exit(0); }\nfs.writeFileSync(process.env.SCIP_INVOCATION_FILE, JSON.stringify({ args, cwd: process.cwd() }));\nif (process.env.SCIP_MODE === "flood") process.stdout.write("x".repeat(4096));\nconst output = args[args.indexOf("--output") + 1];\nif (process.env.SCIP_MODE === "empty") fs.writeFileSync(output, Buffer.alloc(0));\nelse fs.copyFileSync(process.env.SCIP_FIXTURE_FILE, output);\n`;
+  if (process.platform === "win32") {
+    await writeFile(path.join(path.dirname(file), "scip-typescript.js"), script);
+    await writeFile(file, `@echo off\r\nnode "%~dp0\\scip-typescript.js" %*\r\n`);
+    return;
+  }
+  await writeFile(file, `#!/usr/bin/env node\n${script}`);
   await chmod(file, 0o755);
 }
 
@@ -40,14 +65,14 @@ function occurrence(source: string, token: string, roles: number): ScipFixtureOc
 test("SCIP discovery prefers project-local executable over PATH in stable order", async () => {
   const fixture = await makeFixture();
   try {
-    const local = path.join(fixture.root, "node_modules", ".bin", "scip-typescript");
-    const fromPath = path.join(fixture.bin, "scip-typescript");
+    const local = path.join(fixture.root, "node_modules", ".bin", executableName);
+    const fromPath = path.join(fixture.bin, executableName);
     await mkdir(path.dirname(local), { recursive: true });
     await writeExecutable(local, "local-0.4.0");
     await writeExecutable(fromPath, "path-0.4.0");
 
     const indexer = new LocalScipIndexer({
-      env: { ...process.env, PATH: `${fixture.bin}:${process.env.PATH ?? ""}`, SCIP_FIXTURE_FILE: fixture.fixture, SCIP_INVOCATION_FILE: fixture.invocation },
+      env: { ...process.env, PATH: [fixture.bin, process.env.PATH].filter(Boolean).join(path.delimiter), SCIP_FIXTURE_FILE: fixture.fixture, SCIP_INVOCATION_FILE: fixture.invocation },
     });
     const discovery = await indexer.discover(fixture.root);
 
@@ -63,9 +88,9 @@ test("SCIP discovery prefers project-local executable over PATH in stable order"
 test("SCIP uses PATH only when no project-local executable exists, and never downloads", async () => {
   const fixture = await makeFixture();
   try {
-    const fromPath = path.join(fixture.bin, "scip-typescript");
+    const fromPath = path.join(fixture.bin, executableName);
     await writeExecutable(fromPath, "path-0.4.0");
-    const indexer = new LocalScipIndexer({ env: { ...process.env, PATH: `${fixture.bin}:${process.env.PATH ?? ""}` } });
+    const indexer = new LocalScipIndexer({ env: { ...process.env, PATH: [fixture.bin, process.env.PATH].filter(Boolean).join(path.delimiter) } });
     const found = await indexer.discover(fixture.root);
     assert.equal(found.status, "ready");
     assert.equal(found.tool?.source, "path");
@@ -82,7 +107,7 @@ test("SCIP uses PATH only when no project-local executable exists, and never dow
 test("SCIP index runs into a temporary artifact with project cwd and JS inference", async () => {
   const fixture = await makeFixture();
   try {
-    const local = path.join(fixture.root, "node_modules", ".bin", "scip-typescript");
+    const local = path.join(fixture.root, "node_modules", ".bin", executableName);
     await mkdir(path.dirname(local), { recursive: true });
     await writeExecutable(local, "0.4.0");
     const source = "export function target() { return true; }\n";
@@ -123,7 +148,7 @@ test("SCIP index runs into a temporary artifact with project cwd and JS inferenc
 test("SCIP rejects excessive subprocess output and oversized artifacts", async () => {
   const fixture = await makeFixture();
   try {
-    const local = path.join(fixture.root, "node_modules", ".bin", "scip-typescript");
+    const local = path.join(fixture.root, "node_modules", ".bin", executableName);
     await mkdir(path.dirname(local), { recursive: true });
     await writeExecutable(local, "0.4.0");
     const target = makeUnit(fixture.root, "target.ts", "typescript", "export function target() {}\n");

@@ -1,4 +1,5 @@
 import { log } from "@clack/prompts";
+import { applyNoColorPrecedence } from "./cli-presentation.js";
 import { buildCodeGraph } from "../../core/graph/build-graph.js";
 import type { GraphEdge, GraphNode } from "../../core/graph/types.js";
 
@@ -30,6 +31,7 @@ function describeEdge(
 }
 
 async function main(): Promise<void> {
+  applyNoColorPrecedence();
   const repoPath = process.argv[2] ?? ".";
 
   const graph = await buildCodeGraph(repoPath);

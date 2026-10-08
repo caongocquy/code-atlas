@@ -28,11 +28,13 @@ architectures, missing libraries, external Homebrew/build paths and escaping
 symlinks. Bundled Node and all native addons/dylibs are checked with `file`/`otool`.
 A full source build is needed because no exact-version C++ x64 dylib asset exists.
 
-Native x64 compilation and actual embedding are still pending the first CI run;
+Native x64 compilation and actual embedding are still pending a successful CI run;
 this is an implemented fix awaiting platform qualification, not a verified x64
 success. The native build follows upstream CMake 3.31.8 / Python 3.12 / vcpkg
-2025.08.27 setup and can require a long C++/WebGPU build. No explicit macOS
-minimum deployment target is forced; the build toolchain determines it.
+2025.08.27 setup and can require a long C++/WebGPU build. The source build explicitly targets macOS 13.5, matching bundled official Node24;
+`otool -l` validation rejects payload or final bundle binaries with a higher
+minimum OS version or missing deployment metadata. This prevents the macOS15
+runner from silently raising the runtime floor.
 
 ### Equivalent local regression comparison
 
@@ -75,8 +77,31 @@ checks all packed feature paths, snapshots SHA-256 content/link/executable
 metadata, extracts the archive, verifies exact inventory and reruns its runtime
 smoke. It captures raw test logs, exit statuses, pruning decisions and metrics.
 The x64 job builds the pinned ONNX payload and validates it even on cache hits.
-No publication workflow is dispatched. Actual run IDs/results and updated sizes
-will be appended after native execution. Until then: **NO-GO for v1.6.1**.
+No publication workflow is dispatched. Until native qualification succeeds:
+**NO-GO for v1.6.1**.
+
+First native run: https://github.com/caongocquy/code-atlas/actions/runs/37760789004
+at candidate `9937f2cc765a1b24d77b6bfa0a44e5ae7d90f815` failed all four initial
+focused-test steps, before artifact or ONNX qualification. Actual findings:
+- CI had not installed its durable compiled CLI shim before the focused suite.
+- The Clack fake-TTY assertion compared styled text without stripping ANSI.
+- Windows test subprocesses used drive-letter paths as ESM `--import` URLs.
+- Existing Windows fixtures assumed POSIX PATH separators, executable names,
+  scanner paths and launcher locations.
+- Clack honored FORCE_COLOR over NO_COLOR; an explicit NO_COLOR precedence fix
+  now has a regression test, including both conflicting environment variables.
+
+These failures are recorded, not counted as platform smoke success. Corrections
+retain the existing test assertions and supply platform-correct inputs. The SCIP
+Windows shim parser now accepts the standard `%~dp0` form alongside
+npm's `%dp0%`; this native portability finding is within artifact verification.
+
+Fresh local ARM64 Clack artifact (before follow-up corrections): 126677200
+compressed bytes (120.809 MiB), 475902919 logical installed bytes and 521093120
+allocated installed bytes (496.953 MiB); 11792 inventory entries. Real artifact
+smoke passed all nine groups, including external SCIP and builtin model embedding.
+This local measurement is separate from the pending same-run native CI comparison.
+
 
 `doctor` remains absent in the release base; its explicit unknown-command/exit-1
 contract is tested. This task does not add a new command or claim doctor passed.

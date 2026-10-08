@@ -45,9 +45,9 @@ async function executable(file: string): Promise<boolean> {
   }
 }
 
-async function windowsNodeEntryPoint(shimPath: string): Promise<string | undefined> {
+export async function windowsNodeEntryPoint(shimPath: string): Promise<string | undefined> {
   const shim = await fs.readFile(shimPath, "utf8");
-  const match = shim.match(/"%~?dp0%[\\/]([^"]+\.js)"/i);
+  const match = shim.match(/"%(?:~dp0|dp0%)[\\/]([^"]+\.js)"/i);
   if (!match?.[1]) return undefined;
   const entryPoint = path.resolve(path.dirname(shimPath), match[1].replace(/[\\/]/g, path.sep));
   try {

@@ -46,11 +46,22 @@ jobs:
         with:
           node-version: 24
       - name: Build candidate and run packaging regressions
+        shell: bash
         run: |
           corepack enable
           corepack prepare pnpm@11.22.0 --activate
           pnpm install --frozen-lockfile
           pnpm build
+          mkdir -p node_modules/.bin
+          chmod +x dist/cli.js
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            printf '@echo off\r\nnode "%%~dp0..\\..\\dist\\cli.js" %%*\r\n' > node_modules/.bin/code-atlas.cmd
+            export CODE_ATLAS_CLI="$(node -p 'require("node:path").resolve("node_modules/.bin/code-atlas.cmd")')"
+          else
+            ln -sf "$PWD/dist/cli.js" node_modules/.bin/code-atlas
+            export CODE_ATLAS_CLI="$(node -p 'require("node:path").resolve("node_modules/.bin/code-atlas")')"
+          fi
+          export PATH="$PWD/node_modules/.bin:$PATH"
           node --import tsx/esm --test test/release-bundle-pruning.test.ts test/onnx-darwin-x64-packaging.test.ts test/release-archive-integrity.test.ts test/release-regression-comparison.test.ts test/cli-startup.test.ts test/cli-presentation.test.ts test/cli-ux-cleanup.test.ts test/integration-picker.test.ts test/phase12-cli-regression.test.ts test/phase14b-parser-packaging.test.ts test/semantic-lifecycle.test.ts test/phase16b-scip-indexer.test.ts test/react-lazy-route-framework.test.ts
       - name: Check out immutable release base for equivalent full-suite comparison
         uses: actions/checkout@v4
@@ -126,7 +137,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/code-atlas-onnx-native
-          key: onnx-1.30.0-f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7-macos15-x64-coreml-webgpu-cmake3.31.8-v1
+          key: onnx-1.30.0-f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7-macos15-x64-coreml-webgpu-cmake3.31.8-minos13.5-v2
       - name: Check out exact ONNX Runtime source and submodules
         if: matrix.platform == 'darwin' && matrix.arch == 'x64' && steps.onnx-cache.outputs.cache-hit != 'true'
         uses: actions/checkout@v4

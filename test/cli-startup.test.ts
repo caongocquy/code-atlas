@@ -4,13 +4,14 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import test from "node:test";
 
 const execFile = promisify(execFileCallback);
 const root = path.resolve(".");
 const cliPath = path.join(root, "src/cli.ts");
-const tsxLoader = createRequire(import.meta.url).resolve("tsx/esm");
+const tsxLoader = pathToFileURL(createRequire(import.meta.url).resolve("tsx/esm")).href;
 const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8")) as { version: string };
 
 async function runCli(args: string[]) {

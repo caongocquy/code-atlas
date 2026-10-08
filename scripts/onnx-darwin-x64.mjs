@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 
 export const ONNX_RUNTIME_VERSION = "1.30.0";
 export const ONNX_RUNTIME_SOURCE_COMMIT = "f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7";
+export const DARWIN_X64_MINIMUM_VERSION = "13.5";
 
 function capture(command, args, options = {}) {
   const result = spawnSync(command, args, { encoding: "utf8", ...options });
@@ -41,6 +42,43 @@ function containedRealFile(root, file) {
   return realFile.startsWith(`${realRoot}${path.sep}`) && fs.statSync(realFile).isFile();
 }
 
+function minimumMacOSVersions(loadCommands) {
+  const versions = [];
+  for (const block of loadCommands.split(/(?=Load command \d+)/)) {
+    if (/^\s*cmd LC_BUILD_VERSION\s*$/m.test(block)) {
+      const match = /^\s*minos\s+(\d+(?:\.\d+){1,2})\s*$/m.exec(block);
+      if (match) versions.push(match[1]);
+    } else if (/^\s*cmd LC_VERSION_MIN_MACOSX\s*$/m.test(block)) {
+      const match = /^\s*version\s+(\d+(?:\.\d+){1,2})\s*$/m.exec(block);
+      if (match) versions.push(match[1]);
+    }
+  }
+  return versions;
+}
+
+function compareVersions(left, right) {
+  const a = left.split(".").map(Number);
+  const b = right.split(".").map(Number);
+  for (let index = 0; index < Math.max(a.length, b.length); index++) {
+    const difference = (a[index] ?? 0) - (b[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+function validateMacOSMinimum(binary, loadCommands) {
+  const versions = minimumMacOSVersions(loadCommands);
+  if (versions.length === 0) {
+    throw new Error(`Native binary has no macOS deployment target metadata: ${binary}`);
+  }
+  const tooNew = versions.filter((version) => compareVersions(version, DARWIN_X64_MINIMUM_VERSION) > 0);
+  if (tooNew.length > 0) {
+    throw new Error(
+      `Native binary ${binary} targets macOS ${[...new Set(tooNew)].join(", ")}, above bundled Node floor ${DARWIN_X64_MINIMUM_VERSION}`,
+    );
+  }
+}
+
 export function validateDarwinX64OnnxPayload(nativeDir, runCapture = capture) {
   if (!fs.existsSync(nativeDir)) throw new Error(`Missing ONNX native payload: ${nativeDir}`);
   const files = nativeFiles(nativeDir);
@@ -59,7 +97,9 @@ export function validateDarwinX64OnnxPayload(nativeDir, runCapture = capture) {
     if (!/\bx86_64\b/.test(description) || /\barm64\b/.test(description)) {
       throw new Error(`ONNX native file is not x86_64: ${file} (${description})`);
     }
-    const dependencies = runCapture("otool", ["-L", binary]).split("\n").slice(1);
+    const loadCommands = runCapture("otool", ["-arch", "x86_64", "-l", binary]);
+    validateMacOSMinimum(file, loadCommands);
+    const dependencies = runCapture("otool", ["-arch", "x86_64", "-L", binary]).split("\n").slice(1);
     for (const line of dependencies) {
       const dependency = line.trim().split(" (")[0];
       if (dependency.startsWith("@rpath/")) {
@@ -76,7 +116,7 @@ export function validateDarwinX64OnnxPayload(nativeDir, runCapture = capture) {
     }
   }
 
-  const bindingLoadCommands = runCapture("otool", ["-l", path.join(nativeDir, "onnxruntime_binding.node")]);
+  const bindingLoadCommands = runCapture("otool", ["-arch", "x86_64", "-l", path.join(nativeDir, "onnxruntime_binding.node")]);
   if (!/cmd LC_RPATH[\s\S]*?path\s+@loader_path(?:\s|\()/m.test(bindingLoadCommands)) {
     throw new Error("ONNX Node binding does not load its dylib from @loader_path");
   }
@@ -152,10 +192,9 @@ function bundleNativeFiles(bundleDir) {
   return files.sort();
 }
 
-function rpathsFor(binary, runCapture) {
-  const output = runCapture("otool", ["-l", binary]);
+function rpathsFrom(loadCommands) {
   const paths = [];
-  for (const block of output.split(/(?=Load command \d+)/)) {
+  for (const block of loadCommands.split(/(?=Load command \d+)/)) {
     if (!/\bcmd LC_RPATH\b/.test(block)) continue;
     const match = /^\s*path\s+(.+?)\s+\(offset \d+\)/m.exec(block);
     if (match) paths.push(match[1]);
@@ -198,8 +237,10 @@ export function validateDarwinX64NativeBundle(bundleDir, runCapture = capture) {
     if (!/\bx86_64\b/.test(description)) {
       throw new Error(`Native bundle file does not support x86_64: ${path.relative(bundleDir, binary)} (${description})`);
     }
-    const rpaths = rpathsFor(binary, runCapture);
-    const dependencies = runCapture("otool", ["-L", binary]).split("\n").slice(1);
+    const loadCommands = runCapture("otool", ["-arch", "x86_64", "-l", binary]);
+    validateMacOSMinimum(path.relative(bundleDir, binary), loadCommands);
+    const rpaths = rpathsFrom(loadCommands);
+    const dependencies = runCapture("otool", ["-arch", "x86_64", "-L", binary]).split("\n").slice(1);
     for (const line of dependencies) {
       const dependency = line.trim().split(" (")[0];
       if (!dependency) continue;

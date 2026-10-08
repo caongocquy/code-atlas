@@ -1,4 +1,5 @@
 import { log } from "@clack/prompts";
+import { applyNoColorPrecedence } from "./cli-presentation.js";
 import path from "node:path";
 
 import { getRepositoryIdentity } from "../../core/repository/repository-identity.js";
@@ -153,6 +154,7 @@ function usage(): never {
 }
 
 async function main(): Promise<void> {
+  applyNoColorPrecedence();
   const args = process.argv.slice(2);
   const [command, value, target] = args;
   const architectureCommand = ["important", "communities", "community", "bridges", "cycles"].includes(command ?? "");

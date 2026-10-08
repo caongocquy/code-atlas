@@ -3,7 +3,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { installDarwinX64OnnxRuntime, validateDarwinX64NativeBundle, validateDarwinX64OnnxPayload } from "../scripts/onnx-darwin-x64.mjs";
+import {
+  DARWIN_X64_MINIMUM_VERSION,
+  installDarwinX64OnnxRuntime,
+  validateDarwinX64NativeBundle,
+  validateDarwinX64OnnxPayload,
+} from "../scripts/onnx-darwin-x64.mjs";
 import { assertPinnedOnnxRuntimeSource, createOnnxDarwinX64BuildArguments } from "../scripts/build-onnx-darwin-x64.mjs";
 
 function makeFixture() {
@@ -19,9 +24,20 @@ function makeFixture() {
 
 function inspectMachO(_command: string, args: string[]) {
   if (args[0] === "-b") return "Mach-O 64-bit bundle x86_64";
-  if (args[0] === "-L") return `${args[1]}:\n\t@rpath/libonnxruntime.1.30.0.dylib (compatibility version 1.0.0)`;
-  if (args[0] === "-l") return "cmd LC_RPATH\n path @loader_path (offset 12)";
+  const { action, binary } = selectedX64OtoolArgs(args);
+  if (action === "-L") return `${binary}:\n\t@rpath/libonnxruntime.1.30.0.dylib (compatibility version 1.0.0)`;
+  if (action === "-l") return machoLoadCommands(DARWIN_X64_MINIMUM_VERSION, true);
   throw new Error(`Unexpected inspection command: ${args.join(" ")}`);
+}
+
+function selectedX64OtoolArgs(args: string[]) {
+  assert.deepEqual(args.slice(0, 2), ["-arch", "x86_64"]);
+  return { action: args[2], binary: args[3] };
+}
+
+function machoLoadCommands(minos = DARWIN_X64_MINIMUM_VERSION, hasRpath = false) {
+  const rpath = hasRpath ? "Load command 0\n cmd LC_RPATH\n path @loader_path (offset 12)\n" : "";
+  return `${rpath}Load command 1\n cmd LC_BUILD_VERSION\n platform MACOS\n minos ${minos}\n sdk 15.0\n ntools 0`;
 }
 
 test("Darwin x64 ONNX payload requires the binding, versioned dylib, x64 slices and local loader path", () => {
@@ -36,6 +52,10 @@ test("Darwin x64 ONNX payload requires the binding, versioned dylib, x64 slices 
       if (args[0] === "-b") return "Mach-O 64-bit bundle arm64";
       return inspectMachO(command, args);
     }), /x86_64/);
+    assert.throws(() => validateDarwinX64OnnxPayload(native, (command, args) => {
+      if (args[2] === "-l") return machoLoadCommands("14.0", true);
+      return inspectMachO(command, args);
+    }), /targets macOS 14\.0, above bundled Node floor 13\.5/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -48,6 +68,7 @@ test("pinned ONNX source build keeps full Node, CoreML, WebGPU and x86_64 runtim
     assert.ok(args.includes(flag), `missing ${flag}`);
   }
   assert.ok(args.includes("CMAKE_OSX_ARCHITECTURES=x86_64"));
+  assert.ok(args.includes(`CMAKE_OSX_DEPLOYMENT_TARGET=${DARWIN_X64_MINIMUM_VERSION}`));
   assert.ok(args.includes("--skip_tests"));
   assert.ok(args.includes("--skip_nodejs_tests"));
   assert.equal(args.includes("--minimal_build"), false);
@@ -105,13 +126,14 @@ test("Darwin x64 bundle scan resolves native dependencies and permits universal 
   fs.writeFileSync(runtime, "node");
   const inspect = (_command: string, args: string[]) => {
     if (args[0] === "-b") return "Mach-O universal binary with 2 architectures: [x86_64] [arm64]";
-    if (args[0] === "-L") {
-      const file = args[1];
+    const { action, binary } = selectedX64OtoolArgs(args);
+    if (action === "-L") {
+      const file = binary;
       return file === binding
         ? `${file}:\n\t@rpath/libexample.dylib (compatibility version 1.0.0)`
         : `${file}:\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)`;
     }
-    if (args[0] === "-l") return args[1] === binding ? "cmd LC_RPATH\n path @loader_path (offset 12)" : "";
+    if (action === "-l") return machoLoadCommands(DARWIN_X64_MINIMUM_VERSION, binary === binding);
     throw new Error(`Unexpected inspection command: ${args.join(" ")}`);
   };
   try {
@@ -125,13 +147,13 @@ test("Darwin x64 bundle scan resolves native dependencies and permits universal 
       return inspect("", args);
     }), /x86_64/);
     assert.throws(() => validateDarwinX64NativeBundle(bundle, (_command, args) => {
-      if (args[0] === "-L" && args[1] === binding) {
+      if (args[2] === "-L" && args[3] === binding) {
         return `${binding}:\n\t${path.join(root, "native/libonnxruntime.1.30.0.dylib")} (compatibility version 1.0.0)`;
       }
       return inspect("", args);
     }), /Unresolved native dependency/);
     assert.deepEqual(validateDarwinX64NativeBundle(bundle, (_command, args) => {
-      if (args[0] === "-L" && args[1] === binding) {
+      if (args[2] === "-L" && args[3] === binding) {
         return `${binding}:\n\t${library} (compatibility version 1.0.0)`;
       }
       return inspect("", args);
@@ -140,6 +162,13 @@ test("Darwin x64 bundle scan resolves native dependencies and permits universal 
       "node_modules/example/build/Release/libexample.dylib",
       "runtime/node",
     ]);
+    assert.throws(() => validateDarwinX64NativeBundle(bundle, (_command, args) => {
+      if (args[2] === "-l" && args[3] === binding) return machoLoadCommands("14.0", true);
+      if (args[2] === "-L" && args[3] === binding) {
+        return `${binding}:\n\t${library} (compatibility version 1.0.0)`;
+      }
+      return inspect("", args);
+    }), /targets macOS 14\.0, above bundled Node floor 13\.5/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

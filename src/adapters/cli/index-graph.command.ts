@@ -2,6 +2,7 @@ import path from "node:path";
 
 import { log } from "@clack/prompts";
 
+import { applyNoColorPrecedence } from "./cli-presentation.js";
 import { cliProgressRunner } from "./cli-progress-reporter.js";
 import {
   formatIncrementalSync,
@@ -13,6 +14,7 @@ import { GRAPH_INDEX_VERSION } from "../../config/constants.js";
 import { syncRepository, type IndexPipelineResult } from "../../core/indexing/index-pipeline.service.js";
 
 async function main(): Promise<void> {
+  applyNoColorPrecedence();
   const args = process.argv.slice(2);
   const repoArgument = args.find((argument) => argument !== "--skip-git") ?? ".";
   const repoPath = path.resolve(repoArgument);

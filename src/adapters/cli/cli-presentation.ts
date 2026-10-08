@@ -14,6 +14,10 @@ export type PresentationRow = {
   tone?: "default" | "muted" | "warning" | "success";
 };
 
+export function applyNoColorPrecedence(env: NodeJS.ProcessEnv = process.env): void {
+  if ("NO_COLOR" in env) delete env.FORCE_COLOR;
+}
+
 const PIXEL_WORDMARK = [
   "██████╗ ██████╗ ██████╗ ███████╗ █████╗ ████████╗██╗      █████╗ ███████╗",
   "██╔════╝██╔═══██╗██╔══██╗██╔════╝██╔══██╗╚══██╔══╝██║     ██╔══██╗██╔════╝",
@@ -27,6 +31,7 @@ export function getTerminalCapabilities(
   stream: NodeJS.WriteStream = process.stdout,
   env: NodeJS.ProcessEnv = process.env,
 ): TerminalCapabilities {
+  applyNoColorPrecedence(env);
   const isCI = env.CI === "true";
   const isTTY = stream.isTTY === true;
   const color = isTTY && !isCI && !("NO_COLOR" in env);

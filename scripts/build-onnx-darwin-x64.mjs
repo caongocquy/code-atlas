@@ -10,6 +10,7 @@ import { spawnSync } from "node:child_process";
 import {
   ONNX_RUNTIME_SOURCE_COMMIT,
   ONNX_RUNTIME_VERSION,
+  DARWIN_X64_MINIMUM_VERSION,
   validateDarwinX64OnnxPayload,
 } from "./onnx-darwin-x64.mjs";
 
@@ -44,7 +45,9 @@ export function createOnnxDarwinX64BuildArguments(sourceDir, buildDir, parallel 
     "--skip_submodule_sync",
     "--skip_tests",
     "--skip_nodejs_tests",
-    "--cmake_extra_defines", "CMAKE_OSX_ARCHITECTURES=x86_64",
+    "--cmake_extra_defines",
+    "CMAKE_OSX_ARCHITECTURES=x86_64",
+    `CMAKE_OSX_DEPLOYMENT_TARGET=${DARWIN_X64_MINIMUM_VERSION}`,
   ];
 }
 
@@ -93,7 +96,10 @@ export function buildDarwinX64OnnxRuntime(sourceDir, outputDir) {
 
   const temporaryBuild = fs.mkdtempSync(path.join(os.tmpdir(), "code-atlas-onnx-x64-build-"));
   try {
-    run("python3", createOnnxDarwinX64BuildArguments(source, path.join(temporaryBuild, "build")), { cwd: source });
+    run("python3", createOnnxDarwinX64BuildArguments(source, path.join(temporaryBuild, "build")), {
+      cwd: source,
+      env: { ...process.env, MACOSX_DEPLOYMENT_TARGET: DARWIN_X64_MINIMUM_VERSION },
+    });
     const files = validateDarwinX64OnnxPayload(sourcePayload);
     fs.mkdirSync(path.dirname(output), { recursive: true });
     fs.cpSync(sourcePayload, output, {

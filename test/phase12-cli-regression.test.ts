@@ -25,7 +25,7 @@ import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
 
 const execFile = promisify(execFileCallback);
 const cliPath = path.resolve("src/cli.ts");
-const tsxLoader = createRequire(import.meta.url).resolve("tsx/esm");
+const tsxLoader = pathToFileURL(createRequire(import.meta.url).resolve("tsx/esm")).href;
 
 async function fixture(name: string): Promise<string> {
   return mkdtemp(path.join(tmpdir(), `code-atlas-phase-12-${name}-`));
@@ -74,10 +74,10 @@ test("scanner prunes ignored and built-in dependency trees before walking", asyn
     const files = (await scanRepo(repoPath)).map((file) => path.relative(repoPath, file));
     assert.deepEqual(files, [
       "README.md",
-      "references/kept/source.ts",
-      "src/a.ts",
-      "src/b.ts",
-      "src/main.go",
+      path.join("references", "kept", "source.ts"),
+      path.join("src", "a.ts"),
+      path.join("src", "b.ts"),
+      path.join("src", "main.go"),
     ]);
   } finally {
     await rm(repoPath, { recursive: true, force: true });
@@ -418,7 +418,7 @@ test("Codex reports an absolute launcher with missing files as stale", async () 
       cwd: repoPath,
       home,
       env: { PATH: bin },
-      platform: "linux",
+      platform: process.platform,
     }).status("codex", { repoPath });
     assert.equal(status.state, "stale");
     assert.equal(status.codeAtlasMcpConfigured, false);

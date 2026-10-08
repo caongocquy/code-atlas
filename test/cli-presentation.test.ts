@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { createCliCommandReporter } from "../src/adapters/cli/cli-command-reporter.js";
 import {
+  applyNoColorPrecedence,
   getTerminalCapabilities,
   renderBrandHeader,
   renderHeader,
@@ -23,6 +24,16 @@ test("terminal capabilities distinguish TTY, CI, and NO_COLOR presence", () => {
   assert.deepEqual(getTerminalCapabilities(stream, { NO_COLOR: "" }), { isTTY: true, color: false, interactive: true });
   assert.deepEqual(getTerminalCapabilities(stream, { CI: "true" }), { isTTY: true, color: false, interactive: false });
   assert.deepEqual(getTerminalCapabilities({ isTTY: false } as NodeJS.WriteStream, {}), plain);
+});
+
+test("NO_COLOR overrides FORCE_COLOR while FORCE_COLOR remains available otherwise", () => {
+  const plainEnv: NodeJS.ProcessEnv = { NO_COLOR: "1", FORCE_COLOR: "1" };
+  applyNoColorPrecedence(plainEnv);
+  assert.equal(plainEnv.FORCE_COLOR, undefined);
+
+  const forcedColorEnv: NodeJS.ProcessEnv = { FORCE_COLOR: "1" };
+  applyNoColorPrecedence(forcedColorEnv);
+  assert.equal(forcedColorEnv.FORCE_COLOR, "1");
 });
 
 test("presentation primitives render hierarchy, alignment, and next actions", () => {
