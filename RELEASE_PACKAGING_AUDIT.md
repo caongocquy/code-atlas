@@ -126,29 +126,37 @@ Release source tests and source/dist imports passed; release packing then
 failed because `npm pack --silent` included the prepack verifier's stdout in
 the filename. The portable Windows job failed because Git Bash could not use
 the native `$RUNNER_TEMP` path for tar extraction; Linux and macOS arm64
-portable bundling hit the same npm pack JSON contamination. The follow-up fixes
-both and has not yet received per-SHA CI. Its local full regression comparison
-against `cba67bad` is 1,359 pass / 48 inherited fail / 3 skip (baseline
-1,353 / 48 / 3), with zero added or changed failure identities and zero added
-skips. The focused parser, packaging, workflow, security and correctness
-selection passed 130/130. These local checks do not replace fresh release-smoke
-and portable CI on the pushed SHA.
+portable bundling hit the same npm pack JSON contamination. Follow-up commits
+fixed these issues; the final cleanup removes temporary parser extraction after
+copying into the ignored `vendor/parsers/` directory. Exact-head qualification
+results follow.
 
-On `f88420356960160f500de0884390f7a0a3725484`, the release gate restored and
+### Final PR #11 parser qualification (2026-10-10, Asia/Ho_Chi_Minh)
+
+On `f88420356960160f500de0884390f7a0a3725484`, release smoke restored and
 verified all parser payloads, built source/dist imports, and packed the npm
-artifact; [release run 37949448163](https://github.com/caongocquy/code-atlas/actions/runs/37949448163)
-then failed at `pnpm run lint` because ESLint traversed the restored payload
-inside `tmp/parser-package/`. The follow-up removes that temporary extraction
-after copying the payload into the already ignored `vendor/parsers/` directory.
-The portable run [37949447969](https://github.com/caongocquy/code-atlas/actions/runs/37949447969)
-had restored and verified payloads on the four platforms and was still running;
-the rerun on the follow-up SHA remains required.
+artifact, then failed at `pnpm run lint` because ESLint traversed the restored
+payload inside `tmp/parser-package/` ([run
+37949448163](https://github.com/caongocquy/code-atlas/actions/runs/37949448163)).
+The `8fc50be0dcfe668be39e30a167f30f10e3ef8d54` follow-up removes that temporary
+extraction after copying into ignored `vendor/parsers/` and passes the release
+and portable gates:
+
+- [Release smoke 37950379423](https://github.com/caongocquy/code-atlas/actions/runs/37950379423): PASS. Clean checkout restored and verified the universal payload; source/dist imports, runtime manifest, packed npm consumer, and simulated global install all passed.
+- [Portable matrix 37950379430](https://github.com/caongocquy/code-atlas/actions/runs/37950379430): PASS on Linux x64, Windows x64, macOS ARM64, and macOS x64. All four full-suite regression comparisons passed. Intel macOS built the pinned ONNX Runtime 1.30.0 x64 payload, then passed embedding, portable packaging, all twelve parser loads, CLI smoke, MCP stdio startup/tools, archive extraction, and repeated runtime smoke.
+- [Phase 14B 37950378931](https://github.com/caongocquy/code-atlas/actions/runs/37950378931) and [Phase 15D 37950378817](https://github.com/caongocquy/code-atlas/actions/runs/37950378817): PASS on the same SHA.
+
+Local full-suite comparison against `cba67bad` is 1,359 pass / 48 inherited
+fail / 3 skip (baseline 1,353 / 48 / 3), with zero added or changed failure
+identities and zero added skips. The focused parser, packaging, workflow,
+security, and correctness selection passed 130/130; the final workflow-cleanup
+regression passed 10/10.
 
 ### Current blockers and publication boundaries
 
-1. Findings 1–5 are addressed on the security/correctness continuation and local full-suite comparisons have zero regressions. The `50c53b1` release/portable runs lacked generated `vendor/parsers/tree-sitter`; `322a323` built and restored the payload, but exposed pack-output parsing and Windows temp-path failures. Both follow-up fixes need per-SHA Actions qualification; do not count skipped tests or consumers as passes.
-2. Finding 7 remains deferred because storage GC is explicitly out of scope; historical-generation retention is still unbounded. Finding 8 remains open because duplicate legacy/generation semantic vector writes were not part of the requested slice. Keep release readiness **NO-GO** until release owners decide whether finding 8 blocks this release.
-3. The integrated commit still needs final release qualification of packed CLI/MCP, portable artifacts, macOS x64 ONNX embedding and distribution checks. Run these against the integrated commit; the earlier native results apply only to their named SHAs.
+1. Findings 1–6 are fixed. Release smoke and all four portable platform gates pass on PR head `8fc50be0dcfe668be39e30a167f30f10e3ef8d54`; local comparison against `cba67bad` reports zero added/changed failures and zero new skips. Earlier missing-payload, package-output, Windows temp-path, and lint-staging failures are resolved and retained above as historical evidence.
+2. Finding 7 remains deferred because storage GC is explicitly out of scope; historical-generation retention remains unbounded. Finding 8 remains open because duplicate legacy/generation semantic vector writes were outside this requested slice. Overall release readiness remains **NO-GO until release owners record whether finding 8 blocks this release**.
+3. Because this PR is intentionally unmerged, run final packed CLI/MCP, portable, macOS x64 ONNX embedding, and distribution qualification again on the integrated commit before release sign-off. PR-head results above do not qualify a later integrated SHA.
 4. The candidate version remains 1.6.0. No version bump, tag, npm publication, GitHub Release or Homebrew update is included in this task.
 
 All other valid worktrees were snapshotted before the fix: 22 checkouts, 2,513 dirty/untracked file hashes plus HEAD/status. A subsequent verification found **zero drift** in all 22 HEADs/statuses and 2,513 file hashes. Changes remain isolated to this branch. No merge, tag, npm/GitHub publication or Homebrew update is authorized or performed.
