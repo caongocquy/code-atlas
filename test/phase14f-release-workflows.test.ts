@@ -15,6 +15,7 @@ const smoke = readFileSync(path.join(root, ".github/workflows/release-smoke.yml"
 const portable = readFileSync(path.join(root, ".github/workflows/portable-packaging-smoke.yml"), "utf8");
 const parserBuild = readFileSync(path.join(root, ".github/workflows/tree-sitter-installation.yml"), "utf8");
 const bundleSmoke = readFileSync(path.join(root, "scripts/smoke-release-bundle.mjs"), "utf8");
+const bundlePackage = readFileSync(path.join(root, "scripts/package-release-bundle.mjs"), "utf8");
 const workspace = readFileSync(path.join(root, "pnpm-workspace.yaml"), "utf8");
 
 test("Phase14F release workflows are valid YAML", () => {
@@ -30,6 +31,7 @@ test("manual release smoke verifies a real clean npm consumer", () => {
   assert.match(smoke, /pnpm@11\.22\.0/);
   assert.match(smoke, /pnpm install --frozen-lockfile/);
   assert.match(smoke, /npm pack --silent/);
+  assert.match(smoke, /npm pack --silent[^\n]*\| tail -n 1/);
   assert.match(smoke, /workspace:|link:|file:/);
   assert.match(smoke, /npm install "\$TARBALL"/);
   assert.match(smoke, /npm install -g "\$TARBALL" --prefix/);
@@ -49,6 +51,8 @@ test("release and portable checks restore and verify the complete parser payload
     assert.match(workflow, /uses: \.\/\.github\/workflows\/tree-sitter-installation\.yml/);
     assert.match(workflow, /code-atlas-parser-consumer-package/);
     assert.match(workflow, /tar -xzf/);
+    assert.match(workflow, /tmp\/parser-package/);
+    assert.doesNotMatch(workflow, /RUNNER_TEMP\/parser-package/);
     assert.match(workflow, /node scripts\/parser-distribution\.mjs verify --all-targets/);
     const verified = workflow.indexOf("verify --all-targets");
     const build = Math.max(workflow.indexOf("pnpm run build"), workflow.indexOf("pnpm build"));
@@ -59,6 +63,8 @@ test("release and portable checks restore and verify the complete parser payload
   assert.match(smoke, /require\.resolve\("@showdar2112\/code-atlas\/dist\/core\/graph\/parsers\/native-runtime\.js"\)/);
   assert.match(bundleSmoke, /native parsers load every supported language from the artifact/);
   assert.match(bundleSmoke, /load\("core\/graph\/parsers\/native-runtime\.js"\)/);
+  assert.match(bundlePackage, /function parsePackMetadata\(/);
+  assert.match(bundlePackage, /lastIndexOf\("\\n\["\)/);
 });
 
 test("native parser policy delivers every grammar with only required tooling approvals", () => {

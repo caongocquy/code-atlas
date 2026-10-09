@@ -63,9 +63,9 @@ jobs:
           package=$(find .parser-package -type f -name '*.tgz' -print)
           test -n "$package"
           test "$(printf '%s\n' "$package" | wc -l | tr -d '[:space:]')" -eq 1
-          mkdir -p "$RUNNER_TEMP/parser-package" vendor
-          tar -xzf "$package" -C "$RUNNER_TEMP/parser-package" package/vendor/parsers
-          cp -R "$RUNNER_TEMP/parser-package/package/vendor/parsers" vendor/parsers
+          mkdir -p tmp/parser-package vendor
+          tar -xzf "$package" -C tmp/parser-package package/vendor/parsers
+          cp -R tmp/parser-package/package/vendor/parsers vendor/parsers
           node scripts/parser-distribution.mjs verify --all-targets
 
       - name: Run release verification
@@ -106,7 +106,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tarball_name="$(npm pack --silent --pack-destination "$RUNNER_TEMP")"
+          tarball_name="$(npm pack --silent --pack-destination "$RUNNER_TEMP" | tail -n 1)"
           tarball="$RUNNER_TEMP/$tarball_name"
           echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
           tar -xOf "$tarball" package/package.json > "$RUNNER_TEMP/packed-package.json"

@@ -73,9 +73,9 @@ jobs:
           package=$(find .parser-package -type f -name '*.tgz' -print)
           test -n "$package"
           test "$(printf '%s\n' "$package" | wc -l | tr -d '[:space:]')" -eq 1
-          mkdir -p "$RUNNER_TEMP/parser-package" vendor
-          tar -xzf "$package" -C "$RUNNER_TEMP/parser-package" package/vendor/parsers
-          cp -R "$RUNNER_TEMP/parser-package/package/vendor/parsers" vendor/parsers
+          mkdir -p tmp/parser-package vendor
+          tar -xzf "$package" -C tmp/parser-package package/vendor/parsers
+          cp -R tmp/parser-package/package/vendor/parsers vendor/parsers
           node scripts/parser-distribution.mjs verify --all-targets
       - name: Build candidate and run packaging regressions
         shell: bash

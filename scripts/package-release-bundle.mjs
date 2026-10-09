@@ -58,6 +58,11 @@ function capture(command, args, options = {}) {
   return result.stdout;
 }
 
+function parsePackMetadata(output) {
+  const jsonStart = output.lastIndexOf("\n[");
+  return JSON.parse(jsonStart < 0 ? output : output.slice(jsonStart + 1));
+}
+
 const args = parseArgs(process.argv.slice(2));
 const tool = args.tool;
 const binName = args["bin-name"];
@@ -88,14 +93,14 @@ fs.mkdirSync(tempDir, { recursive: true });
 fs.mkdirSync(bundleDir, { recursive: true });
 
 const packOutput = capture("npm", ["pack", "--json", "--pack-destination", tempDir], { cwd: packageDir });
-const packMetadata = JSON.parse(packOutput);
+const packMetadata = parsePackMetadata(packOutput);
 if (!Array.isArray(packMetadata) || packMetadata.length !== 1 || !packMetadata[0]?.filename) {
   fail("npm pack did not return exactly one package archive");
 }
 
 const packageArchive = path.join(tempDir, packMetadata[0].filename);
 // Resolve Swift from an integrity-pinned archive with only its build-only CLI edge removed.
-const [swift] = JSON.parse(capture("npm", ["pack", "tree-sitter-swift@0.7.1", "--json", "--pack-destination", tempDir]));
+const [swift] = parsePackMetadata(capture("npm", ["pack", "tree-sitter-swift@0.7.1", "--json", "--pack-destination", tempDir]));
 if (swift?.integrity !== "sha512-pneKVTuGamaBsqqqfB9BvNQjktzh/0IVPR54jLB5Fq/JTDQwYHd0Wo6pVyZ5jAYpbztzq+rJ/rpL9ruxTmSoKw==") {
   fail("Unaudited tree-sitter-swift archive integrity");
 }
@@ -104,7 +109,7 @@ fs.mkdirSync(swiftDir);
 // GNU tar on Windows treats drive-letter archive paths as remote hosts.
 run("tar", ["-xzf", swift.filename, "-C", "swift-runtime"], { cwd: tempDir });
 removeSwiftBuildDependency(path.join(swiftDir, "package"));
-const [runtimeSwift] = JSON.parse(capture("npm", ["pack", "--json", "--pack-destination", swiftDir], { cwd: path.join(swiftDir, "package") }));
+const [runtimeSwift] = parsePackMetadata(capture("npm", ["pack", "--json", "--pack-destination", swiftDir], { cwd: path.join(swiftDir, "package") }));
 const assets = metadata => metadata.files.filter(file => file.path !== "package.json")
   .map(file => `${file.path}:${file.size}`).sort();
 if (JSON.stringify(assets(swift)) !== JSON.stringify(assets(runtimeSwift))) {

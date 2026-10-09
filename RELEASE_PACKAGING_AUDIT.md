@@ -116,16 +116,27 @@ workflow. Release and portable qualification depend on it, restore the
 same-run packed parser payload into `vendor/parsers/`, and run
 `verify --all-targets` before build/tests. Checks exercise source and compiled
 runtime imports, installed npm tarball resolution, all twelve portable
-grammars, and portable MCP stdio. Full qualification is pending on the
-follow-up head; add its exact commit SHA and Actions URLs when jobs finish.
-Local full-suite comparison against `cba67bad` on the follow-up worktree:
-baseline 1,353 pass / 48 fail / 3 skip; candidate 1,359 pass / 48 fail / 3
-skip; zero added/changed failures and zero added skips. Focused parser,
-packaging, workflow, security and correctness selection passed 129/129.
+grammars, and portable MCP stdio. On head
+`322a323767bb2d19eb638f2336aa0952fa193d89`, the four native prebuilds and
+universal assembly succeeded in both [release run
+37944509574](https://github.com/caongocquy/code-atlas/actions/runs/37944509574)
+and [portable run
+37944509173](https://github.com/caongocquy/code-atlas/actions/runs/37944509173).
+Release source tests and source/dist imports passed; release packing then
+failed because `npm pack --silent` included the prepack verifier's stdout in
+the filename. The portable Windows job failed because Git Bash could not use
+the native `$RUNNER_TEMP` path for tar extraction; Linux and macOS arm64
+portable bundling hit the same npm pack JSON contamination. The follow-up fixes
+both and has not yet received per-SHA CI. Its local full regression comparison
+against `cba67bad` is 1,359 pass / 48 inherited fail / 3 skip (baseline
+1,353 / 48 / 3), with zero added or changed failure identities and zero added
+skips. The focused parser, packaging, workflow, security and correctness
+selection passed 130/130. These local checks do not replace fresh release-smoke
+and portable CI on the pushed SHA.
 
 ### Current blockers and publication boundaries
 
-1. Findings 1–5 are addressed on the security/correctness continuation and local full-suite comparisons have zero regressions. On head `50c53b16c87cbe38fdb38c3e14948478caee29b3`, Phase 14B parser-platform CI passed, but release smoke and portable matrix failed before qualification because their setup omitted generated `vendor/parsers/tree-sitter`. The follow-up assembly fix is pending per-SHA Actions qualification; do not count skipped tests or consumers as passes.
+1. Findings 1–5 are addressed on the security/correctness continuation and local full-suite comparisons have zero regressions. The `50c53b1` release/portable runs lacked generated `vendor/parsers/tree-sitter`; `322a323` built and restored the payload, but exposed pack-output parsing and Windows temp-path failures. Both follow-up fixes need per-SHA Actions qualification; do not count skipped tests or consumers as passes.
 2. Finding 7 remains deferred because storage GC is explicitly out of scope; historical-generation retention is still unbounded. Finding 8 remains open because duplicate legacy/generation semantic vector writes were not part of the requested slice. Keep release readiness **NO-GO** until release owners decide whether finding 8 blocks this release.
 3. The integrated commit still needs final release qualification of packed CLI/MCP, portable artifacts, macOS x64 ONNX embedding and distribution checks. Run these against the integrated commit; the earlier native results apply only to their named SHAs.
 4. The candidate version remains 1.6.0. No version bump, tag, npm publication, GitHub Release or Homebrew update is included in this task.
