@@ -13,6 +13,7 @@ import {
   compilerGuardSource,
   createConsumerConfig,
   isBlockedCompilerCommand,
+  npmConfigFiles,
   supportsNpmAllowScripts,
 } from '../scripts/test-parser-consumer.mjs';
 
@@ -59,7 +60,7 @@ test('consumer workflow selects exactly one nested tarball on Bash 3-compatible 
         writeFileSync(path.join(packageDirectory, 'package-' + index + '.tgz'), 'fixture');
       }
       const githubEnv = path.join(root, 'github-env');
-      const child = spawnSync('/bin/bash', ['-e', '-o', 'pipefail', '-c', selector], {
+      const child = spawnSync(process.platform === 'win32' ? 'bash' : '/bin/bash', ['-e', '-o', 'pipefail', '-c', selector], {
         cwd: root,
         encoding: 'utf8',
         env: { ...process.env, GITHUB_WORKSPACE: root, GITHUB_ENV: githubEnv },
@@ -83,6 +84,30 @@ test('Windows release-suite launchers preserve escaped backslashes and CRLF', ()
   for (const launcher of launchers) {
     assert.ok(launcher.includes(String.raw`%%~dp0..\\..\\dist\\cli.js`));
     assert.ok(launcher.includes(String.raw`\r\n`));
+  }
+});
+
+test('npm accepts separate empty user and global config files', () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'parser-npm-config-'));
+  try {
+    const configs = npmConfigFiles(root);
+    writeFileSync(configs.user, '');
+    writeFileSync(configs.global, '');
+    assert.notEqual(configs.user, configs.global);
+
+    const windows = process.platform === 'win32';
+    const child = spawnSync(windows ? 'cmd.exe' : 'npm', windows ? ['/d', '/s', '/c', 'npm --version'] : ['--version'], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        npm_config_userconfig: configs.user,
+        npm_config_globalconfig: configs.global,
+      },
+    });
+    assert.equal(child.status, 0, child.stderr);
+    assert.match(child.stdout, /^\d+\.\d+\.\d+/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

@@ -30,6 +30,24 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22.23.3
+      - name: Record native build toolchain
+        shell: bash
+        run: |
+          node --version
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            xcodebuild -version
+            clang --version
+          elif [[ "$RUNNER_OS" == "Linux" ]]; then
+            cc --version
+            c++ --version
+            gcc-11 --version
+            g++-11 --version
+          else
+            vswhere="/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
+            "$vswhere" -latest -products '*' -format json
+            installation=$("$vswhere" -latest -products '*' -property installationPath | tr -d '\r')
+            cat "$(cygpath -u "$installation")/VC/Auxiliary/Build/Microsoft.VCToolsVersion.default.txt"
+          fi
       - name: Install pinned build dependencies
         shell: bash
         run: |

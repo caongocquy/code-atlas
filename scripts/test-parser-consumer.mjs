@@ -44,6 +44,13 @@ export function supportsNpmAllowScripts(version) {
   return Number.parseInt(String(version).split(".")[0], 10) >= 11;
 }
 
+export function npmConfigFiles(root) {
+  return {
+    user: path.join(root, "empty-user.npmrc"),
+    global: path.join(root, "empty-global.npmrc"),
+  };
+}
+
 export function createConsumerConfig({ manager, mode, tarball }) {
   assert.ok(["npm", "pnpm"].includes(manager), "manager must be npm or pnpm");
   assert.ok(["default", "approved"].includes(mode), "mode must be default or approved");
@@ -223,16 +230,17 @@ async function main() {
   const { manifest, pnpmWorkspace } = createConsumerConfig(options);
   if (pnpmWorkspace) fs.writeFileSync(path.join(consumer, "pnpm-workspace.yaml"), pnpmWorkspace);
   fs.writeFileSync(path.join(consumer, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`);
-  const userNpmrc = path.join(root, "empty.npmrc");
-  fs.writeFileSync(userNpmrc, "");
+  const npmConfigs = npmConfigFiles(root);
+  fs.writeFileSync(npmConfigs.user, "");
+  fs.writeFileSync(npmConfigs.global, "");
   const guard = installCompilerGuards(root);
   const env = { ...process.env };
   for (const key of Object.keys(env)) {
     if (/^(?:npm|pnpm)_config_(?:ignore_scripts|legacy_peer_deps|force|allow_scripts)$/i.test(key)) delete env[key];
   }
   Object.assign(env, {
-    npm_config_userconfig: userNpmrc,
-    npm_config_globalconfig: userNpmrc,
+    npm_config_userconfig: npmConfigs.user,
+    npm_config_globalconfig: npmConfigs.global,
     NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --require=${JSON.stringify(guard.preload)}`.trim(),
     npm_config_cache: options.manager === "npm" ? cache : process.env.npm_config_cache,
     npm_config_audit: "false",
