@@ -127,6 +127,32 @@ test("full owner context promotes its matching same-name method", async () => {
   });
 });
 
+test("long owner-context queries preserve ranking without exceeding SQLite bindings", async () => {
+  const indexed = unit("gateways.ts", "class PaymentGateway { authorize() {} }\nclass BackupGateway { authorize() {} }\n");
+
+  await withIndexedUnits([indexed], async (root) => {
+    for (const count of [40, 50]) {
+      const extra = Array.from({ length: count }, (_, index) => `term${index}`).join(" ");
+      const results = await searchLexical(`PaymentGateway authorize ${extra}`, 20, root);
+      assert.equal(results[0]?.startLine, 1);
+      assert.equal(results[0]?.symbolName, "authorize authorize");
+    }
+  });
+});
+
+test("repeated and Unicode query terms remain searchable", async () => {
+  const indexed = unit("unicode.ts", "function 東京() {}\nfunction caféIndex() {}\n");
+
+  await withIndexedUnits([indexed], async (root) => {
+    const repeated = await searchLexical(Array(50).fill("東京").join(" "), 20, root);
+    const unicode = await searchLexical("東京", 20, root);
+    const accented = await searchLexical("caféIndex", 20, root);
+    assert.ok(repeated.some((result) => result.symbolName?.includes("東京")));
+    assert.ok(unicode.some((result) => result.symbolName?.includes("東京")));
+    assert.ok(accented.some((result) => result.symbolName?.includes("caféIndex")));
+  });
+});
+
 test("shared partial owner context does not change lexical relevance scores", async () => {
   const indexed = unit("gateways.ts", "class CardGateway { authorize() {} }\nclass ApiGateway { authorize() {} }\n");
 

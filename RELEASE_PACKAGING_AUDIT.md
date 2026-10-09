@@ -58,24 +58,41 @@ Baseline: read-only audit in Codex chat **Set up Matt Pocock skills**, thread `0
 
 | # | Original finding | Current status | Current evidence / release implication |
 | --- | --- | --- | --- |
-| 1 | HTTP Inspector exposes repository secrets | **Open** | `src/adapters/http/http-server.ts:162-196` reads arbitrary in-repo source paths; line 235 binds `0.0.0.0`, without authentication. `.env` passes the lexical boundary. No real secret was read during reconciliation. Security blocker. |
-| 2 | Symlink bypasses HTTP repository source boundary | **Open** | `src/adapters/http/repository-source-path.ts:3` checks path text only. A temporary in-repo symlink returned a harmless marker from outside the temporary repo. Existing inspector test covers `../`, not this bypass. Security blocker. |
-| 3 | Long owner-context lexical query exceeds SQLite bind limit | **Open on release source** | `src/core/lexical/lexical-search.service.ts:40` generates 820 owner-name combinations for 40 distinct tokens; `src/storage/atlas/atlas.store.ts:2365` repeats binds per query term. Actual `searchLexical` probes with 40 and 50 tokens both throw `too many SQL variables`. This is present in committed release code, not merely the primary dirty Phase16C diff. Correctness blocker. |
-| 4 | Stale candidate can replace newer active generation | **Open at store API; normal pipeline mitigated** | `src/storage/atlas/atlas.store.ts:2201-2253` publication does not compare parent generation with current active generation. `runPipeline` at `src/core/indexing/index-pipeline.service.ts:1102` serializes normal operations with a writer lock. Do not label store-level CAS fixed by pipeline serialization. |
-| 5 | Config scanning crosses ignored/nested-repo boundaries | **Partially fixed** | `scanModuleConfigFiles` at `src/core/indexing/filesystem-change-detector.ts:47` respects resolved excludes. Isolated scan omitted an ignored package config but still returned `nested/package.json` from a nested `.git` repo; the source scanner excludes its source files. Nested-repo config boundary remains open. |
+| 1 | HTTP Inspector exposes repository secrets | **Fixed in this continuation** | The HTTP server binds to loopback by default. `/api/source` now requires a graph-indexed path, rejects ignored paths and sensitive filenames, and reads through the checked file handle. Explicit remote binding requires both `CODE_ATLAS_HTTP_HOST` and `CODE_ATLAS_HTTP_ALLOWED_HOSTS`; Host and Origin are validated. Adversarial HTTP integration covers `.env`, ignored/unindexed paths, DNS-rebinding Host and cross-origin Origin. |
+| 2 | Symlink bypasses HTTP repository source boundary | **Fixed in this continuation** | `/api/source` rejects symlink components and nested-repository paths, opens the final file with `O_NOFOLLOW` where supported, and verifies canonical path and file identity before and after reading. HTTP integration covers an indexed symlink plus concurrent symlink replacement attempts. |
+| 3 | Long owner-context lexical query exceeds SQLite bind limit | **Fixed in this continuation** | Owner context is passed as one JSON value and expanded by SQLite `json_each`, instead of repeating hundreds of SQL bindings per term. Unicode-aware tokenization preserves CJK and accented identifiers. 50-word, repeated-term, Unicode and existing lexical ranking regressions pass. |
+| 4 | Stale candidate can replace newer active generation | **Fixed in this continuation** | `publishCandidateGeneration` compares the candidate's recorded parent with the active generation inside its `BEGIN IMMEDIATE` publication transaction. A two-connection competing-candidate regression confirms only the still-current parent can publish. |
+| 5 | Config scanning crosses ignored/nested-repo boundaries | **Fixed in this continuation** | Config discovery continues to use resolved Git and repository excludes and now stops at nested repositories identified by a `.git` file or directory. The regression covers ignored config files and nested repositories. |
 | 6 | Unchanged semantic sync re-embeds repository | **Fixed for unchanged sync** | Compatible providers plus no semantic-dirty paths enter the no-op gate at `src/core/indexing/index-pipeline.service.ts:557`; no embedding/publication occurs. Fifteen focused Pre17E tests pass, including zero semantic writes on no-op and reuse when one source changes. |
 | 7 | Every sync retains another full generation forever | **Partially fixed** | No-op sync reuses the active generation, preserving generation count/database snapshot. Changed-generation retention remains unbounded; no generation-pruning path exists. `deleteUnreferencedFactBlobs` at `src/storage/atlas/atlas.store.ts:1414` cannot collect facts still held by historical generation bindings. |
 | 8 | Semantic candidate duplicates legacy/generation vectors | **Open** | `prepareSemanticCandidateFromFacts` at `src/core/semantic/semantic-index.service.ts:96` calls built-in vector upsert, which writes legacy `semantic_vectors` (`src/storage/atlas/sqlite-vector.store.ts:48`); the pipeline then stages `generation_semantic_vectors` at line 986. Duplicate writes/storage remain. |
 
-**Reconciled total: one fixed, two partial, five open (store publication is mitigated in the normal pipeline).** No finding is silently dropped or marked fixed based on an old run. This continuation records their status; it does not change HTTP APIs, indexing/storage semantics, or merge dirty Phase16C/17 features. Source/graph discovery was unavailable or stale for this isolated worktree; reconciliation used direct source and isolated marker/database probes, with no reindexing.
+**Reconciled total: six fixed, two deferred/open.** Finding 6 was fixed by the existing no-op sync gate. Finding 7 (historical generation retention) remains deferred; this request explicitly excludes storage GC. Finding 8 (duplicate legacy/generation semantic vector writes) remains open and was not expanded into this security/correctness slice. Evidence for findings 1–5 is from the isolated `fix/v1.6.1-security-correctness` continuation and its tests below; the stale source/graph index was not used as proof.
+
+### Security/correctness continuation (2026-10-09)
+
+Branch `fix/v1.6.1-security-correctness` starts at verified candidate
+`cba67badb7d7ba263e65e551d58de52779bd43cd`. The HTTP source integration covers
+`.env`, credential files, ignored and unindexed paths, final and directory
+symlinks, symlink replacement, Host rebinding and cross-origin Origin. Lexical
+regressions cover 40- and 50-word owner queries, repeated terms, Unicode, and
+the existing exact-name/ranking behavior. Config discovery and competing
+generation publication have focused regressions.
+
+Local focused run: 25/25 passed. Typecheck and lint passed. Full-suite
+comparison against `cba67bad` after building both checkouts passed the
+assertion-level comparator: baseline 1,353 pass / 48 fail / 3 skip; candidate
+1,358 pass / 48 fail / 3 skip; zero added or changed failure identities and
+zero added skips. The suite itself is not green; all 48 failures are present
+unchanged at the baseline SHA. Native parser and cross-platform release CI
+remain per-SHA gates.
 
 ### Current blockers and publication boundaries
 
-1. Require complete per-SHA native/assembly/consumer/regression results, including raw Windows GraphQL, EBUSY and real SCIP evidence. Windows qualification is unresolved at the source checkpoint above; subsequent run results must be read from their actual workflow artifacts. Skipped tests/consumers are not passing results.
-2. Resolve the open security and lexical correctness findings above before declaring v1.6.1 release-ready. Record decisions for the remaining partial/open storage and config findings explicitly.
-3. Existing publication/portable-release workflows still need the same-SHA qualified universal parser payload required by fail-closed `prepack`; the qualification workflow alone does not establish fresh release-workflow readiness.
-4. The candidate version remains 1.6.0. No version bump or requalification of version 1.6.1 has occurred.
-5. Ordinary npm macOS x64 ONNX execution remains separate from historical portable qualification. The older full-feature ONNX build passed embedding on Intel macOS at its named SHA; no current regression is inferred from age alone, but the latest parser-only consumer tests do not exercise a real Intel embedding model.
+1. Findings 1–5 are addressed on the security/correctness continuation and its local full-suite comparison has zero regressions. Per-SHA native cross-platform parser/consumer CI is still required before this continuation can be called release-qualified. Do not count skipped tests or consumers as passes.
+2. Finding 7 remains deferred because storage GC is explicitly out of scope; historical-generation retention is still unbounded. Finding 8 remains open because duplicate legacy/generation semantic vector writes were not part of the requested slice. Keep release readiness **NO-GO** until release owners decide whether finding 8 blocks this release.
+3. The integrated commit still needs final release qualification of packed CLI/MCP, portable artifacts, macOS x64 ONNX embedding and distribution checks. Run these against the integrated commit; the earlier native results apply only to their named SHAs.
+4. The candidate version remains 1.6.0. No version bump, tag, npm publication, GitHub Release or Homebrew update is included in this task.
 
 All other valid worktrees were snapshotted before the fix: 22 checkouts, 2,513 dirty/untracked file hashes plus HEAD/status. A subsequent verification found **zero drift** in all 22 HEADs/statuses and 2,513 file hashes. Changes remain isolated to this branch. No merge, tag, npm/GitHub publication or Homebrew update is authorized or performed.
 
