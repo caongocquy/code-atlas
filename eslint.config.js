@@ -17,6 +17,12 @@ export default [
   },
   eslint.configs.recommended,
   {
+    files: ["scripts/diagnose-windows-graphql.mjs"],
+    languageOptions: {
+      globals: { process: "readonly" },
+    },
+  },
+  {
     files: ["src/**/*.ts", "test/**/*.ts", "web/**/*.ts"],
     languageOptions: {
       parser: babelParser,
