@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, URL } from 'node:url';
 import process from 'node:process';
+import { createRequire } from 'node:module';
 import { pipeline } from 'node:stream/promises';
 import { spawnSync } from 'node:child_process';
 
@@ -17,6 +18,9 @@ const REQUIRED_TARGETS = ['darwin-arm64', 'darwin-x64', 'linux-x64', 'win32-x64'
 const NATIVE_PACKAGES = ['tree-sitter-kotlin', '@driftlog/tree-sitter-dart'];
 const NODE_GYP_VERSION = '12.3.0';
 const NODE_ADDON_API_VERSION = '7.1.1';
+const RUNTIME_NODE_ADDON_API_VERSION = '8.9.2';
+const RUNTIME_REBUILT_TARGET = 'linux-x64';
+const RUNTIME_LINUX_COMPILERS = { cc: '/usr/bin/gcc-11', cxx: '/usr/bin/g++-11', baseline: 'ubuntu-22.04' };
 const NODE_HEADERS_VERSION = 'v22.23.3';
 const NAPI_VERSION = 8;
 
@@ -184,6 +188,9 @@ async function materializePackage(pkg, stageRoot, build = false) {
   };
   if (build) {
     const bytes = await compileNative(pkg, originalRoot, sourceSha256);
+    if (pkg.name === SOURCES.runtime.name && targetTuple() === RUNTIME_REBUILT_TARGET) {
+      await rm(path.join(destination, 'prebuilds', RUNTIME_REBUILT_TARGET), { recursive: true, force: true });
+    }
     const prebuildPath = path.join(destination, 'prebuilds', targetTuple(), 'napi.node');
     await mkdir(path.dirname(prebuildPath), { recursive: true });
     await writeFile(prebuildPath, bytes);
@@ -248,13 +255,18 @@ async function compileNative(pkg, sourceDirectory, sourceSha256) {
   if (process.version !== NODE_HEADERS_VERSION) fail(`Native builds must use Node ${NODE_HEADERS_VERSION}; found ${process.version}`);
   const nodeGyp = path.join(ROOT, 'node_modules', 'node-gyp', 'bin', 'node-gyp.js');
   const nodeGypManifest = path.join(ROOT, 'node_modules', 'node-gyp', 'package.json');
-  const addonApi = path.join(ROOT, 'node_modules', 'node-addon-api');
   if (!existsSync(nodeGyp) || !existsSync(nodeGypManifest)) fail(`Missing node-gyp@${NODE_GYP_VERSION} dev dependency. Install repository devDependencies first.`);
   const nodeGypPackage = JSON.parse(await readFile(nodeGypManifest, 'utf8'));
   if (nodeGypPackage.version !== NODE_GYP_VERSION) fail(`Expected node-gyp@${NODE_GYP_VERSION}, found ${nodeGypPackage.version}`);
-  if (!existsSync(path.join(addonApi, 'package.json'))) fail(`Missing node-addon-api@${NODE_ADDON_API_VERSION} dev dependency.`);
-  const addonManifest = JSON.parse(await readFile(path.join(addonApi, 'package.json'), 'utf8'));
-  if (addonManifest.version !== NODE_ADDON_API_VERSION) fail(`Expected node-addon-api@${NODE_ADDON_API_VERSION}, found ${addonManifest.version}`);
+  const rootRequire = createRequire(path.join(ROOT, 'package.json'));
+  const addonApiManifestPath = pkg.name === SOURCES.runtime.name
+    ? createRequire(rootRequire.resolve(SOURCES.runtime.name)).resolve('node-addon-api/package.json')
+    : path.join(ROOT, 'node_modules', 'node-addon-api', 'package.json');
+  if (!existsSync(addonApiManifestPath)) fail(`Missing node-addon-api build dependency for ${pkg.name}.`);
+  const addonManifest = JSON.parse(await readFile(addonApiManifestPath, 'utf8'));
+  const addonApiVersion = pkg.name === SOURCES.runtime.name ? RUNTIME_NODE_ADDON_API_VERSION : NODE_ADDON_API_VERSION;
+  if (addonManifest.version !== addonApiVersion) fail(`Expected node-addon-api@${addonApiVersion} for ${pkg.name}, found ${addonManifest.version}`);
+  const addonApi = path.dirname(realpathSync(addonApiManifestPath));
   if (!existsSync(path.join(sourceDirectory, 'binding.gyp'))) fail(`Missing binding.gyp in ${pkg.name}`);
   const stagedModule = path.join(sourceDirectory, 'node_modules', 'node-addon-api');
   await mkdir(path.dirname(stagedModule), { recursive: true });
@@ -263,9 +275,21 @@ async function compileNative(pkg, sourceDirectory, sourceSha256) {
   const args = [nodeGyp, 'rebuild', '--directory', sourceDirectory];
   if (existsSync(path.join(nodeRoot, 'include', 'node', 'node.h'))) args.push('--nodedir', nodeRoot);
   args.push('--', `-DNAPI_VERSION=${NAPI_VERSION}`);
+  if (pkg.name === SOURCES.runtime.name) args.push(`-Dnapi_build_version=${NAPI_VERSION}`);
+  let toolchain;
+  const buildEnv = { ...process.env, npm_config_nodedir: process.env.npm_config_nodedir ?? undefined };
+  if (pkg.name === SOURCES.runtime.name) {
+    const ccVersion = run(RUNTIME_LINUX_COMPILERS.cc, ['-dumpfullversion']).trim();
+    const cxxVersion = run(RUNTIME_LINUX_COMPILERS.cxx, ['-dumpfullversion']).trim();
+    if (!/^11(?:\.|$)/.test(ccVersion) || !/^11(?:\.|$)/.test(cxxVersion)) fail(`Linux Tree-sitter runtime requires GCC/G++ 11; found ${ccVersion || 'unknown'}/${cxxVersion || 'unknown'}`);
+    buildEnv.CC = RUNTIME_LINUX_COMPILERS.cc;
+    buildEnv.CXX = RUNTIME_LINUX_COMPILERS.cxx;
+    toolchain = { ...RUNTIME_LINUX_COMPILERS, ccVersion, cxxVersion };
+    process.stdout.write(`Building Linux Tree-sitter runtime with ${buildEnv.CC} ${ccVersion} and ${buildEnv.CXX} ${cxxVersion} for ${RUNTIME_LINUX_COMPILERS.baseline}\n`);
+  }
   run(process.execPath, args, {
     cwd: sourceDirectory,
-    env: { ...process.env, npm_config_nodedir: process.env.npm_config_nodedir ?? undefined },
+    env: buildEnv,
     stdio: 'inherit',
   });
   const buildDir = path.join(sourceDirectory, 'build', 'Release');
@@ -276,7 +300,7 @@ async function compileNative(pkg, sourceDirectory, sourceSha256) {
   machineFor(binaryBytes, tuple);
   const artifactDirectory = path.join(ROOT, '.parser-build', tuple);
   await mkdir(artifactDirectory, { recursive: true });
-  const artifactName = pkg.name === 'tree-sitter-kotlin' ? 'tree-sitter-kotlin.node' : 'tree-sitter-dart.node';
+  const artifactName = pkg.name === 'tree-sitter-kotlin' ? 'tree-sitter-kotlin.node' : pkg.name === '@driftlog/tree-sitter-dart' ? 'tree-sitter-dart.node' : 'tree-sitter-runtime.node';
   const artifactBytes = binaryBytes;
   await writeFile(path.join(artifactDirectory, artifactName), artifactBytes);
   const manifestPath = path.join(artifactDirectory, 'manifest.json');
@@ -287,6 +311,8 @@ async function compileNative(pkg, sourceDirectory, sourceSha256) {
     integrity: pkg.integrity,
     sourceSha256,
     sha256: digest(artifactBytes),
+    addonApiVersion,
+    ...(toolchain ? { toolchain } : {}),
   };
   const artifactManifest = {
     schemaVersion: 1,
@@ -308,23 +334,58 @@ async function artifactFiles(inputDirectory, tuple) {
   if (manifest.schemaVersion !== 1 || manifest.platform !== platform || manifest.arch !== arch) fail(`Artifact manifest target does not match ${tuple}`);
   if (manifest.nodeVersion !== NODE_HEADERS_VERSION) fail(`Artifact for ${tuple} must be built with Node ${NODE_HEADERS_VERSION} headers`);
   if (manifest.nodeAddonApiVersion !== NODE_ADDON_API_VERSION || manifest.napiVersion !== NAPI_VERSION) fail(`Artifact build settings mismatch for ${tuple}`);
-  const expected = Object.fromEntries(NATIVE_PACKAGES.map((name) => {
+  const expectedNames = tuple === RUNTIME_REBUILT_TARGET ? [...NATIVE_PACKAGES, SOURCES.runtime.name] : NATIVE_PACKAGES;
+  const expected = Object.fromEntries(expectedNames.map((name) => {
     const source = packageList().find((pkg) => pkg.name === name);
-    return [name === 'tree-sitter-kotlin' ? 'tree-sitter-kotlin.node' : 'tree-sitter-dart.node', source];
+    const file = name === 'tree-sitter-kotlin' ? 'tree-sitter-kotlin.node' : name === '@driftlog/tree-sitter-dart' ? 'tree-sitter-dart.node' : 'tree-sitter-runtime.node';
+    return [file, source];
   }));
-  if (Object.keys(manifest.packages).sort().join(',') !== Object.keys(expected).sort().join(',')) fail(`Artifact for ${tuple} must contain exactly Kotlin and Dart prebuilds`);
+  if (Object.keys(manifest.packages).sort().join(',') !== Object.keys(expected).sort().join(',')) fail(`Artifact for ${tuple} must contain exactly the expected native prebuilds`);
   const result = {};
   for (const [file, source] of Object.entries(expected)) {
     const metadata = manifest.packages[file];
-    if (metadata.name !== source.name || metadata.version !== source.version || metadata.integrity !== source.integrity || !/^[a-f0-9]{64}$/.test(metadata.sourceSha256)) fail(`Artifact source provenance mismatch: ${tuple}/${file}`);
+    const expectedAddonApiVersion = source.name === SOURCES.runtime.name ? RUNTIME_NODE_ADDON_API_VERSION : NODE_ADDON_API_VERSION;
+    if (metadata.name !== source.name || metadata.version !== source.version || metadata.integrity !== source.integrity || metadata.addonApiVersion !== expectedAddonApiVersion || !/^[a-f0-9]{64}$/.test(metadata.sourceSha256)) fail(`Artifact source provenance or build dependency mismatch: ${tuple}/${file}`);
+    if (source.name === SOURCES.runtime.name) {
+      const toolchain = metadata.toolchain;
+      if (toolchain?.cc !== RUNTIME_LINUX_COMPILERS.cc || !/^11\./.test(toolchain.ccVersion ?? '') || toolchain?.cxx !== RUNTIME_LINUX_COMPILERS.cxx || !/^11\./.test(toolchain.cxxVersion ?? '') || toolchain?.baseline !== RUNTIME_LINUX_COMPILERS.baseline) fail(`Linux runtime compiler metadata mismatch: ${tuple}/${file}`);
+    }
     const bytes = await readFile(path.join(directory, file));
     if (digest(bytes) !== metadata.sha256) fail(`Artifact checksum mismatch: ${tuple}/${file}`);
     machineFor(bytes, tuple);
-    result[file] = { bytes, sourceSha256: metadata.sourceSha256 };
+    result[file] = { bytes, sourceSha256: metadata.sourceSha256, addonApiVersion: metadata.addonApiVersion, ...(metadata.toolchain ? { toolchain: metadata.toolchain } : {}) };
   }
   const actualEntries = (await readdir(directory)).sort();
   if (actualEntries.join(',') !== ['manifest.json', ...Object.keys(expected)].sort().join(',')) fail(`Unexpected files in artifact for ${tuple}`);
   return result;
+}
+
+async function prepareBuildLicenses() {
+  const rootRequire = createRequire(path.join(ROOT, 'package.json'));
+  const licenses = [
+    { version: NODE_ADDON_API_VERSION, manifest: path.join(ROOT, 'node_modules', 'node-addon-api', 'package.json') },
+    { version: RUNTIME_NODE_ADDON_API_VERSION, manifest: createRequire(rootRequire.resolve(SOURCES.runtime.name)).resolve('node-addon-api/package.json') },
+  ];
+  const prepared = [];
+  for (const { version, manifest } of licenses) {
+    const packageRoot = path.dirname(realpathSync(manifest));
+    const packageMetadata = JSON.parse(await readFile(manifest, 'utf8'));
+    if (packageMetadata.version !== version || packageMetadata.license !== 'MIT') fail(`Unexpected node-addon-api license package: ${packageMetadata.name}@${packageMetadata.version}`);
+    const source = path.join(packageRoot, 'LICENSE.md');
+    if (!existsSync(source)) fail(`Missing node-addon-api@${version} LICENSE.md`);
+    prepared.push({ version, bytes: await readFile(source) });
+  }
+  const licenseRoot = path.join(VENDOR, 'BUILD_LICENSES');
+  await rm(licenseRoot, { recursive: true, force: true });
+  const hashes = {};
+  for (const { version, bytes } of prepared) {
+    const relative = `BUILD_LICENSES/node-addon-api-${version}/LICENSE.md`;
+    const destination = path.join(VENDOR, relative);
+    await mkdir(path.dirname(destination), { recursive: true });
+    await writeFile(destination, bytes);
+    hashes[relative] = digest(bytes);
+  }
+  return hashes;
 }
 
 async function prepare({ buildMissing = false, prebuildInput }) {
@@ -340,15 +401,18 @@ async function prepare({ buildMissing = false, prebuildInput }) {
     }
     const records = [];
     for (const pkg of packageList()) {
-      records.push(await materializePackage(pkg, stageRoot, buildMissing && NATIVE_PACKAGES.includes(pkg.name)));
+      const buildsRuntime = pkg.name === SOURCES.runtime.name && tuple === RUNTIME_REBUILT_TARGET;
+      records.push(await materializePackage(pkg, stageRoot, buildMissing && (NATIVE_PACKAGES.includes(pkg.name) || buildsRuntime)));
     }
     if (prebuildInput) {
-      for (const record of records.filter(({ name }) => NATIVE_PACKAGES.includes(name))) {
+      for (const record of records.filter(({ name }) => NATIVE_PACKAGES.includes(name) || name === SOURCES.runtime.name)) {
         const directory = path.join(VENDOR, record.name);
-        const file = record.name === 'tree-sitter-kotlin' ? 'tree-sitter-kotlin.node' : 'tree-sitter-dart.node';
-        for (const target of REQUIRED_TARGETS) {
+        const file = record.name === 'tree-sitter-kotlin' ? 'tree-sitter-kotlin.node' : record.name === '@driftlog/tree-sitter-dart' ? 'tree-sitter-dart.node' : 'tree-sitter-runtime.node';
+        const targets = record.name === SOURCES.runtime.name ? [RUNTIME_REBUILT_TARGET] : REQUIRED_TARGETS;
+        for (const target of targets) {
           const artifact = nativeArtifacts.get(target)[file];
           if (artifact.sourceSha256 !== record.sourceSha256) fail(`Artifact source hash mismatch: ${target}/${file}`);
+          if (record.name === SOURCES.runtime.name) await rm(path.join(directory, 'prebuilds', target), { recursive: true, force: true });
           const relative = `prebuilds/${target}/napi.node`;
           await mkdir(path.dirname(path.join(directory, relative)), { recursive: true });
           await writeFile(path.join(directory, relative), artifact.bytes);
@@ -356,10 +420,11 @@ async function prepare({ buildMissing = false, prebuildInput }) {
         await collectPackageFiles(directory, record);
       }
     }
+    const buildLicenseFiles = await prepareBuildLicenses();
     const distribution = {
       schemaVersion: 1,
       runtime: `${SOURCES.runtime.name}@${SOURCES.runtime.version}`,
-      build: { napiVersion: NAPI_VERSION, nodeAddonApiVersion: NODE_ADDON_API_VERSION },
+      build: { napiVersion: NAPI_VERSION, nodeAddonApiVersion: NODE_ADDON_API_VERSION, runtimeLinuxAddonApiVersion: RUNTIME_NODE_ADDON_API_VERSION, runtimeLinuxCompilers: RUNTIME_LINUX_COMPILERS, licenseFiles: buildLicenseFiles },
       requiredTargets: REQUIRED_TARGETS,
       packages: records,
     };
@@ -376,6 +441,28 @@ async function verify(allTargets) {
   const manifestPath = path.join(VENDOR, 'parser-distribution.json');
   const distribution = JSON.parse(await readFile(manifestPath, 'utf8'));
   if (distribution.schemaVersion !== 1 || distribution.runtime !== 'tree-sitter@0.25.1') fail('Unexpected parser distribution schema or runtime version');
+  if (distribution.build?.napiVersion !== NAPI_VERSION || distribution.build?.nodeAddonApiVersion !== NODE_ADDON_API_VERSION || distribution.build?.runtimeLinuxAddonApiVersion !== RUNTIME_NODE_ADDON_API_VERSION || JSON.stringify(distribution.build?.runtimeLinuxCompilers) !== JSON.stringify(RUNTIME_LINUX_COMPILERS)) fail('Unexpected parser build metadata');
+  const expectedBuildLicenseFiles = [
+    `BUILD_LICENSES/node-addon-api-${NODE_ADDON_API_VERSION}/LICENSE.md`,
+    `BUILD_LICENSES/node-addon-api-${RUNTIME_NODE_ADDON_API_VERSION}/LICENSE.md`,
+  ];
+  const buildLicenseFiles = distribution.build?.licenseFiles;
+  if (!buildLicenseFiles || JSON.stringify(Object.keys(buildLicenseFiles).sort()) !== JSON.stringify(expectedBuildLicenseFiles.sort())) fail('Missing or unexpected build license file records');
+  const observedBuildLicenseFiles = {};
+  async function visitBuildLicenses(directory) {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) await visitBuildLicenses(absolute);
+      else if (entry.isFile()) {
+        const relative = path.relative(VENDOR, absolute).split(path.sep).join('/');
+        observedBuildLicenseFiles[relative] = digest(await readFile(absolute));
+      } else fail(`Unexpected build license asset type: ${absolute}`);
+    }
+  }
+  const buildLicenseRoot = path.join(VENDOR, 'BUILD_LICENSES');
+  if (!existsSync(buildLicenseRoot)) fail('Missing build license assets');
+  await visitBuildLicenses(buildLicenseRoot);
+  if (JSON.stringify(Object.entries(observedBuildLicenseFiles).sort()) !== JSON.stringify(Object.entries(buildLicenseFiles).sort())) fail('Build license asset/checksum mismatch');
   if (!Array.isArray(distribution.packages) || distribution.packages.length !== 12) fail('Distribution must include the runtime and all 11 pinned grammars');
   const packages = new Map(distribution.packages.map((pkg) => [pkg.name, pkg]));
   for (const source of packageList()) {
@@ -425,6 +512,10 @@ async function verify(allTargets) {
         if (!entries.some(({ file }) => file.endsWith('/napi.node'))) fail(`Missing generated N-API prebuild: ${name} (${target})`);
       }
     }
+  }
+  if (allTargets || targetTuple() === RUNTIME_REBUILT_TARGET) {
+    const runtimePrebuilds = packages.get(SOURCES.runtime.name)?.prebuilds?.[RUNTIME_REBUILT_TARGET] ?? [];
+    if (runtimePrebuilds.length !== 1 || runtimePrebuilds[0].file !== `prebuilds/${RUNTIME_REBUILT_TARGET}/napi.node`) fail(`Linux Tree-sitter runtime must use only the generated N-API prebuild: ${RUNTIME_REBUILT_TARGET}`);
   }
   process.stdout.write(`Verified ${packages.size} parser packages${allTargets ? ' for all four targets' : ` for ${targetTuple()}`}\n`);
 }

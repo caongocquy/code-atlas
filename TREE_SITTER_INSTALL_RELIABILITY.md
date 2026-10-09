@@ -16,9 +16,9 @@ Tree-sitter 0.25.1 and all eleven grammar package versions/source tarball integr
 | Production Tree-sitter/grammar/CLI graph edges | Present, conflicting peers and Swift CLI edge | None in actual `pnpm list --prod --depth Infinity --json` |
 | Kotlin/Dart | No prebuilds; consumer compiles | macOS ARM64 N-API 8 modules built with Node 22.23.3, node-gyp 12.3.0, node-addon-api 7.1.1 |
 | macOS ARM64 real parsing | 12/12, with compilation | 12/12 on Node 22.23.3 and 24.21.0 using vendored prebuilds |
-| Focused distribution / consumer-policy / pruning / release-policy tests | Existing coverage | Distribution 8/8, consumer harness 5/5, portable pruning 8/8, release policy 9/9 pass at the latest focused checkpoints |
+| Focused distribution / consumer-policy / pruning / release-policy tests | Existing coverage | Distribution 11/11, consumer harness 6/6, portable pruning 8/8, release policy 9/9 pass at the latest focused checkpoints |
 | Build / lint | Qualified packaging baseline | Both pass locally |
-| Other three native targets | Qualified portable packaging, not new distribution | Pending native builds and new consumer gate |
+| Other three native targets | Qualified portable packaging, not new distribution | Four native build jobs succeeded; corrected consumer gate pending |
 
 Exact after logs and graphs are saved under `docs/audits/tree-sitter-implementation-20261009/`. Before logs remain under `docs/audits/tree-sitter-install-20261009/`. These ignored evidence directories contain no committed generated native files. Native build artifacts carry source version/SRI/archive SHA-256 and binary SHA-256; aggregation rechecks them against freshly verified source archives. Each vendored package retains its license files and hashes.
 
@@ -30,7 +30,11 @@ The development build preserves Dart's upstream unused-helper compiler warning; 
 
 Untouched package-manager policy is recorded separately. Required approved cases use only ONNX and protobufjs, with version-pinned npm approvals. No wildcard approval, force resolution, legacy peer flag, or global lifecycle disable is used. Peer/compiler/lifecycle-policy/missing-prebuild findings fail the approved gate; other warnings remain classified in raw evidence. A dependency cannot authorize itself for a downstream consumer's policy.
 
-CI run URLs, native parser results, clean install logs and universal package size are pending the first branch push; no cross-platform success is claimed here.
+Initial native CI run: [37891926805](https://github.com/caongocquy/code-atlas/actions/runs/37891926805), commit `661b37dccacf55d836241c8f6b42359c28765d62`. All four Kotlin/Dart build jobs succeeded, and aggregation passed provenance/architecture checks. The required actual Linux parser test then caught the upstream Tree-sitter 0.25.1 runtime prebuild requiring `GLIBCXX_3.4.31`, absent on Ubuntu 22.04. Other shipped grammar prebuilds require at most `GLIBCXX_3.4.21`; this failure is isolated to the runtime prebuild. The sixteen consumer cases were skipped because packaging failed; none counts as passing. Raw assembly failure is retained as `assembly-first-run.log`.
+
+Both macOS full-suite comparisons passed with 49 baseline/candidate failures, zero added failures, zero changed assertions and zero new skips. Windows found one new release-policy test failure caused by CRLF line endings; the test now splits both line-ending forms without weakening its assertions. Both Windows suite launcher formats also now escape backslashes correctly for Bash printf. Linux failed runtime loading, so its partial suite is not a valid successful regression comparison.
+
+The fix produces a compatible Linux runtime prebuild from the same integrity-pinned Tree-sitter 0.25.1 archive in native CI. It does not downgrade the runtime or introduce consumer compilation. Native architecture checks alone are insufficient for dynamic-library compatibility; actual loading/parsing remains a mandatory gate. The failed evidence upload also needed `include-hidden-files: true` for generated `.artifact` and `.evidence` directories. Clean consumer results and package-size impact remain pending the corrected CI run.
 
 ## Application regression gate
 

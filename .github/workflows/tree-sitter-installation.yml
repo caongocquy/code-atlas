@@ -96,7 +96,7 @@ jobs:
       - name: Run parser distribution regressions and pack the npm artifact
         shell: bash
         run: |
-          node --import tsx/esm --test test/parser-distribution.test.ts test/parser-consumer-harness.test.ts test/phase14b-parser-packaging.test.ts test/phase14b-fact-extractor-dispatch.test.ts test/phase14b-language-c-family.test.ts test/phase14b-language-jvm.test.ts 2>&1 | tee .evidence/targeted-tests.log
+          node --import tsx/esm --test --test-reporter=tap test/parser-distribution.test.ts test/parser-consumer-harness.test.ts test/phase14b-parser-packaging.test.ts test/phase14b-fact-extractor-dispatch.test.ts test/phase14b-language-c-family.test.ts test/phase14b-language-jvm.test.ts 2>&1 | tee .evidence/targeted-tests.log
           npm pack --pack-destination .artifact 2>&1 | tee .evidence/npm-pack.log
           node scripts/parser-distribution.mjs verify --all-targets 2>&1 | tee .evidence/verify-all-targets.log
       - name: Upload universal npm package and build evidence
@@ -108,6 +108,7 @@ jobs:
             .artifact/*.tgz
             .evidence/*.log
           if-no-files-found: error
+          include-hidden-files: true
           compression-level: 0
 
   consumer-install:
@@ -239,7 +240,7 @@ jobs:
           mkdir -p node_modules/.bin
           chmod +x dist/cli.js
           if [[ "$RUNNER_OS" == "Windows" ]]; then
-            printf '@echo off\r\nnode "%%~dp0..\..\dist\cli.js" %%*\r\n' > node_modules/.bin/code-atlas.cmd
+            printf '@echo off\r\nnode "%%~dp0..\\..\\dist\\cli.js" %%*\r\n' > node_modules/.bin/code-atlas.cmd
             export CODE_ATLAS_CLI="$(node -p 'require("node:path").resolve("node_modules/.bin/code-atlas.cmd")')"
           else
             ln -sf "$PWD/dist/cli.js" node_modules/.bin/code-atlas
@@ -257,7 +258,7 @@ jobs:
           mkdir -p node_modules/.bin
           chmod +x dist/cli.js
           if [[ "$RUNNER_OS" == "Windows" ]]; then
-            printf '@echo off\r\nnode "%%~dp0..\..\dist\cli.js" %%*\r\n' > node_modules/.bin/code-atlas.cmd
+            printf '@echo off\r\nnode "%%~dp0..\\..\\dist\\cli.js" %%*\r\n' > node_modules/.bin/code-atlas.cmd
             export CODE_ATLAS_CLI="$(node -p 'require("node:path").resolve("node_modules/.bin/code-atlas.cmd")')"
           else
             ln -sf "$PWD/dist/cli.js" node_modules/.bin/code-atlas

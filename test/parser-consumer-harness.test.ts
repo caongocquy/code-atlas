@@ -34,7 +34,17 @@ test('consumer policy approves exactly ONNX and protobufjs', () => {
   assert.equal(createConsumerConfig({ manager: 'pnpm', mode: 'default', tarball: '/tmp/code-atlas.tgz' }).pnpmWorkspace, 'sideEffectsCache: false\n');
 });
 
-test('npm 10 runs lifecycle hooks without enforcing allowScripts; npm 11 enforces approvals', () => {
+test('Windows release-suite launchers preserve escaped backslashes and CRLF', () => {
+  const workflow = readFileSync(new URL('../.github/workflows/tree-sitter-installation.yml', import.meta.url), 'utf8');
+  const launchers = workflow.split('\n').filter((line) => line.includes("printf '@echo off"));
+  assert.equal(launchers.length, 2);
+  for (const launcher of launchers) {
+    assert.ok(launcher.includes(String.raw`%%~dp0..\\..\\dist\\cli.js`));
+    assert.ok(launcher.includes(String.raw`\r\n`));
+  }
+});
+
+test('npm 10 runs lifecycle hooks without enforcing allowScripts; npm 11 supports approval metadata', () => {
   assert.equal(supportsNpmAllowScripts('10.9.4'), false);
   assert.equal(supportsNpmAllowScripts('11.1.0'), true);
 });

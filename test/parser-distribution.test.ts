@@ -85,16 +85,36 @@ function fixture() {
     const files = { 'package.json': sha256(provenance), LICENSE: sha256(`License: ${license}\n`) };
     const prebuilds: Record<string, Array<{ file: string; sha256: string }>> = {};
     for (const platform of platforms) {
-      const filename = `prebuilds/${platform}/parser.node`;
+      const filename = name === sources.runtime.name && platform === 'linux-x64' ? `prebuilds/${platform}/napi.node` : `prebuilds/${platform}/parser.node`;
       const bytes = binary(platform);
       mkdirSync(path.dirname(path.join(destination, filename)), { recursive: true });
       writeFileSync(path.join(destination, filename), bytes);
       files[filename] = sha256(bytes);
       prebuilds[platform] = [{ file: filename, sha256: sha256(bytes) }];
+      if (['tree-sitter-kotlin', '@driftlog/tree-sitter-dart'].includes(name)) {
+        const generatedFile = `prebuilds/${platform}/napi.node`;
+        writeFileSync(path.join(destination, generatedFile), bytes);
+        files[generatedFile] = sha256(bytes);
+        prebuilds[platform].push({ file: generatedFile, sha256: sha256(bytes) });
+      }
     }
     return { name, version, integrity, sourceSha256: 'a'.repeat(64), sourceManifest: { name, version, license }, files, licenseFiles: { LICENSE: files.LICENSE }, prebuilds };
   });
-  writeFileSync(path.join(root, 'vendor/parsers/parser-distribution.json'), JSON.stringify({ schemaVersion: 1, runtime: 'tree-sitter@0.25.1', packages }, null, 2));
+  const buildLicenseFiles: Record<string, string> = {};
+  for (const version of ['7.1.1', '8.9.2']) {
+    const relative = `BUILD_LICENSES/node-addon-api-${version}/LICENSE.md`;
+    const contents = `MIT License for node-addon-api ${version}\n`;
+    const absolute = path.join(root, 'vendor/parsers', relative);
+    mkdirSync(path.dirname(absolute), { recursive: true });
+    writeFileSync(absolute, contents);
+    buildLicenseFiles[relative] = sha256(contents);
+  }
+  writeFileSync(path.join(root, 'vendor/parsers/parser-distribution.json'), JSON.stringify({
+    schemaVersion: 1,
+    runtime: 'tree-sitter@0.25.1',
+    build: { napiVersion: 8, nodeAddonApiVersion: '7.1.1', runtimeLinuxAddonApiVersion: '8.9.2', runtimeLinuxCompilers: { cc: '/usr/bin/gcc-11', cxx: '/usr/bin/g++-11', baseline: 'ubuntu-22.04' }, licenseFiles: buildLicenseFiles },
+    packages,
+  }, null, 2));
   assert.ok(packages.every((pkg) => pkg.prebuilds[nativeHost]?.length));
   return root;
 }
@@ -105,8 +125,9 @@ function prebuildFixture(root: string) {
     const directory = path.join(root, '.parser-build', target);
     mkdirSync(directory, { recursive: true });
     const packages: Record<string, unknown> = {};
-    for (const source of native) {
-      const file = source.name === 'tree-sitter-kotlin' ? 'tree-sitter-kotlin.node' : 'tree-sitter-dart.node';
+    const artifactSources = target === 'linux-x64' ? [...native, sources.runtime] : native;
+    for (const source of artifactSources) {
+      const file = source.name === 'tree-sitter-kotlin' ? 'tree-sitter-kotlin.node' : source.name === '@driftlog/tree-sitter-dart' ? 'tree-sitter-dart.node' : 'tree-sitter-runtime.node';
       const bytes = binary(target);
       writeFileSync(path.join(directory, file), bytes);
       packages[file] = {
@@ -115,6 +136,8 @@ function prebuildFixture(root: string) {
         integrity: source.integrity,
         sourceSha256: 'b'.repeat(64),
         sha256: sha256(bytes),
+        addonApiVersion: source.name === 'tree-sitter' ? '8.9.2' : '7.1.1',
+        ...(source.name === 'tree-sitter' ? { toolchain: { cc: '/usr/bin/gcc-11', ccVersion: '11.4.0', cxx: '/usr/bin/g++-11', cxxVersion: '11.4.0', baseline: 'ubuntu-22.04' } } : {}),
       };
     }
     writeFileSync(path.join(directory, 'manifest.json'), JSON.stringify({
@@ -172,8 +195,9 @@ test('verify --all-targets fails closed when one required grammar binary is miss
     const manifest = JSON.parse(String(readFileSync(manifestPath)));
     const dart = manifest.packages.find((pkg: { name: string }) => pkg.name === '@driftlog/tree-sitter-dart');
     delete dart.files['prebuilds/win32-x64/parser.node'];
+    delete dart.files['prebuilds/win32-x64/napi.node'];
     delete dart.prebuilds['win32-x64'];
-    rmSync(path.join(root, 'vendor/parsers/@driftlog/tree-sitter-dart/prebuilds/win32-x64/parser.node'));
+    rmSync(path.join(root, 'vendor/parsers/@driftlog/tree-sitter-dart/prebuilds/win32-x64'), { recursive: true });
     writeFileSync(manifestPath, JSON.stringify(manifest));
     const result = run(root, 'verify', '--all-targets');
     assert.notEqual(result.status, 0);
@@ -204,6 +228,30 @@ test('verify checks only host coverage when --all-targets is omitted', () => {
   }
 });
 
+test('verify --all-targets rejects the upstream runtime binary on Linux x64', () => {
+  const root = fixture();
+  try {
+    const directory = path.join(root, 'vendor/parsers/tree-sitter');
+    const oldFile = 'prebuilds/linux-x64/napi.node';
+    const upstreamFile = 'prebuilds/linux-x64/tree-sitter.node';
+    const bytes = readFileSync(path.join(directory, oldFile));
+    writeFileSync(path.join(directory, upstreamFile), bytes);
+    rmSync(path.join(directory, oldFile));
+    const manifestPath = path.join(root, 'vendor/parsers/parser-distribution.json');
+    const manifest = JSON.parse(String(readFileSync(manifestPath)));
+    const runtime = manifest.packages.find((pkg: { name: string }) => pkg.name === 'tree-sitter');
+    delete runtime.files[oldFile];
+    runtime.files[upstreamFile] = sha256(bytes);
+    runtime.prebuilds['linux-x64'][0].file = upstreamFile;
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    const result = run(root, 'verify', '--all-targets');
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /must use only the generated N-API prebuild/i);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('verify rejects a package after its license asset and checksums are removed', () => {
   const root = fixture();
   try {
@@ -222,26 +270,56 @@ test('verify rejects a package after its license asset and checksums are removed
   }
 });
 
+test('verify rejects a missing node-addon-api build license asset', () => {
+  const root = fixture();
+  try {
+    rmSync(path.join(root, 'vendor/parsers/BUILD_LICENSES/node-addon-api-8.9.2/LICENSE.md'));
+    const result = run(root, 'verify');
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /build license|license asset/i);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('prepare rejects native artifacts built from a different pinned grammar version', () => {
   const root = fixture();
   try {
     prebuildFixture(root);
     const result = run(root, 'prepare', '--prebuild-input', '.parser-build');
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /source provenance mismatch/i);
+    assert.match(result.stderr, /source provenance or build dependency mismatch/i);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('artifactFiles accepts exactly the valid Kotlin and Dart binaries for a target', async () => {
+test('artifactFiles accepts the Linux runtime plus Kotlin and Dart binaries', async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'parser-artifact-input-'));
   try {
     prebuildFixture(root);
     const artifacts = await artifactFiles(path.join(root, '.parser-build'), 'linux-x64');
-    assert.deepEqual(Object.keys(artifacts).sort(), ['tree-sitter-dart.node', 'tree-sitter-kotlin.node']);
-    assert.deepEqual(Object.keys(artifacts['tree-sitter-kotlin.node']), ['bytes', 'sourceSha256']);
+    assert.deepEqual(Object.keys(artifacts).sort(), ['tree-sitter-dart.node', 'tree-sitter-kotlin.node', 'tree-sitter-runtime.node']);
+    assert.deepEqual(Object.keys(artifacts['tree-sitter-kotlin.node']), ['bytes', 'sourceSha256', 'addonApiVersion']);
     assert.equal(artifacts['tree-sitter-kotlin.node'].sourceSha256, 'b'.repeat(64));
+    assert.equal(artifacts['tree-sitter-runtime.node'].addonApiVersion, '8.9.2');
+    assert.equal(artifacts['tree-sitter-runtime.node'].toolchain.baseline, 'ubuntu-22.04');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('artifactFiles rejects Linux artifacts without the rebuilt runtime binary', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'parser-artifact-input-'));
+  try {
+    prebuildFixture(root);
+    const directory = path.join(root, '.parser-build/linux-x64');
+    const manifestPath = path.join(directory, 'manifest.json');
+    const manifest = JSON.parse(String(readFileSync(manifestPath)));
+    delete manifest.packages['tree-sitter-runtime.node'];
+    rmSync(path.join(directory, 'tree-sitter-runtime.node'));
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    await assert.rejects(artifactFiles(path.join(root, '.parser-build'), 'linux-x64'), /runtime.*prebuild|runtime.*artifact|exactly/i);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

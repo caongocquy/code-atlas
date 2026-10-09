@@ -41,7 +41,7 @@ test("manual release smoke verifies a real clean npm consumer", () => {
 });
 
 test("native parser policy delivers every grammar with only required tooling approvals", () => {
-  const approved = workspace.split("\n").flatMap((line) => {
+  const approved = workspace.split(/\r?\n/).flatMap((line) => {
     const match = /^ {2}["']?([^"':]+)["']?: true$/.exec(line);
     return match ? [match[1]] : [];
   });

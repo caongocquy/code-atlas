@@ -269,7 +269,7 @@ async function main() {
     approvals: options.mode === "approved" ? APPROVALS : {},
     lifecyclePolicy: options.mode !== "approved" ? "default" : options.manager === "pnpm"
       ? "pnpm-allowBuilds-exact-two-packages"
-      : supportsNpmAllowScripts(versionLine) ? "npm-allowScripts-enforced-exact-two-packages" : "npm-before-11-hooks-run-approval-field-is-informational",
+      : supportsNpmAllowScripts(versionLine) ? "npm-allowScripts-exact-two-packages" : "npm-before-11-hooks-run-approval-field-is-informational",
   };
 
   let graphJson;
