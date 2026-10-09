@@ -18,6 +18,10 @@ on:
       - scripts/build-onnx-darwin-x64.mjs
       - scripts/onnx-darwin-x64.mjs
       - scripts/compare-release-tests.mjs
+      - scripts/parser-distribution.mjs
+      - scripts/parser-sources.json
+      - src/core/graph/parsers/**
+      - .github/workflows/tree-sitter-installation.yml
       - .github/workflows/portable-packaging-smoke.yml
       - package.json
       - pnpm-lock.yaml
@@ -28,7 +32,13 @@ permissions:
   contents: read
 
 jobs:
+  parser-payload:
+    uses: ./.github/workflows/tree-sitter-installation.yml
+    with:
+      assemble_only: true
+
   portable:
+    needs: parser-payload
     strategy:
       fail-fast: false
       matrix:
@@ -52,6 +62,21 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          name: code-atlas-parser-consumer-package
+          path: .parser-package
+      - name: Restore and verify universal parser payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          package=$(find .parser-package -type f -name '*.tgz' -print)
+          test -n "$package"
+          test "$(printf '%s\n' "$package" | wc -l | tr -d '[:space:]')" -eq 1
+          mkdir -p "$RUNNER_TEMP/parser-package" vendor
+          tar -xzf "$package" -C "$RUNNER_TEMP/parser-package" package/vendor/parsers
+          cp -R "$RUNNER_TEMP/parser-package/package/vendor/parsers" vendor/parsers
+          node scripts/parser-distribution.mjs verify --all-targets
       - name: Build candidate and run packaging regressions
         shell: bash
         run: |
@@ -59,6 +84,7 @@ jobs:
           corepack prepare pnpm@11.22.0 --activate
           pnpm install --frozen-lockfile
           pnpm build
+          node --import tsx/esm --input-type=module -e 'for (const entry of ["./src/core/graph/parsers/native-runtime.ts", "./dist/core/graph/parsers/native-runtime.js"]) { const parsers = await import(entry); if (!parsers.ParserRuntime || !parsers.TypeScript || !parsers.Dart) throw new Error(`Parser runtime did not resolve from ${entry}`); }'
           mkdir -p node_modules/.bin
           chmod +x dist/cli.js
           if [[ "$RUNNER_OS" == "Windows" ]]; then

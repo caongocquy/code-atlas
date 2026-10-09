@@ -41,6 +41,9 @@ if (process.argv[3] !== "--bundled") {
   fs.writeFileSync(path.join(fixture, "caller.ts"), "import { AuthService } from './auth.js'; export function run() { return AuthService(); }\n");
   try {
     await test("native parsers load every supported language from the artifact", async () => {
+      const runtime = await load("core/graph/parsers/native-runtime.js");
+      assert.ok(runtime.ParserRuntime && runtime.JavaScript && runtime.TypeScript && runtime.C && runtime.Cpp);
+      assert.ok(runtime.Go && runtime.Java && runtime.Kotlin && runtime.Python && runtime.Rust && runtime.Swift && runtime.Dart);
       const { parseSource } = await load("core/graph/parsers/code-parser.js");
       const sources = {
         "a.ts": "export function value(): number { return 1; }",

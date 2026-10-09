@@ -97,9 +97,35 @@ missing module on Windows, Linux, macOS x64, and macOS arm64
 macOS x64 ONNX build and artifact checks were skipped. These failures leave
 packed consumer and portable distribution qualification open.
 
+### Reproducible parser payload follow-up
+
+The missing path is intentionally generated and gitignored: `.gitignore`
+excludes `vendor/parsers/` and `.parser-build/`. `scripts/parser-distribution.mjs`
+fetches the runtime and eleven grammar archives by pinned SHA-512 integrity,
+retains their JS/grammar assets and native prebuilds, and verifies recorded
+file hashes. The four-runner `tree-sitter-installation.yml` builds the required
+Kotlin/Dart N-API payloads (and the pinned Linux runtime), uploads each
+`.parser-build/<target>` directory, then assembles `vendor/parsers/`, verifies
+all four targets and packs the npm artifact. Previously, release smoke and
+portable smoke invoked builds and tests from checkout without running this
+assembly or restoring its artifact; Phase 14B prepared only its current Linux
+host and did not produce the universal payload.
+
+The follow-up exposes that existing four-target assembly as a reusable
+workflow. Release and portable qualification depend on it, restore the
+same-run packed parser payload into `vendor/parsers/`, and run
+`verify --all-targets` before build/tests. Checks exercise source and compiled
+runtime imports, installed npm tarball resolution, all twelve portable
+grammars, and portable MCP stdio. Full qualification is pending on the
+follow-up head; add its exact commit SHA and Actions URLs when jobs finish.
+Local full-suite comparison against `cba67bad` on the follow-up worktree:
+baseline 1,353 pass / 48 fail / 3 skip; candidate 1,359 pass / 48 fail / 3
+skip; zero added/changed failures and zero added skips. Focused parser,
+packaging, workflow, security and correctness selection passed 129/129.
+
 ### Current blockers and publication boundaries
 
-1. Findings 1–5 are addressed on the security/correctness continuation and its local full-suite comparison has zero regressions. Phase 14B parser-platform CI passed, but release smoke and portable matrix are blocked by missing `vendor/parsers/tree-sitter` in their setup path. Do not count skipped tests or consumers as passes.
+1. Findings 1–5 are addressed on the security/correctness continuation and local full-suite comparisons have zero regressions. On head `50c53b16c87cbe38fdb38c3e14948478caee29b3`, Phase 14B parser-platform CI passed, but release smoke and portable matrix failed before qualification because their setup omitted generated `vendor/parsers/tree-sitter`. The follow-up assembly fix is pending per-SHA Actions qualification; do not count skipped tests or consumers as passes.
 2. Finding 7 remains deferred because storage GC is explicitly out of scope; historical-generation retention is still unbounded. Finding 8 remains open because duplicate legacy/generation semantic vector writes were not part of the requested slice. Keep release readiness **NO-GO** until release owners decide whether finding 8 blocks this release.
 3. The integrated commit still needs final release qualification of packed CLI/MCP, portable artifacts, macOS x64 ONNX embedding and distribution checks. Run these against the integrated commit; the earlier native results apply only to their named SHAs.
 4. The candidate version remains 1.6.0. No version bump, tag, npm publication, GitHub Release or Homebrew update is included in this task.

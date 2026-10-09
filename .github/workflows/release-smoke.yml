@@ -3,19 +3,30 @@ name: Release smoke
 on:
   workflow_dispatch:
   pull_request:
-    branches: [develop, master]
+    branches: [develop, master, fix/windows-regression-release-readiness]
     paths:
       - package.json
       - CHANGELOG.md
+      - scripts/parser-distribution.mjs
+      - scripts/parser-sources.json
+      - src/core/graph/parsers/**
       - .github/workflows/release-smoke.yml
+      - .github/workflows/tree-sitter-installation.yml
       - test/phase14f-release-workflows.test.ts
+      - test/phase14b-parser-packaging.test.ts
 
 permissions:
   contents: read
 
 jobs:
+  parser-payload:
+    uses: ./.github/workflows/tree-sitter-installation.yml
+    with:
+      assemble_only: true
+
   release-smoke:
     name: Verify packed npm consumer
+    needs: parser-payload
     runs-on: ubuntu-latest
     steps:
       - name: Checkout candidate revision
@@ -39,10 +50,29 @@ jobs:
       - name: Install repository dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Download and verify universal parser payload
+        uses: actions/download-artifact@v4
+        with:
+          name: code-atlas-parser-consumer-package
+          path: .parser-package
+
+      - name: Restore parser payload before source build
+        shell: bash
+        run: |
+          set -euo pipefail
+          package=$(find .parser-package -type f -name '*.tgz' -print)
+          test -n "$package"
+          test "$(printf '%s\n' "$package" | wc -l | tr -d '[:space:]')" -eq 1
+          mkdir -p "$RUNNER_TEMP/parser-package" vendor
+          tar -xzf "$package" -C "$RUNNER_TEMP/parser-package" package/vendor/parsers
+          cp -R "$RUNNER_TEMP/parser-package/package/vendor/parsers" vendor/parsers
+          node scripts/parser-distribution.mjs verify --all-targets
+
       - name: Run release verification
         run: |
           set -euo pipefail
           pnpm run build
+          node --import tsx/esm --input-type=module -e 'for (const entry of ["./src/core/graph/parsers/native-runtime.ts", "./dist/core/graph/parsers/native-runtime.js"]) { const parsers = await import(entry); if (!parsers.ParserRuntime || !parsers.TypeScript || !parsers.Dart) throw new Error(`Parser runtime did not resolve from ${entry}`); }'
           pnpm exec tsc --noEmit
           # A durable absolute CLI path is required for agent integration tests.
           cli_dir="$GITHUB_WORKSPACE/node_modules/.bin"
@@ -125,6 +155,15 @@ jobs:
           warning_count="$(grep -Eic 'ERESOLVE|peer dep' "$RUNNER_TEMP/npm-consumer-install.stderr" || true)"
           echo "warning_count=$warning_count" >> "$GITHUB_OUTPUT"
           bin="$consumer/node_modules/.bin/code-atlas"
+          CONSUMER_DIR="$consumer" node --input-type=module <<'NODE'
+          import assert from "node:assert/strict";
+          import { createRequire } from "node:module";
+          import { pathToFileURL } from "node:url";
+          const require = createRequire(`${process.env.CONSUMER_DIR}/package.json`);
+          const entry = require.resolve("@showdar2112/code-atlas/dist/core/graph/parsers/native-runtime.js");
+          const runtime = await import(pathToFileURL(entry).href);
+          assert.ok(runtime.ParserRuntime && runtime.TypeScript && runtime.Dart);
+          NODE
           mkdir -p "$consumer/home" "$consumer/xdg"
           run_clean() { HOME="$consumer/home" XDG_CONFIG_HOME="$consumer/xdg" NO_COLOR=1 "$@"; }
           for flag in --help -h --version -v; do

@@ -4,6 +4,12 @@ on:
   push:
     branches: [chore/tree-sitter-install-reliability, fix/windows-regression-release-readiness]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      assemble_only:
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -130,6 +136,7 @@ jobs:
           compression-level: 0
 
   consumer-install:
+    if: ${{ !inputs.assemble_only }}
     name: Consumer ${{ matrix.target.platform }}-${{ matrix.target.arch }} Node ${{ matrix.node }} ${{ matrix.manager }}
     needs: assemble-package
     strategy:
@@ -198,6 +205,7 @@ jobs:
           compression-level: 0
 
   release-suite-comparison:
+    if: ${{ !inputs.assemble_only }}
     name: Release regression ${{ matrix.target.platform }}
     needs: native-prebuild
     strategy:
