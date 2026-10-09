@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import Parser from "tree-sitter";
+import { ParserRuntime as Parser } from "../src/core/graph/parsers/native-runtime.js";
 
 import { buildCodeGraphWithResolutionFromFacts } from "../src/core/graph/build-graph.js";
 import { extractExtendsFactEvidence } from "../src/core/graph/extends.js";

@@ -40,28 +40,30 @@ test("manual release smoke verifies a real clean npm consumer", () => {
   assert.doesNotMatch(smoke, /--legacy-peer-deps|--force|--ignore-scripts/);
 });
 
-test("native parser build policy allows every required grammar", () => {
-  for (const packageName of [
-    "@driftlog/tree-sitter-dart",
-    "esbuild",
-    "onnxruntime-node",
-    "protobufjs",
-    "sharp",
-    "tree-sitter",
-    "tree-sitter-c",
-    "tree-sitter-cli",
-    "tree-sitter-cpp",
-    "tree-sitter-go",
-    "tree-sitter-java",
-    "tree-sitter-javascript",
-    "tree-sitter-kotlin",
-    "tree-sitter-python",
-    "tree-sitter-rust",
-    "tree-sitter-swift",
-    "tree-sitter-typescript",
-  ]) {
-    assert.match(workspace, new RegExp(`["']?${packageName.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}['"]?: true`));
+test("native parser policy delivers every grammar with only required tooling approvals", () => {
+  const approved = workspace.split("\n").flatMap((line) => {
+    const match = /^ {2}["']?([^"':]+)["']?: true$/.exec(line);
+    return match ? [match[1]] : [];
+  });
+  assert.deepEqual(approved.sort(), [
+    "@modelcontextprotocol/inspector", "esbuild", "onnxruntime-node", "protobufjs", "tree-sitter", "tree-sitter-cli",
+  ].sort());
+  const sources = JSON.parse(readFileSync(path.join(root, "scripts/parser-sources.json"), "utf8"));
+  assert.equal(sources.runtime.version, "0.25.1");
+  assert.deepEqual(sources.grammars.map((grammar: { name: string }) => grammar.name).sort(), [
+    "@driftlog/tree-sitter-dart", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-go", "tree-sitter-java",
+    "tree-sitter-javascript", "tree-sitter-kotlin", "tree-sitter-python", "tree-sitter-rust", "tree-sitter-swift", "tree-sitter-typescript",
+  ].sort());
+  const dependencies = packageJson.dependencies as Record<string, string>;
+  for (const name of [sources.runtime.name, ...sources.grammars.map((grammar: { name: string }) => grammar.name), "tree-sitter-cli"]) {
+    assert.equal(dependencies[name], undefined, `${name} must not reintroduce consumer install hooks or peer conflicts`);
   }
+  const devDependencies = packageJson.devDependencies as Record<string, string>;
+  assert.equal(devDependencies["tree-sitter"], "0.25.1");
+  assert.equal(devDependencies["tree-sitter-cli"], "0.23.2");
+  assert.ok((packageJson.files as string[]).includes("vendor/parsers"));
+  assert.match((packageJson.scripts as Record<string, string>)["parsers:verify"], /verify --all-targets/);
+  assert.equal((packageJson.scripts as Record<string, string>).prepack, "npm run parsers:verify");
 });
 
 test("publish workflow validates the exact tag and package contract", () => {

@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import Parser from "tree-sitter";
+import { ParserRuntime as Parser } from "../src/core/graph/parsers/native-runtime.js";
 
 import { LEXICAL_INDEX_VERSION } from "../src/config/constants.js";
 import { createCandidateGeneration } from "../src/core/indexing/index-manifest.js";

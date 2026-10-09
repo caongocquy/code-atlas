@@ -1,17 +1,7 @@
 import path from "node:path";
 import type Parser from "tree-sitter";
 
-import JavaScript from "tree-sitter-javascript";
-import TypeScript from "tree-sitter-typescript";
-import C from "tree-sitter-c";
-import Cpp from "tree-sitter-cpp";
-import Go from "tree-sitter-go";
-import Java from "tree-sitter-java";
-import Kotlin from "tree-sitter-kotlin";
-import Python from "tree-sitter-python";
-import Rust from "tree-sitter-rust";
-import Swift from "tree-sitter-swift";
-import Dart from "@driftlog/tree-sitter-dart";
+import { JavaScript, TypeScript, C, Cpp, Go, Java, Kotlin, Python, Rust, Swift, Dart } from "./native-runtime.js";
 
 import type { ParserAdapterMetadata, SupportedLanguage } from "./types.js";
 

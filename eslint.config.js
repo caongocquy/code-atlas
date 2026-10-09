@@ -13,7 +13,7 @@ const typescriptParserOptions = (isTSX) => ({
 
 export default [
   {
-    ignores: ["dist/**", "node_modules/**", ".gitnexus/**", "eval/context/corpus/snapshots/**", "eslint.config.js"],
+    ignores: ["dist/**", "node_modules/**", "vendor/**", "docs/audits/**", ".release-base/**", ".parser-build/**", ".parser-cache/**", ".parser-prebuilds/**", ".gitnexus/**", "eval/context/corpus/snapshots/**", "eslint.config.js"],
   },
   eslint.configs.recommended,
   {

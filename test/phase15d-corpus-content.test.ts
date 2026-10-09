@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import Parser from "tree-sitter";
+import { ParserRuntime as Parser } from "../src/core/graph/parsers/native-runtime.js";
 
 import { getLanguageConfig, LANGUAGE_CONFIGS } from "../src/core/graph/parsers/languages.js";
 import { loadCorpus, validateCorpusWorkspaceRefs } from "../eval/context/corpus/load-corpus.js";

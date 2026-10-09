@@ -1,4 +1,5 @@
-import Parser from "tree-sitter";
+import type Parser from "tree-sitter";
+import { ParserRuntime } from "./native-runtime.js";
 
 import { getLanguageAdapter } from "./registry.js";
 import type {
@@ -46,7 +47,7 @@ export function parseSource(
     return undefined;
   }
 
-  const parser = new Parser();
+  const parser = new ParserRuntime();
   parser.setLanguage(adapter.grammar);
 
   return { adapter, tree: parser.parse(source) };

@@ -1,5 +1,5 @@
 import type Parser from "tree-sitter";
-import TypeScript from "tree-sitter-typescript";
+import { TypeScript } from "../native-runtime.js";
 
 import {
   buildClassContext,

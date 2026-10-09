@@ -1,0 +1,20 @@
+{
+  "runtime": {
+    "name": "tree-sitter",
+    "version": "0.25.1",
+    "integrity": "sha512-mrcEdkYtHfrK1A6fs3O6FxkBo0Qig5XUXqHhxUOQu0bmPo00QF4XaSx4edpazdHwxnSCjlGKGgIqWdaN4dvTLA=="
+  },
+  "grammars": [
+    { "name": "@driftlog/tree-sitter-dart", "version": "1.0.4", "integrity": "sha512-QaTUyrcXZtiOtdvfcJWH41mCQi82Ri5QLYXFsaK34gpny6ZdhCCiW+sSMMxgIe62eFtrchGfEY/nBJkm7eC+Ew==" },
+    { "name": "tree-sitter-c", "version": "0.24.1", "integrity": "sha512-lkYwWN3SRecpvaeqmFKkuPNR3ZbtnvHU+4XAEEkJdrp3JfSp2pBrhXOtvfsENUneye76g889Y0ddF2DM0gEDpA==" },
+    { "name": "tree-sitter-cpp", "version": "0.23.4", "integrity": "sha512-qR5qUDyhZ5jJ6V8/umiBxokRbe89bCGmcq/dk94wI4kN86qfdV8k0GHIUEKaqWgcu42wKal5E97LKpLeVW8sKw==" },
+    { "name": "tree-sitter-go", "version": "0.25.0", "integrity": "sha512-APBc/Dq3xz/e35Xpkhb1blu5UgW+2E3RyGWawZSCNcbGwa7jhSQPS8KsUupuzBla8PCo8+lz9W/JDJjmfRa2tw==" },
+    { "name": "tree-sitter-java", "version": "0.23.5", "integrity": "sha512-Yju7oQ0Xx7GcUT01mUglPP+bYfvqjNCGdxqigTnew9nLGoII42PNVP3bHrYeMxswiCRM0yubWmN5qk+zsg0zMA==" },
+    { "name": "tree-sitter-javascript", "version": "0.25.0", "integrity": "sha512-1fCbmzAskZkxcZzN41sFZ2br2iqTYP3tKls1b/HKGNPQUVOpsUxpmGxdN/wMqAk3jYZnYBR1dd/y/0avMeU7dw==" },
+    { "name": "tree-sitter-kotlin", "version": "0.3.8", "integrity": "sha512-A4obq6bjzmYrA+F0JLLoheFPcofFkctNaZSpnDd+GPn1SfVZLY4/GG4C0cYVBTOShuPBGGAOPLM1JWLZQV4m1g==" },
+    { "name": "tree-sitter-python", "version": "0.25.0", "integrity": "sha512-eCmJx6zQa35GxaCtQD+wXHOhYqBxEL+bp71W/s3fcDMu06MrtzkVXR437dRrCrbrDbyLuUDJpAgycs7ncngLXw==" },
+    { "name": "tree-sitter-rust", "version": "0.24.0", "integrity": "sha512-NWemUDf629Tfc90Y0Z55zuwPCAHkLxWnMf2RznYu4iBkkrQl2o/CHGB7Cr52TyN5F1DAx8FmUnDtCy9iUkXZEQ==" },
+    { "name": "tree-sitter-swift", "version": "0.7.1", "integrity": "sha512-pneKVTuGamaBsqqqfB9BvNQjktzh/0IVPR54jLB5Fq/JTDQwYHd0Wo6pVyZ5jAYpbztzq+rJ/rpL9ruxTmSoKw==" },
+    { "name": "tree-sitter-typescript", "version": "0.23.2", "integrity": "sha512-e04JUUKxTT53/x3Uq1zIL45DoYKVfHH4CZqwgZhPg5qYROl5nQjV+85ruFzFGZxu+QeFVbRTPDRnqL9UbU4VeA==" }
+  ]
+}

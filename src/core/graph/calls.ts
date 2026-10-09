@@ -1,4 +1,5 @@
-import Parser from "tree-sitter";
+import type Parser from "tree-sitter";
+import { ParserRuntime } from "./parsers/native-runtime.js";
 
 import { getLanguageAdapter } from "./parsers/registry.js";
 
@@ -148,7 +149,7 @@ export function extractCalls(
     return [];
   }
 
-  const parser = new Parser();
+  const parser = new ParserRuntime();
 
   parser.setLanguage(adapter.grammar);
 
@@ -164,7 +165,7 @@ export function extractCalls(
 export function hasParserErrors(source: string, filePath: string): boolean {
   const adapter = getLanguageAdapter(filePath);
   if (!adapter) return false;
-  const parser = new Parser();
+  const parser = new ParserRuntime();
   parser.setLanguage(adapter.grammar);
   return parser.parse(source).rootNode.hasError;
 }

@@ -1,0 +1,26 @@
+# Native parser distribution
+
+CodeAtlas vendors Tree-sitter 0.25.1 and the 11 grammar package versions pinned in `scripts/parser-sources.json`. The SHA-512 values come from the production importer in `docs/audits/tree-sitter-install-20261009/source-pnpm-lock.yaml`. The builder downloads each npm tarball directly, checks its SRI before extraction, and records both its source SHA-256 and every delivered file SHA-256 in `vendor/parsers/parser-distribution.json`.
+
+Vendored package files retain their JavaScript bindings, types, node-type data, grammar source, queries, WASM assets, and license files. The installed `package.json` is reduced to runtime entry metadata; original package metadata is kept in the distribution manifest as provenance, outside npm's package dependency graph. Existing upstream prebuilds are copied from their pinned tarballs and their ELF, Mach-O, or PE machine type is checked against the directory tuple.
+
+The runtime and ten grammar packages declare MIT; `@driftlog/tree-sitter-dart` declares ISC. Every package's top-level `LICENSE` file and hash is recorded, and verification fails if either the asset or its record is missing. Three pinned archives contain x86-64 binaries incorrectly labelled `linux-arm64` (C++, Java, and TypeScript); those invalid optional prebuilds are omitted. A mismatch for any advertised target stops preparation.
+
+Kotlin 0.3.8 and Dart 1.0.4 have no upstream prebuilds. `prepare --build-missing` compiles only those two packages on the current native runner, with `node-gyp@12.3.0`, `node-addon-api@7.1.1`, Node 22.23.3 headers in CI, and N-API 8. It uses the checked-in parser/scanner sources and never invokes the Tree-sitter generator. Each resulting `napi.node` is installed under the package's `prebuilds/<platform>-<arch>/` directory. The job artifact is `.parser-build/<platform>-<arch>/`, containing `tree-sitter-kotlin.node`, `tree-sitter-dart.node`, and `manifest.json` with the target and SHA-256 values.
+
+Native CI builds each advertised target on its matching runner:
+
+```sh
+node scripts/parser-distribution.mjs prepare --build-missing
+```
+
+Upload the target folder from each run as `parser-prebuild-<platform>-<arch>`. The native artifact manifest records each binary's SHA-256 together with its grammar name, version, registry SRI, and source-archive SHA-256. In an aggregation job, download the four artifacts into `.parser-build/<platform>-<arch>/`, then run:
+
+```sh
+node scripts/parser-distribution.mjs prepare --prebuild-input .parser-build
+node scripts/parser-distribution.mjs verify --all-targets
+```
+
+The aggregate command downloads and checks the same pinned source archives, preserves upstream prebuilds, and applies the eight new native binaries. It refuses missing tuples, extra files, checksum mismatches, incompatible build settings, or binaries whose machine architecture disagrees with their tuple. Do not run `--build-missing` on a cross-target job; the builder only compiles for its current OS and CPU.
+
+`verify` checks package provenance, exact file inventories and checksums, binary formats, and native prebuild coverage for the current host. `verify --all-targets` additionally requires Kotlin and Dart N-API prebuilds for `darwin-arm64`, `darwin-x64`, `linux-x64`, and `win32-x64`. The native consumer matrix still parses all 12 languages on Node 22 and Node 24; `verify` checks binary structure and coverage, not parser behavior.

@@ -1,0 +1,310 @@
+name: Tree-sitter consumer installation
+
+on:
+  push:
+    branches: [chore/tree-sitter-install-reliability]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-prebuild:
+    name: Native parser ${{ matrix.tuple }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            tuple: darwin-arm64
+          - runner: macos-15-intel
+            tuple: darwin-x64
+          - runner: ubuntu-22.04
+            tuple: linux-x64
+          - runner: windows-2022
+            tuple: win32-x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.3
+      - name: Install pinned build dependencies
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.22.0 --activate
+          pnpm install --frozen-lockfile
+          pnpm build
+      - name: Build Kotlin and Dart native parsers
+        shell: bash
+        run: node scripts/parser-distribution.mjs prepare --build-missing
+      - name: Upload native parser artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parser-prebuild-${{ matrix.tuple }}
+          path: .parser-build/${{ matrix.tuple }}/
+          include-hidden-files: true
+          if-no-files-found: error
+          compression-level: 0
+
+  assemble-package:
+    needs: native-prebuild
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.3
+      - uses: actions/download-artifact@v4
+        with:
+          name: parser-prebuild-darwin-arm64
+          path: .parser-build/darwin-arm64
+      - uses: actions/download-artifact@v4
+        with:
+          name: parser-prebuild-darwin-x64
+          path: .parser-build/darwin-x64
+      - uses: actions/download-artifact@v4
+        with:
+          name: parser-prebuild-linux-x64
+          path: .parser-build/linux-x64
+      - uses: actions/download-artifact@v4
+        with:
+          name: parser-prebuild-win32-x64
+          path: .parser-build/win32-x64
+      - name: Install pinned package dependencies
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.22.0 --activate
+          pnpm install --frozen-lockfile
+      - name: Lint candidate source before packing
+        shell: bash
+        run: |
+          mkdir -p .evidence
+          set -o pipefail
+          pnpm lint 2>&1 | tee .evidence/lint.log
+      - name: Assemble universal parser payload and build
+        shell: bash
+        run: |
+          mkdir -p .evidence .artifact
+          node scripts/parser-distribution.mjs prepare --prebuild-input .parser-build 2>&1 | tee .evidence/assembly.log
+          pnpm build 2>&1 | tee .evidence/build.log
+      - name: Run parser distribution regressions and pack the npm artifact
+        shell: bash
+        run: |
+          node --import tsx/esm --test test/parser-distribution.test.ts test/parser-consumer-harness.test.ts test/phase14b-parser-packaging.test.ts test/phase14b-fact-extractor-dispatch.test.ts test/phase14b-language-c-family.test.ts test/phase14b-language-jvm.test.ts 2>&1 | tee .evidence/targeted-tests.log
+          npm pack --pack-destination .artifact 2>&1 | tee .evidence/npm-pack.log
+          node scripts/parser-distribution.mjs verify --all-targets 2>&1 | tee .evidence/verify-all-targets.log
+      - name: Upload universal npm package and build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-atlas-parser-consumer-package
+          path: |
+            .artifact/*.tgz
+            .evidence/*.log
+          if-no-files-found: error
+          compression-level: 0
+
+  consumer-install:
+    name: Consumer ${{ matrix.target.platform }}-${{ matrix.target.arch }} Node ${{ matrix.node }} ${{ matrix.manager }}
+    needs: assemble-package
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - runner: macos-15
+            platform: darwin
+            arch: arm64
+          - runner: macos-15-intel
+            platform: darwin
+            arch: x64
+          - runner: ubuntu-22.04
+            platform: linux
+            arch: x64
+          - runner: windows-2022
+            platform: win32
+            arch: x64
+        node: ['22.23.3', '24.21.0']
+        manager: [npm, pnpm]
+    runs-on: ${{ matrix.target.runner }}
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: code-atlas-parser-consumer-package
+          path: .consumer-artifact
+      - name: Select the packed package
+        shell: bash
+        run: |
+          package=$(find .consumer-artifact -maxdepth 1 -name '*.tgz' -print -quit)
+          test -n "$package"
+          echo "CODE_ATLAS_TARBALL=$GITHUB_WORKSPACE/$package" >> "$GITHUB_ENV"
+      - name: Set up pinned pnpm for pnpm consumer cases
+        if: matrix.manager == 'pnpm'
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.22.0 --activate
+      - name: Record untouched default-policy consumer result
+        continue-on-error: true
+        shell: bash
+        run: |
+          node scripts/test-parser-consumer.mjs "$CODE_ATLAS_TARBALL" --manager "${{ matrix.manager }}" --mode default --evidence-dir ".evidence/default-${{ matrix.manager }}"
+      - name: Require a recorded default-policy result
+        shell: bash
+        run: |
+          node --input-type=module -e 'import fs from "node:fs"; const file=".evidence/default-${{ matrix.manager }}/result.json"; const result=JSON.parse(fs.readFileSync(file)); if(typeof result.install?.exitCode!=="number") throw new Error("Missing default-policy install exit code"); const status=result.install.exitCode===0?"passed":"failed"; fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `Untouched default-policy ${{ matrix.manager }} install ${status} with exit ${result.install.exitCode}; parser exit ${result.parser?.exitCode ?? "not run"}. See uploaded full logs.\n\n`);'
+      - name: Require clean install with the two reviewed lifecycle approvals
+        shell: bash
+        run: |
+          node scripts/test-parser-consumer.mjs "$CODE_ATLAS_TARBALL" --manager "${{ matrix.manager }}" --mode approved --evidence-dir ".evidence/approved-${{ matrix.manager }}"
+      - name: Upload consumer install logs, lock graph, and package metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parser-consumer-${{ matrix.target.platform }}-${{ matrix.target.arch }}-node${{ matrix.node }}-${{ matrix.manager }}
+          path: .evidence/
+          include-hidden-files: true
+          if-no-files-found: error
+          compression-level: 0
+
+  release-suite-comparison:
+    name: Release regression ${{ matrix.target.platform }}
+    needs: native-prebuild
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - runner: macos-15
+            platform: darwin-arm64
+          - runner: macos-15-intel
+            platform: darwin-x64
+          - runner: ubuntu-22.04
+            platform: linux-x64
+          - runner: windows-2022
+            platform: win32-x64
+    runs-on: ${{ matrix.target.runner }}
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.21.0
+      - uses: actions/download-artifact@v4
+        with:
+          name: parser-prebuild-darwin-arm64
+          path: .parser-build/darwin-arm64
+      - uses: actions/download-artifact@v4
+        with:
+          name: parser-prebuild-darwin-x64
+          path: .parser-build/darwin-x64
+      - uses: actions/download-artifact@v4
+        with:
+          name: parser-prebuild-linux-x64
+          path: .parser-build/linux-x64
+      - uses: actions/download-artifact@v4
+        with:
+          name: parser-prebuild-win32-x64
+          path: .parser-build/win32-x64
+      - uses: actions/checkout@v4
+        with:
+          ref: 8f3c2d7671b4d9a9deaa70c83c80c4fccb94689f
+          path: .release-base
+      - name: Set up pinned pnpm and install candidate dependencies
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.22.0 --activate
+          pnpm install --frozen-lockfile
+          node scripts/parser-distribution.mjs prepare --prebuild-input .parser-build
+          pnpm build
+      - name: Run full immutable release-base suite
+        shell: bash
+        run: |
+          mkdir -p .evidence
+          cd .release-base
+          corepack enable
+          corepack prepare pnpm@11.22.0 --activate
+          pnpm install --frozen-lockfile
+          pnpm build
+          mkdir -p node_modules/.bin
+          chmod +x dist/cli.js
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            printf '@echo off\r\nnode "%%~dp0..\..\dist\cli.js" %%*\r\n' > node_modules/.bin/code-atlas.cmd
+            export CODE_ATLAS_CLI="$(node -p 'require("node:path").resolve("node_modules/.bin/code-atlas.cmd")')"
+          else
+            ln -sf "$PWD/dist/cli.js" node_modules/.bin/code-atlas
+            export CODE_ATLAS_CLI="$(node -p 'require("node:path").resolve("node_modules/.bin/code-atlas")')"
+          fi
+          export PATH="$PWD/node_modules/.bin:$PATH"
+          if node --import tsx/esm --test --test-concurrency=2 --test-reporter=tap test/*.test.ts > ../.evidence/baseline-tests.log 2>&1; then
+            echo 0 > ../.evidence/baseline-tests.exit
+          else
+            echo "$?" > ../.evidence/baseline-tests.exit
+          fi
+      - name: Run full candidate suite and compare original failures
+        shell: bash
+        run: |
+          mkdir -p node_modules/.bin
+          chmod +x dist/cli.js
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            printf '@echo off\r\nnode "%%~dp0..\..\dist\cli.js" %%*\r\n' > node_modules/.bin/code-atlas.cmd
+            export CODE_ATLAS_CLI="$(node -p 'require("node:path").resolve("node_modules/.bin/code-atlas.cmd")')"
+          else
+            ln -sf "$PWD/dist/cli.js" node_modules/.bin/code-atlas
+            export CODE_ATLAS_CLI="$(node -p 'require("node:path").resolve("node_modules/.bin/code-atlas")')"
+          fi
+          export PATH="$PWD/node_modules/.bin:$PATH"
+          if node --import tsx/esm --test --test-concurrency=2 --test-reporter=tap test/*.test.ts > .evidence/candidate-tests.log 2>&1; then
+            echo 0 > .evidence/candidate-tests.exit
+          else
+            echo "$?" > .evidence/candidate-tests.exit
+          fi
+          if node scripts/compare-release-tests.mjs --normalize-root "$GITHUB_WORKSPACE/.release-base" --normalize-root "$GITHUB_WORKSPACE" .evidence/baseline-tests.log .evidence/candidate-tests.log .evidence/regression-comparison.json; then
+            echo 0 > .evidence/regression-comparison.exit
+          else
+            echo "$?" > .evidence/regression-comparison.exit
+          fi
+          node --input-type=module -e 'import fs from "node:fs"; const report=JSON.parse(fs.readFileSync(".evidence/regression-comparison.json")); if(report.passed!==true) { console.error(`Full-suite regression gate failed: ${report.added.length} added, ${report.changed.length} changed, ${report.addedSkips.length} new skips.`); process.exit(1); }'
+      - name: Install external SCIP compiler for native enrichment smoke
+        shell: bash
+        run: |
+          mkdir -p .evidence
+          set -o pipefail
+          if npm install --prefix "$RUNNER_TEMP/scip-tool" --no-save --no-package-lock --no-audit --no-fund @sourcegraph/scip-typescript@0.4.0 2>&1 | tee .evidence/real-scip-install.log; then
+            echo 0 > .evidence/real-scip-install.exit
+          else
+            status=$?
+            echo "$status" > .evidence/real-scip-install.exit
+            exit "$status"
+          fi
+      - name: Run the unskipped real SCIP integration smoke
+        shell: bash
+        run: |
+          set -o pipefail
+          if PATH="$RUNNER_TEMP/scip-tool/node_modules/.bin:$PATH" CODE_ATLAS_SCIP_SMOKE=1 node --import tsx/esm --test --test-reporter=tap test/phase16b-scip-indexer.test.ts 2>&1 | tee .evidence/real-scip.log; then
+            echo 0 > .evidence/real-scip.exit
+          else
+            status=$?
+            echo "$status" > .evidence/real-scip.exit
+            exit "$status"
+          fi
+          node --input-type=module -e 'import fs from "node:fs"; const log=fs.readFileSync(".evidence/real-scip.log","utf8"); if(!/^ok \d+ - optional real scip-typescript smoke indexes a fixture without a pre-generated artifact$/m.test(log)) throw new Error("Real SCIP integration smoke did not pass; it may have been skipped");'
+      - name: Upload full-suite logs and failure comparison
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parser-release-suite-${{ matrix.target.platform }}
+          path: .evidence/
+          include-hidden-files: true
+          if-no-files-found: error
+          compression-level: 0

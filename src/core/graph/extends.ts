@@ -1,4 +1,5 @@
-import Parser from "tree-sitter";
+import type Parser from "tree-sitter";
+import { ParserRuntime } from "./parsers/native-runtime.js";
 
 import { getLanguageAdapter } from "./parsers/registry.js";
 import type { ImportBinding } from "./import-bindings.js";
@@ -37,7 +38,7 @@ export function extractExtendsFactEvidence(source: string): ExtendsFactEvidence[
 function createParser(filePath: string): Parser | undefined {
   const adapter = getLanguageAdapter(filePath);
   if (!adapter) return undefined;
-  const parser = new Parser();
+  const parser = new ParserRuntime();
   parser.setLanguage(adapter.grammar);
   return parser;
 }

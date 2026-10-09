@@ -87,3 +87,13 @@ artifacts/context-eval-report.json
 artifacts/retrieval-eval-candidate.json
 artifacts/retrieval-eval-candidate.md
 artifacts/phase15d-preflight-baseline.json
+
+# Reproducible native parser distribution
+vendor/parsers/
+.parser-build/
+.parser-cache/
+.parser-prebuilds/
+
+# Equivalent immutable release-baseline checkout used by local and native CI.
+.release-base/
+bin/

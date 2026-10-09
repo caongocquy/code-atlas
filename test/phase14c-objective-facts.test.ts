@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import Parser from "tree-sitter";
+import { ParserRuntime as Parser } from "../src/core/graph/parsers/native-runtime.js";
 
 import { decodeFacts, encodeFacts } from "../src/core/facts/facts-codec.js";
 import { extractParsedFacts } from "../src/core/facts/facts-extractor.js";

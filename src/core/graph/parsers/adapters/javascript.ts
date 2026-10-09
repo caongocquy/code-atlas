@@ -1,4 +1,4 @@
-import JavaScript from "tree-sitter-javascript";
+import { JavaScript } from "../native-runtime.js";
 
 import type { LanguageAdapter } from "../types.js";
 import { extractJavaScriptSymbols } from "./javascript-extractor.js";
