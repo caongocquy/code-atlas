@@ -1,5 +1,7 @@
 # Tree-sitter installation reliability implementation
 
+Latest release-readiness continuation: see `RELEASE_PACKAGING_AUDIT.md`, current source `40e418aac70ef53fcdac3875275b7be67d9bc0cf`. The runs and failed Windows attempts below are historical evidence for their named SHAs, not proof that the latest SHA is green.
+
 Implementation date: 2026-10-09. Authoritative before baseline: `TREE_SITTER_INSTALL_AUDIT.md` (unchanged). Tested source SHA: `1d2db007577ed56007312f5ce92e8c7068cf95f5`. All sixteen approved clean consumer gates pass. Both Windows full-suite attempts fail on different added identities, retained below. **Consumer installation gates pass; overall qualification and v1.6.1 publication remain NO-GO.**
 
 ## Distribution change

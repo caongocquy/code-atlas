@@ -1,12 +1,75 @@
 # Release packaging audit (candidate for 1.6.1)
 
 Baseline: immutable `v1.6.0`, commit `8f3c2d7671b4d9a9deaa70c83c80c4fccb94689f`.
-Work is isolated from Phase 16C on `chore/release-packaging-161`. The continuation authorizes CLI migration, commit/push and native candidate CI.
+Original packaging work is isolated on `chore/release-packaging-161`; the current lint/Windows continuation uses `fix/windows-regression-release-readiness`. The current user request authorizes normal commit/push and native candidate CI on that existing fix branch, while preserving all other worktrees.
 No version bump, merge, tag, npm publication, GitHub Release or Homebrew update
 is authorized. Historical evidence below is preserved; current continuation
 results and decisions are recorded first.
 
-## Final native qualification (2026-10-09)
+## Current release readiness: Windows/lint continuation (2026-10-09)
+
+Branch: `fix/windows-regression-release-readiness`. Starting SHA: `d74b0cf9d8b8e6c9339aa3881b6b1eb6ff639ee6`. Current tested source fix: `40e418aac70ef53fcdac3875275b7be67d9bc0cf`. **v1.6.1 remains NO-GO.** The older portable qualification below is historical evidence for its named SHA, not proof that the current vendored distribution or release branch is green.
+
+Source checkpoint CI (40e418a; subsequent observability commits must be qualified independently):
+
+- [Native parser, consumer and regression matrix 37904100241](https://github.com/caongocquy/code-atlas/actions/runs/37904100241): all four native builds, assembly and **16/16 approved consumer cases pass**; macOS ARM64/x64 and Linux full regressions pass with 49 baseline/candidate failures, zero added/changed failure identities and zero added skips; Windows was still running at this checkpoint.
+- [Phase 14B parser platform 37904100362](https://github.com/caongocquy/code-atlas/actions/runs/37904100362): **PASS, 41/41 tests, zero skips** on the current source SHA.
+
+### Current consumer results and remaining default-policy warnings
+
+The matrix uses Node **22.23.3 / 24.21.0**, npm **10.9.9 / 11.19.0**, and pnpm **11.22.0**. All sixteen reviewed-policy consumer installs pass on macOS ARM64/x64, Linux x64 and Windows x64; each actual parser log reports **12/12 AST checks** for TS, TSX, JS, Python, Java, Kotlin, Go, Rust, Swift, Dart, C and C++. Install/parser/dependency-graph exits are zero, all compiler guards pass, and compiler invocation lists are empty. Exact approvals remain only `onnxruntime-node@1.30.0` and `protobufjs@7.6.6`.
+
+Thirty-two raw records preserve the distinction between default and approved installation. Default npm passes 8/8 with actual parsing: npm 10 has no warnings; npm 11 reports five `allowScripts` warning lines per case for the same two hooks. Default pnpm fails 8/8 with `ERR_PNPM_IGNORED_BUILDS` for those hooks; parser/graph checks do not run in those failed default cases. Approved cases contain zero peer, compilation, lifecycle-policy, missing-prebuild or deprecation warnings. No blanket approval, `--force`, `--legacy-peer-deps`, global lifecycle disabling or required-language removal is used. Verbose npm logs also record platform filtering of optional `@img/sharp-*` dependencies; this is not native compilation or a missing parser.
+
+Universal npm artifact: **21,154,720 bytes** compressed (20.175 MiB), **256,814,063 bytes** unpacked (244.917 MiB), 659 files; SHA-256 `e389d1006c8b29689c85dea46dc69684e34f1de30477d049b1e3970e5a403267`. Approved installed own-package sizes range **256,814,063–256,844,957 bytes**. These are npm package measurements, not the historical portable archive/install measurements below. Raw current install logs, dependency graphs, native manifests and assembly evidence are retained in the workflow artifacts and locally under ignored `docs/audits/windows-release-readiness-20261009/ci-37904100241/`.
+
+### Exact lint failure and fix
+
+Both `assemble-package` in [37902063107](https://github.com/caongocquy/code-atlas/actions/runs/37902063107) and the separate [Phase14B run 37902063060](https://github.com/caongocquy/code-atlas/actions/runs/37902063060) stopped at lint on `d74b0cf`. The diagnostic script had six `no-undef` errors for `process` at lines 43, 54 and 60. Phase14B did not reach its parser tests; this was the same lint root cause, not an independently demonstrated parser failure. The consumer matrix was skipped after assembly failed, so that run provides no new consumer-install passes.
+
+`eslint.config.js` now declares only read-only `process` for exactly `scripts/diagnose-windows-graphql.mjs`. It does not disable `no-undef`, broaden Node globals to browser/other scripts, import a new dependency, or alter existing TypeScript lint policy. Actual ESLint checks accept `process` in that diagnostic, reject an unknown identifier there, reject global `process` in an unrelated script, and reject assignment to the read-only global.
+
+Local validation of the source fix:
+
+- `pnpm install --frozen-lockfile`: pass; manifest and lockfile unchanged.
+- `pnpm lint` and `pnpm build`: pass on host Node 22.23.2.
+- Host payload preparation with official Node 22.23.3: pass; `verify` checks twelve pinned package inventories/architectures. The first build attempt with host Node 22.23.2 was correctly rejected by the exact-header-version guard; the guard was not bypassed.
+- Official Node 22.23.3 focused selection: **86/86 pass, zero skips**. This runs the exact seven-file Phase14B workflow selection plus GraphQL B2, distribution, consumer harness and portable pruning tests.
+- `diagnose-windows-graphql.mjs`: **32/32 strict iterations pass locally on macOS ARM64**. Each requires facts, exactly one accepted namespace-fixture entity, and an unsupported-origin diagnostic. This is not Windows proof.
+- Read-only Ponytail reconciliation additionally ran `pre17e-incremental.test.ts` and `pre17e-noop-gate.test.ts`: **15/15 pass**.
+
+The pre-existing `423e585` change only adds bounded `rm` retries after SQLite close to the three framework fail-fast fixture roots (`maxRetries: 15`, `retryDelay: 100`). Product storage and all framework assertions are unchanged. The pre-existing Windows GraphQL diagnostic emits raw facts/evidence on the first mismatch and exits nonzero; it does not turn failures into passes by retrying assertions. At the source checkpoint the Windows diagnostic step passed, but full-suite/SCIP qualification was still pending. Each of the three completed Unix platforms ran real SCIP with 6/6 pass and zero skips. Full-suite failures remain baseline failures; a green comparison is not a fully passing suite.
+
+Both full-suite steps now stream the identical TAP command through `tee` with `set -o pipefail`, preserving the saved raw log and the nonzero Node exit. The old Windows run exceeded 34 minutes with no visible test progress because all output was redirected; this instrumentation exposes the active test on a fresh run without changing assertions, selection, concurrency, skips or timeouts. A shell self-check captured failure exit 7 and success exit 0 with complete logs; the existing consumer harness passed 8/8 after the change. The next branch SHA must run the full native consumer/regression and Phase14B gates again; this checkpoint does not claim that an untested newer SHA is green.
+
+### Ponytail original findings reconciled against current release code
+
+Baseline: read-only audit in Codex chat **Set up Matt Pocock skills**, thread `01a11c7a-093d-76a0-8b2a-2ba4d000bb83`, audit turn `01a11c80-3077-7182-9151-0faff27f0d8f`. It audited a dirty primary checkout, so each finding was checked against committed release source rather than copied as a current claim. The exact original report is preserved in ignored evidence at `docs/audits/windows-release-readiness-20261009/ponytail-original-audit.md`.
+
+| # | Original finding | Current status | Current evidence / release implication |
+| --- | --- | --- | --- |
+| 1 | HTTP Inspector exposes repository secrets | **Open** | `src/adapters/http/http-server.ts:162-196` reads arbitrary in-repo source paths; line 235 binds `0.0.0.0`, without authentication. `.env` passes the lexical boundary. No real secret was read during reconciliation. Security blocker. |
+| 2 | Symlink bypasses HTTP repository source boundary | **Open** | `src/adapters/http/repository-source-path.ts:3` checks path text only. A temporary in-repo symlink returned a harmless marker from outside the temporary repo. Existing inspector test covers `../`, not this bypass. Security blocker. |
+| 3 | Long owner-context lexical query exceeds SQLite bind limit | **Open on release source** | `src/core/lexical/lexical-search.service.ts:40` generates 820 owner-name combinations for 40 distinct tokens; `src/storage/atlas/atlas.store.ts:2365` repeats binds per query term. Actual `searchLexical` probes with 40 and 50 tokens both throw `too many SQL variables`. This is present in committed release code, not merely the primary dirty Phase16C diff. Correctness blocker. |
+| 4 | Stale candidate can replace newer active generation | **Open at store API; normal pipeline mitigated** | `src/storage/atlas/atlas.store.ts:2201-2253` publication does not compare parent generation with current active generation. `runPipeline` at `src/core/indexing/index-pipeline.service.ts:1102` serializes normal operations with a writer lock. Do not label store-level CAS fixed by pipeline serialization. |
+| 5 | Config scanning crosses ignored/nested-repo boundaries | **Partially fixed** | `scanModuleConfigFiles` at `src/core/indexing/filesystem-change-detector.ts:47` respects resolved excludes. Isolated scan omitted an ignored package config but still returned `nested/package.json` from a nested `.git` repo; the source scanner excludes its source files. Nested-repo config boundary remains open. |
+| 6 | Unchanged semantic sync re-embeds repository | **Fixed for unchanged sync** | Compatible providers plus no semantic-dirty paths enter the no-op gate at `src/core/indexing/index-pipeline.service.ts:557`; no embedding/publication occurs. Fifteen focused Pre17E tests pass, including zero semantic writes on no-op and reuse when one source changes. |
+| 7 | Every sync retains another full generation forever | **Partially fixed** | No-op sync reuses the active generation, preserving generation count/database snapshot. Changed-generation retention remains unbounded; no generation-pruning path exists. `deleteUnreferencedFactBlobs` at `src/storage/atlas/atlas.store.ts:1414` cannot collect facts still held by historical generation bindings. |
+| 8 | Semantic candidate duplicates legacy/generation vectors | **Open** | `prepareSemanticCandidateFromFacts` at `src/core/semantic/semantic-index.service.ts:96` calls built-in vector upsert, which writes legacy `semantic_vectors` (`src/storage/atlas/sqlite-vector.store.ts:48`); the pipeline then stages `generation_semantic_vectors` at line 986. Duplicate writes/storage remain. |
+
+**Reconciled total: one fixed, two partial, five open (store publication is mitigated in the normal pipeline).** No finding is silently dropped or marked fixed based on an old run. This continuation records their status; it does not change HTTP APIs, indexing/storage semantics, or merge dirty Phase16C/17 features. Source/graph discovery was unavailable or stale for this isolated worktree; reconciliation used direct source and isolated marker/database probes, with no reindexing.
+
+### Current blockers and publication boundaries
+
+1. Require complete per-SHA native/assembly/consumer/regression results, including raw Windows GraphQL, EBUSY and real SCIP evidence. Windows qualification is unresolved at the source checkpoint above; subsequent run results must be read from their actual workflow artifacts. Skipped tests/consumers are not passing results.
+2. Resolve the open security and lexical correctness findings above before declaring v1.6.1 release-ready. Record decisions for the remaining partial/open storage and config findings explicitly.
+3. Existing publication/portable-release workflows still need the same-SHA qualified universal parser payload required by fail-closed `prepack`; the qualification workflow alone does not establish fresh release-workflow readiness.
+4. The candidate version remains 1.6.0. No version bump or requalification of version 1.6.1 has occurred.
+5. Ordinary npm macOS x64 ONNX execution remains separate from historical portable qualification. The older full-feature ONNX build passed embedding on Intel macOS at its named SHA; no current regression is inferred from age alone, but the latest parser-only consumer tests do not exercise a real Intel embedding model.
+
+All other valid worktrees were snapshotted before the fix: 22 checkouts, 2,513 dirty/untracked file hashes plus HEAD/status. A subsequent verification found **zero drift** in all 22 HEADs/statuses and 2,513 file hashes. Changes remain isolated to this branch. No merge, tag, npm/GitHub publication or Homebrew update is authorized or performed.
+
+## Historical native qualification (2026-10-09, 5f91d12)
 
 **GO for v1.6.1 packaging and the authorized Clack migration.** All four native
 artifact and regression gates passed on code commit
@@ -14,7 +77,7 @@ artifact and regression gates passed on code commit
 https://github.com/caongocquy/code-atlas/actions/runs/37872719908
 The separate native parser matrix also passed:
 https://github.com/caongocquy/code-atlas/actions/runs/37872719935
-This final section supersedes the historical NO-GO snapshots below.
+This was the packaging decision at that source SHA; the current-readiness section above governs the ongoing release candidate.
 
 Each installed artifact and each extracted archive passed **9/9 smoke groups with
 zero failures and zero skips** (eight smoke runs total). These exercise all native

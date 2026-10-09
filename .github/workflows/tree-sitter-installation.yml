@@ -257,6 +257,7 @@ jobs:
       - name: Run full immutable release-base suite
         shell: bash
         run: |
+          set -o pipefail
           mkdir -p .evidence
           cd .release-base
           corepack enable
@@ -273,7 +274,7 @@ jobs:
             export CODE_ATLAS_CLI="$(node -p 'require("node:path").resolve("node_modules/.bin/code-atlas")')"
           fi
           export PATH="$PWD/node_modules/.bin:$PATH"
-          if node --import tsx/esm --test --test-concurrency=2 --test-reporter=tap test/*.test.ts > ../.evidence/baseline-tests.log 2>&1; then
+          if node --import tsx/esm --test --test-concurrency=2 --test-reporter=tap test/*.test.ts 2>&1 | tee ../.evidence/baseline-tests.log; then
             echo 0 > ../.evidence/baseline-tests.exit
           else
             echo "$?" > ../.evidence/baseline-tests.exit
@@ -281,6 +282,7 @@ jobs:
       - name: Run full candidate suite and compare original failures
         shell: bash
         run: |
+          set -o pipefail
           mkdir -p node_modules/.bin
           chmod +x dist/cli.js
           if [[ "$RUNNER_OS" == "Windows" ]]; then
@@ -291,7 +293,7 @@ jobs:
             export CODE_ATLAS_CLI="$(node -p 'require("node:path").resolve("node_modules/.bin/code-atlas")')"
           fi
           export PATH="$PWD/node_modules/.bin:$PATH"
-          if node --import tsx/esm --test --test-concurrency=2 --test-reporter=tap test/*.test.ts > .evidence/candidate-tests.log 2>&1; then
+          if node --import tsx/esm --test --test-concurrency=2 --test-reporter=tap test/*.test.ts 2>&1 | tee .evidence/candidate-tests.log; then
             echo 0 > .evidence/candidate-tests.exit
           else
             echo "$?" > .evidence/candidate-tests.exit
