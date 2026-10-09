@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 import console from "node:console";
 import process from "node:process";
 import { installDarwinX64OnnxRuntime, validateDarwinX64NativeBundle } from "./onnx-darwin-x64.mjs";
-import { pruneReleaseBundle } from "./prune-release-bundle.mjs";
+import { pruneReleaseBundle, removeSwiftBuildDependency } from "./prune-release-bundle.mjs";
 
 function fail(message) {
   console.error(message);
@@ -94,19 +94,30 @@ if (!Array.isArray(packMetadata) || packMetadata.length !== 1 || !packMetadata[0
 }
 
 const packageArchive = path.join(tempDir, packMetadata[0].filename);
-fs.writeFileSync(
-  path.join(bundleDir, "package.json"),
-  JSON.stringify(
-    {
-      name: `${tool}-portable-runtime`,
-      private: true,
-      version,
-      description: `Portable runtime bundle for ${tool}`,
-    },
-    null,
-    2,
-  ) + "\n",
-);
+// Resolve Swift from an integrity-pinned archive with only its build-only CLI edge removed.
+const [swift] = JSON.parse(capture("npm", ["pack", "tree-sitter-swift@0.7.1", "--json", "--pack-destination", tempDir]));
+if (swift?.integrity !== "sha512-pneKVTuGamaBsqqqfB9BvNQjktzh/0IVPR54jLB5Fq/JTDQwYHd0Wo6pVyZ5jAYpbztzq+rJ/rpL9ruxTmSoKw==") {
+  fail("Unaudited tree-sitter-swift archive integrity");
+}
+const swiftDir = path.join(tempDir, "swift-runtime");
+fs.mkdirSync(swiftDir);
+run("tar", ["-xzf", path.join(tempDir, swift.filename), "-C", swiftDir]);
+removeSwiftBuildDependency(path.join(swiftDir, "package"));
+const [runtimeSwift] = JSON.parse(capture("npm", ["pack", "--json", "--pack-destination", swiftDir], { cwd: path.join(swiftDir, "package") }));
+const assets = metadata => metadata.files.filter(file => file.path !== "package.json")
+  .map(file => `${file.path}:${file.size}`).sort();
+if (JSON.stringify(assets(swift)) !== JSON.stringify(assets(runtimeSwift))) {
+  fail("Swift runtime repack changed package assets");
+}
+const bundleManifest = {
+  name: `${tool}-portable-runtime`, private: true, version,
+  description: `Portable runtime bundle for ${tool}`,
+};
+const bundleManifestPath = path.join(bundleDir, "package.json");
+fs.writeFileSync(bundleManifestPath, JSON.stringify({
+  ...bundleManifest,
+  overrides: { "tree-sitter-swift@0.7.1": `file:${path.join(swiftDir, runtimeSwift.filename)}` },
+}, null, 2) + "\n");
 
 const installArgs = [
   "install",
@@ -119,6 +130,8 @@ const installArgs = [
 if (ignoreInstallScripts) installArgs.push("--ignore-scripts");
 installArgs.push(packageArchive);
 run("npm", installArgs, { cwd: bundleDir });
+// The install-only override contains a build path and must not ship in the artifact.
+fs.writeFileSync(bundleManifestPath, JSON.stringify(bundleManifest, null, 2) + "\n");
 
 const packagePath = path.join(bundleDir, "node_modules", ...packageName.split("/"));
 const entryPath = path.join(packagePath, ...entry.split("/"));

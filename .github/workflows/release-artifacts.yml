@@ -125,7 +125,7 @@ jobs:
       - name: Restore validated ONNX macOS x64 payload
         if: matrix.platform == 'darwin' && matrix.arch == 'x64'
         id: onnx-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/code-atlas-onnx-native
           key: onnx-1.30.0-f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7-macos15-x64-coreml-webgpu-cmake3.31.8-minos13.5-v2
@@ -153,6 +153,12 @@ jobs:
           cmake --version
           python3 -m pip install -r .onnx-source/tools/ci_build/github/linux/docker/scripts/requirements.txt
           env -u VCPKG_INSTALLATION_ROOT -u VCPKG_ROOT node scripts/build-onnx-darwin-x64.mjs .onnx-source "$RUNNER_TEMP/code-atlas-onnx-native"
+      - name: Save validated ONNX payload before artifact installation
+        if: matrix.platform == 'darwin' && matrix.arch == 'x64' && steps.onnx-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/code-atlas-onnx-native
+          key: ${{ steps.onnx-cache.outputs.cache-primary-key }}
       - name: Select validated ONNX payload for macOS x64 packaging
         if: matrix.platform == 'darwin' && matrix.arch == 'x64'
         shell: bash

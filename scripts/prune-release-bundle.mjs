@@ -86,3 +86,15 @@ export function pruneReleaseBundle(bundleDir, platform, arch) {
   }
   return removed;
 }
+
+// Swift's CLI dependency is only used by its generation/playground scripts.
+export function removeSwiftBuildDependency(packageDir) {
+  const manifestPath = path.join(packageDir, "package.json");
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  if (manifest.name !== "tree-sitter-swift" || manifest.version !== "0.7.1"
+    || manifest.scripts?.install !== "node-gyp-build" || manifest.dependencies?.["tree-sitter-cli"] !== "^0.23") {
+    throw new Error("Unaudited tree-sitter-swift runtime manifest");
+  }
+  delete manifest.dependencies["tree-sitter-cli"];
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+}

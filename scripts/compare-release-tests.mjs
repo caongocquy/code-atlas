@@ -98,7 +98,7 @@ function failureIdentity(item, roots = []) {
   const source = /(?:^|[\\/])(test[\\/].+?\.test\.[^\\/.:]+)(?::\d+:\d+)?$/.exec(location)?.[1]
     ?? /(?:^|[\\/])([^\\/:]+\.test\.[^\\/:]+)(?::\d+:\d+)?$/.exec(location)?.[1]
     ?? '<unknown-file>';
-  const testFile = source.replaceAll('\\', '/');
+  const testFile = source.replace(/[\\/]+/g, '/');
   return `${testFile} :: ${normalizeText(item.name, roots)}`;
 }
 
@@ -109,6 +109,43 @@ function assertion(item, roots = []) {
   }
   for (const [source, target] of [['code', 'errorCode'], ['name', 'errorName']]) {
     if (source in item.fields) result[target] = normalizeText(item.fields[source], roots);
+  }
+  if (result.errorCode === 'EBUSY' && typeof result.error === 'string') {
+    // rm can encounter any member of the same open SQLite database first on Windows.
+    result.error = result.error.replace(
+      /^(EBUSY: resource busy or locked, unlink '<TMP>[\\/]{1,2}code-atlas-[^\\/'"]+-<ID>[\\/]{1,2}\.codeatlas[\\/]{1,2})atlas\.db(?:-wal|-shm)?(')$/,
+      '$1atlas.db<SQLITE-FILE>$2',
+    );
+  }
+  if (failureIdentity(item, roots) === 'test/phase0-incremental.test.ts :: incremental sync handles unchanged, one changed importer impact, deletion, and deterministic output'
+    && result.errorCode === 'ERR_ASSERTION' && result.operator === 'strictEqual'
+    && result.error?.startsWith('Expected values to be strictly equal:')) {
+    try {
+      const canonical = text => {
+        const graph = JSON.parse(text);
+        if (Object.keys(graph).sort().join(',') !== 'edges,nodes' || !Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) throw new Error('Not a graph snapshot');
+        const ids = new Map();
+        const nodes = graph.nodes.map(({ id, ...node }) => {
+          if (typeof id !== 'string' || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(id) || ids.has(id)) throw new Error('Invalid node ID');
+          const key = stable(node);
+          if ([...ids.values()].includes(key)) throw new Error('Ambiguous node identity');
+          ids.set(id, key);
+          return node;
+        });
+        const edges = graph.edges.map(edge => {
+          if (!ids.has(edge.from) || !ids.has(edge.to)) throw new Error('Unknown edge endpoint');
+          return { ...edge, from: ids.get(edge.from), to: ids.get(edge.to) };
+        });
+        const order = (a, b) => stable(a).localeCompare(stable(b));
+        return stable({ nodes: nodes.sort(order), edges: edges.sort(order) });
+      };
+      // This fixture derives IDs from its random repository root. Preserve every other graph value.
+      const expected = canonical(result.expected);
+      const actual = canonical(result.actual);
+      result.expected = expected;
+      result.actual = actual;
+      result.error = 'Expected values to be strictly equal:';
+    } catch { /* Unrecognized diagnostics stay byte-sensitive. */ }
   }
   return result;
 }

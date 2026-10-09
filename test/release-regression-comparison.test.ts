@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { parseTap, normalizeText, compareParsed } from '../scripts/compare-release-tests.mjs';
 
@@ -118,4 +119,56 @@ test('rejects incomplete TAP logs and hidden cancellations', () => {
   assert.equal(compareParsed(incomplete, incomplete).passed, false);
   const canceled = parseTap(`TAP version 13\nok 1 - passed\n1..1\n# tests 1\n# pass 0\n# fail 0\n# skipped 0\n# cancelled 1\n# todo 0\n`);
   assert.equal(compareParsed(canceled, canceled).passed, false);
+});
+
+const windowsDiagnostics = JSON.parse(readFileSync(new URL('./fixtures/release-windows-assertions.json', import.meta.url), 'utf8'));
+const captured = (failures: typeof windowsDiagnostics.baseline) => ({
+  failures, skips: [], summary: { tests: failures.length, pass: 0, fail: failures.length, skipped: 0, cancelled: 0, todo: 0 },
+});
+
+test('compares real Windows TAP failures without fixture UUID or SQLite sidecar noise', () => {
+  const report = compareParsed(captured(windowsDiagnostics.baseline), captured(windowsDiagnostics.candidate));
+  assert.equal(report.passed, true);
+  assert.equal(report.changed.length, 0);
+});
+
+test('retains graph paths, duplicate nodes, edge connectivity and metadata from Windows TAP', () => {
+  for (const mutate of [
+    (graph: { nodes: Array<Record<string, unknown>>; edges: Array<Record<string, unknown>> }) => { graph.nodes.pop(); },
+    (graph: { nodes: Array<Record<string, unknown>>; edges: Array<Record<string, unknown>> }) => { graph.nodes.push({ ...graph.nodes[0], id: '00000000-0000-5000-8000-000000000000' }); },
+    (graph: { nodes: Array<Record<string, unknown>>; edges: Array<Record<string, unknown>> }) => { graph.nodes[0].file = 'src/different.ts'; },
+    (graph: { nodes: Array<Record<string, unknown>>; edges: Array<Record<string, unknown>> }) => { graph.edges.pop(); },
+    (graph: { nodes: Array<Record<string, unknown>>; edges: Array<Record<string, unknown>> }) => { graph.edges[0].to = graph.nodes.find(node => node.id !== graph.edges[0].to)!.id; },
+    (graph: { nodes: Array<Record<string, unknown>>; edges: Array<Record<string, unknown>> }) => { graph.edges[0].confidence = 0.5; },
+  ]) {
+    const changed = structuredClone(windowsDiagnostics.candidate);
+    const graph = JSON.parse(changed[1].fields.actual);
+    mutate(graph);
+    changed[1].fields.actual = JSON.stringify(graph);
+    assert.equal(compareParsed(captured(windowsDiagnostics.baseline), captured(changed)).passed, false);
+  }
+});
+
+test('does not normalize UUID differences in other graph assertions', () => {
+  const before = structuredClone(windowsDiagnostics.baseline);
+  const after = structuredClone(windowsDiagnostics.candidate);
+  before[1].name = after[1].name = 'graph IDs must be stable';
+  assert.equal(compareParsed(captured(before), captured(after)).passed, false);
+});
+
+test('SQLite cleanup normalization preserves errno, operation, fixture and database identity', () => {
+  for (const change of [
+    (item: { fields: Record<string, string> }) => { item.fields.code = 'ENOENT'; },
+    (item: { fields: Record<string, string> }) => { item.fields.error = item.fields.error.replace('unlink', 'rmdir'); },
+    (item: { fields: Record<string, string> }) => { item.fields.error = item.fields.error.replace('atlas.db-shm', 'vectors.db-shm'); },
+    (item: { fields: Record<string, string> }) => { item.fields.error = item.fields.error.replace('framework-dynamic', 'other-fixture'); },
+    (item: { fields: Record<string, string> }) => { item.fields.error = item.fields.error.replace('<TMP>', 'C:/project'); },
+  ]) {
+    const changed = structuredClone(windowsDiagnostics.candidate);
+    change(changed[0]);
+    assert.equal(compareParsed(captured(windowsDiagnostics.baseline), captured(changed)).passed, false);
+  }
+  const mainDatabase = structuredClone(windowsDiagnostics.candidate);
+  mainDatabase[0].fields.error = mainDatabase[0].fields.error.replace('atlas.db-shm', 'atlas.db');
+  assert.equal(compareParsed(captured(windowsDiagnostics.baseline), captured(mainDatabase)).passed, true);
 });

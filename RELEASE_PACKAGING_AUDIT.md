@@ -613,3 +613,46 @@ still running its native ONNX build at the last available status snapshot; the
 GitHub API was unreachable during this audit update, so its final job and artifact
 results remain unverified here. Therefore the four-platform matrix is incomplete
 and the release remains **NO-GO**.
+
+
+## Blocker remediation (2026-10-09)
+
+Run 37823137359 completed with successful native x64 ONNX compilation and payload
+validation. Its final failure was production installation of `tree-sitter-cli@0.23.2`: the
+postinstall download of `tree-sitter-macos-x64.gz` returned HTTP 500. The later audit-only
+run 37827300081 passed all macOS x64 artifact checks, confirming the native ONNX and
+linked-library implementation works when that unrelated download succeeds. Windows
+still failed its regression gate on that run. Neither run is four-platform qualification.
+
+`tree-sitter-swift@0.7.1` declares the CLI as a production dependency even though its
+runtime binding only loads `node-gyp-build` and `src/node-types.json`; the CLI is used
+by the generation/playground scripts. The portable packager now verifies the original
+Swift tarball against its pinned SHA-512 integrity, removes only this dependency from
+an extracted manifest and installs the otherwise unchanged package via an npm override.
+The temporary override is removed from the bundle manifest after install. Grammar
+install scripts remain enabled, and the published CodeAtlas manifest and lockfile are
+unchanged. A local offline install regression reproduces the failing CLI download, then
+proves native lifecycle execution and preservation of parser/metadata bytes with the fix.
+
+Raw Windows baseline/candidate TAP from run 37823137359 was replayed. For the incremental
+graph test, both expected and actual snapshots have exactly the same nodes, edges and
+metadata; only repository-root-derived UUIDs and their sort order differ. The comparator
+now canonicalizes UUIDs by unique node metadata for that one test identity, retaining
+slash/backslash spelling, duplicate-path nodes, all metadata, edge multiplicity and
+connectivity. Unknown endpoints, ambiguous node identities and other UUID assertions
+remain byte-sensitive. SQLite cleanup normalization only treats `atlas.db`, `atlas.db-wal`
+and `atlas.db-shm` as one database family for an `EBUSY unlink` inside a generated
+CodeAtlas fixture's `.codeatlas` directory. Error code, operation, fixture and database
+identity remain significant. No failed test is skipped or suppressed.
+
+The original raw TAP replay now passes: zero added failures, zero changed assertions,
+zero new skips and 24 resolved baseline failures. The 30 focused pruning, ONNX, Swift
+install and comparator regressions pass; targeted lint and build pass. The fresh installed ARM64 artifact passed all 9 smoke
+groups, including real external SCIP, without skips. Negative tests
+retain failures for changed graph nodes, paths, duplicate identities, edges, metadata,
+SQLite errno/operation/fixture/database and unrelated UUID assertions. Native payloads
+are now cached immediately after their successful build/validation so a later artifact
+install failure does not discard the expensive build.
+
+A complete native matrix on the fix commit is required before **GO**. Final results and
+sizes will be recorded below after all four artifact smoke and regression gates finish.
