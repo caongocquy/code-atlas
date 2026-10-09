@@ -2,7 +2,7 @@ name: Tree-sitter consumer installation
 
 on:
   push:
-    branches: [chore/tree-sitter-install-reliability]
+    branches: [chore/tree-sitter-install-reliability, fix/windows-regression-release-readiness]
   workflow_dispatch:
 
 permissions:
@@ -247,6 +247,13 @@ jobs:
           pnpm install --frozen-lockfile
           node scripts/parser-distribution.mjs prepare --prebuild-input .parser-build
           pnpm build
+      - name: Diagnose Windows GraphQL parser/provenance without modifying Phase 17
+        if: matrix.target.platform == 'win32-x64'
+        shell: bash
+        run: |
+          mkdir -p .evidence
+          set -o pipefail
+          node --import tsx/esm scripts/diagnose-windows-graphql.mjs 2>&1 | tee .evidence/windows-graphql-provenance.log
       - name: Run full immutable release-base suite
         shell: bash
         run: |
