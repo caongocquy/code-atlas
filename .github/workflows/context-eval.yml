@@ -15,15 +15,15 @@ permissions:
 jobs:
   context-eval:
     name: Offline context release gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Node.js 24
+      - name: Set up Node.js 22.23.3 for parser preparation
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 22.23.3
 
       - name: Install locked pnpm toolchain
         shell: bash
@@ -35,6 +35,15 @@ jobs:
 
       - name: Install repository dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Prepare pinned host parser payload
+        shell: bash
+        run: node scripts/parser-distribution.mjs prepare --build-missing
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
 
       - name: Run offline context release gate
         env:

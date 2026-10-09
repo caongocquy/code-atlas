@@ -4,14 +4,15 @@ on: [push, pull_request]
 
 jobs:
   linux-x64-native-parsers:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.23.3
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
+      - run: node scripts/parser-distribution.mjs prepare --build-missing
       - run: pnpm run lint
       - run: node --import tsx/esm --test test/phase14b-parser-packaging.test.ts test/phase14b-language-ecmascript.test.ts test/framework-semantic-fail-fast.test.ts test/react-lazy-route-framework.test.ts test/phase15e-mcp-metadata.test.ts test/phase14c-version-domains.test.ts test/phase17d-c-config-integrity.test.ts

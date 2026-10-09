@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -32,6 +32,48 @@ test('consumer policy approves exactly ONNX and protobufjs', () => {
   const pnpm = createConsumerConfig({ manager: 'pnpm', mode: 'approved', tarball: '/tmp/code-atlas.tgz' });
   assert.equal(pnpm.pnpmWorkspace, 'sideEffectsCache: false\nallowBuilds:\n  "onnxruntime-node": true\n  "protobufjs": true\n');
   assert.equal(createConsumerConfig({ manager: 'pnpm', mode: 'default', tarball: '/tmp/code-atlas.tgz' }).pnpmWorkspace, 'sideEffectsCache: false\n');
+});
+
+test('consumer workflow selects exactly one nested tarball on Bash 3-compatible syntax', () => {
+  const workflow = readFileSync(new URL('../.github/workflows/tree-sitter-installation.yml', import.meta.url), 'utf8');
+  const lines = workflow.split(/\r?\n/);
+  const stepStart = lines.indexOf('      - name: Select the packed package');
+  assert.notEqual(stepStart, -1);
+  const runStart = lines.indexOf('        run: |', stepStart);
+  assert.notEqual(runStart, -1);
+  const scriptLines = [];
+  for (let index = runStart + 1; index < lines.length && !lines[index].startsWith('      - name: '); index += 1) {
+    if (lines[index].startsWith('          ')) scriptLines.push(lines[index].slice(10));
+  }
+  const selector = scriptLines.join('\n');
+  assert.ok(selector.includes("find .consumer-artifact -type f -name '*.tgz' -print"));
+  assert.ok(selector.includes('test -n "$package"'));
+  assert.ok(selector.includes('wc -l'));
+
+  for (const count of [0, 1, 2]) {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'parser-tarball-selector-'));
+    try {
+      const packageDirectory = path.join(root, '.consumer-artifact', '.artifact');
+      mkdirSync(packageDirectory, { recursive: true });
+      for (let index = 0; index < count; index += 1) {
+        writeFileSync(path.join(packageDirectory, 'package-' + index + '.tgz'), 'fixture');
+      }
+      const githubEnv = path.join(root, 'github-env');
+      const child = spawnSync('/bin/bash', ['-e', '-o', 'pipefail', '-c', selector], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, GITHUB_WORKSPACE: root, GITHUB_ENV: githubEnv },
+      });
+      if (count === 1) {
+        assert.equal(child.status, 0, child.stderr);
+        assert.ok(readFileSync(githubEnv, 'utf8').includes(root + '/.consumer-artifact/.artifact/package-0.tgz'));
+      } else {
+        assert.notEqual(child.status, 0);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
 });
 
 test('Windows release-suite launchers preserve escaped backslashes and CRLF', () => {

@@ -146,8 +146,9 @@ jobs:
       - name: Select the packed package
         shell: bash
         run: |
-          package=$(find .consumer-artifact -maxdepth 1 -name '*.tgz' -print -quit)
+          package=$(find .consumer-artifact -type f -name '*.tgz' -print)
           test -n "$package"
+          test "$(printf '%s\n' "$package" | wc -l | tr -d '[:space:]')" -eq 1
           echo "CODE_ATLAS_TARBALL=$GITHUB_WORKSPACE/$package" >> "$GITHUB_ENV"
       - name: Set up pinned pnpm for pnpm consumer cases
         if: matrix.manager == 'pnpm'
