@@ -101,7 +101,8 @@ if (swift?.integrity !== "sha512-pneKVTuGamaBsqqqfB9BvNQjktzh/0IVPR54jLB5Fq/JTDQ
 }
 const swiftDir = path.join(tempDir, "swift-runtime");
 fs.mkdirSync(swiftDir);
-run("tar", ["-xzf", path.join(tempDir, swift.filename), "-C", swiftDir]);
+// GNU tar on Windows treats drive-letter archive paths as remote hosts.
+run("tar", ["-xzf", swift.filename, "-C", "swift-runtime"], { cwd: tempDir });
 removeSwiftBuildDependency(path.join(swiftDir, "package"));
 const [runtimeSwift] = JSON.parse(capture("npm", ["pack", "--json", "--pack-destination", swiftDir], { cwd: path.join(swiftDir, "package") }));
 const assets = metadata => metadata.files.filter(file => file.path !== "package.json")

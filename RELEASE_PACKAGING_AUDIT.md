@@ -656,3 +656,24 @@ install failure does not discard the expensive build.
 
 A complete native matrix on the fix commit is required before **GO**. Final results and
 sizes will be recorded below after all four artifact smoke and regression gates finish.
+
+
+### Follow-up run 37867445035 (5f574f9)
+
+ARM64 and Linux jobs passed. Windows' full-suite comparator passed with zero added
+failures, zero changed assertions, zero new skips and 24 resolved baseline failures
+(114 baseline failures versus 90 candidate failures). The Windows artifact failed
+before installation: GNU tar interpreted the absolute Windows drive-letter archive
+argument as a remote host. Extraction now uses relative archive/destination paths with
+its pack directory as the working directory. Lifecycle scripts remain enabled.
+
+Intel macOS built and verified the final artifact, including native ONNX architecture,
+dylib dependencies, all nine smoke groups and archive integrity. Its full-suite gate
+correctly rejected one new test-process failure: `phase15d-acceptance.test.ts` aborted
+with `SIGABRT` during the two-evaluation acceptance test. There are no changes to that
+test, evaluator or core parser implementation against v1.6.0. TAP lacks a native crash
+trace, so its underlying cause remains unproven. Both full-suite runs now use the same
+explicit two-process concurrency bound, retaining every test and assertion. This is
+validation environment control, not a comparator exception. Raw host crash-report
+upload was rejected by automatic approval review because it could export sensitive
+data; it was not implemented. A new four-platform run is required.
