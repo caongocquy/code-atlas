@@ -47,7 +47,7 @@ test("fatal framework candidate skips semantic provider and preserves active gen
       const repository = store.ensureRepository(getRepositoryIdentity(root));
       assert.equal(store.getActiveGenerationId(repository.id), first.kind === "published" ? first.generationId : undefined);
     } finally { store.close(); }
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally { await rm(root, { recursive: true, force: true, maxRetries: 15, retryDelay: 100 }); }
 });
 
 test("known dynamic JSX publishes partial framework and runs semantic once", async () => {
@@ -100,7 +100,7 @@ test("known dynamic JSX publishes partial framework and runs semantic once", asy
     assert.equal(changedConfigStatus.capabilities.graph.state, "stale");
     assert.equal(changedConfigStatus.graph.status, "stale");
     assert.equal(changedConfigStatus.capabilities.lexical.state, "ready");
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally { await rm(root, { recursive: true, force: true, maxRetries: 15, retryDelay: 100 }); }
 });
 
 test("changed dynamic JSX source invalidates its partial framework evidence", async () => {
@@ -120,5 +120,5 @@ test("changed dynamic JSX source invalidates its partial framework evidence", as
       assert.equal(framework?.diagnostics.length, 0);
       assert.equal(framework?.relationships.length, 1);
     } finally { store.close(); }
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally { await rm(root, { recursive: true, force: true, maxRetries: 15, retryDelay: 100 }); }
 });
