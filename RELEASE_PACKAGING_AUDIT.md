@@ -84,12 +84,22 @@ comparison against `cba67bad` after building both checkouts passed the
 assertion-level comparator: baseline 1,353 pass / 48 fail / 3 skip; candidate
 1,358 pass / 48 fail / 3 skip; zero added or changed failure identities and
 zero added skips. The suite itself is not green; all 48 failures are present
-unchanged at the baseline SHA. Native parser and cross-platform release CI
-remain per-SHA gates.
+unchanged at the baseline SHA. On PR #11, Phase 14B parser-platform passed
+(`https://github.com/caongocquy/code-atlas/actions/runs/37933812774`) and
+Phase 15D context evaluation passed
+(`https://github.com/caongocquy/code-atlas/actions/runs/37933812869`). Release
+smoke failed before pack/install checks because runtime tests could not resolve
+`vendor/parsers/tree-sitter`
+(`https://github.com/caongocquy/code-atlas/actions/runs/37933812708`). The
+portable matrix failed at its initial packaging/regression step for the same
+missing module on Windows, Linux, macOS x64, and macOS arm64
+(`https://github.com/caongocquy/code-atlas/actions/runs/37933812730`); its
+macOS x64 ONNX build and artifact checks were skipped. These failures leave
+packed consumer and portable distribution qualification open.
 
 ### Current blockers and publication boundaries
 
-1. Findings 1–5 are addressed on the security/correctness continuation and its local full-suite comparison has zero regressions. Per-SHA native cross-platform parser/consumer CI is still required before this continuation can be called release-qualified. Do not count skipped tests or consumers as passes.
+1. Findings 1–5 are addressed on the security/correctness continuation and its local full-suite comparison has zero regressions. Phase 14B parser-platform CI passed, but release smoke and portable matrix are blocked by missing `vendor/parsers/tree-sitter` in their setup path. Do not count skipped tests or consumers as passes.
 2. Finding 7 remains deferred because storage GC is explicitly out of scope; historical-generation retention is still unbounded. Finding 8 remains open because duplicate legacy/generation semantic vector writes were not part of the requested slice. Keep release readiness **NO-GO** until release owners decide whether finding 8 blocks this release.
 3. The integrated commit still needs final release qualification of packed CLI/MCP, portable artifacts, macOS x64 ONNX embedding and distribution checks. Run these against the integrated commit; the earlier native results apply only to their named SHAs.
 4. The candidate version remains 1.6.0. No version bump, tag, npm publication, GitHub Release or Homebrew update is included in this task.
