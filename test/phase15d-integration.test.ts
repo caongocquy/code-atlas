@@ -41,7 +41,13 @@ test("ignores only transient Phase15D evaluation artifacts", async () => {
 test("has an offline CI gate that preserves both baseline and policy data", async () => {
   const workflow = await readFile(path.join(root, ".github/workflows/context-eval.yml"), "utf8");
 
-  assert.match(workflow, /ubuntu-latest/);
+  assert.match(workflow, /runs-on: ubuntu-22\.04/);
+  assert.match(workflow, /node-version: 22\.23\.3/);
+  assert.match(workflow, /node scripts\/parser-distribution\.mjs prepare --build-missing/);
+  const preparation = workflow.indexOf("Prepare pinned host parser payload");
+  const evaluation = workflow.indexOf("Run offline context release gate");
+  assert.ok(preparation >= 0 && preparation < evaluation);
+  assert.match(workflow.slice(preparation, evaluation), /node-version: 24/);
   assert.match(workflow, /pnpm install --frozen-lockfile/);
   assert.match(workflow, /CODE_ATLAS_EVAL_OFFLINE:\s*["']?1/);
   assert.match(workflow, /pnpm run eval:context/);
