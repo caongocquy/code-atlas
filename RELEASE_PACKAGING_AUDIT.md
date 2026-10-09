@@ -6,6 +6,106 @@ No version bump, merge, tag, npm publication, GitHub Release or Homebrew update
 is authorized. Historical evidence below is preserved; current continuation
 results and decisions are recorded first.
 
+## Final native qualification (2026-10-09)
+
+**GO for v1.6.1 packaging and the authorized Clack migration.** All four native
+artifact and regression gates passed on code commit
+`5f91d12fc98bd0c2291192721790574231061abc`:
+https://github.com/caongocquy/code-atlas/actions/runs/37872719908
+The separate native parser matrix also passed:
+https://github.com/caongocquy/code-atlas/actions/runs/37872719935
+This final section supersedes the historical NO-GO snapshots below.
+
+Each installed artifact and each extracted archive passed **9/9 smoke groups with
+zero failures and zero skips** (eight smoke runs total). These exercise all native
+parser languages, CLI launch/version/help/init/sync, MCP graph/lexical/hybrid tools,
+HTTP/UI assets, real external SCIP, React facts, ONNX/Transformers embedding and
+local semantic lifecycle. Exact archive content/link/executable inventories passed.
+Intel macOS additionally validated 22 final native binaries and their dylib
+dependencies. It restored the previously built, pinned full-feature ONNX payload;
+architecture/deployment/dependency validation still ran after installation.
+
+Same-run base → candidate measurements, in MiB (1,048,576 bytes):
+
+| Platform | Bundled Node | CI | Archive | Installed logical | Installed allocated |
+| --- | --- | --- | ---: | ---: | ---: |
+| macOS ARM64 | v24.20.0 | PASS | 228.57 → 116.08 | 912.53 → 444.45 | 961.42 → 487.45 |
+| macOS x64 | v24.19.0 | PASS | 229.98 → 106.49 | 915.23 → 408.28 | 974.77 → 450.95 |
+| Linux x64 | v24.21.0 | PASS | 448.01 → 327.12 | 1187.61 → 669.60 | 1219.89 → 700.86 |
+| Windows x64 | v24.21.0 | PASS | 238.46 → 125.56 | 907.74 → 412.61 | unavailable |
+
+Allocation is filesystem-specific; Windows allocation is unavailable, not zero.
+Raw byte measurements:
+
+| Platform | Archive bytes | Installed logical bytes |
+| --- | ---: | ---: |
+| macOS ARM64 | 239678237 → 121720320 | 956854873 → 466043455 |
+| macOS x64 | 241151778 → 111661531 | 959683414 → 428114460 |
+| Linux x64 | 469777499 → 343012131 | 1245297418 → 702126382 |
+| Windows x64 | 250039529 → 131660402 | 951836098 → 432654558 |
+
+Both full suites use the immutable v1.6.0 base, the same runner/runtime, frozen
+installs, built CLI shims and `--test-concurrency=2`. No test or assertion was removed.
+The comparator checks assertion details within previously failing tests as well
+as failure identities and skips. Every gate reports zero added failures, zero
+changed assertions and zero new skips. All cancelled/TODO counts remain zero.
+
+| Platform | Base total / pass / fail / skip | Candidate total / pass / fail / skip | Added / changed / resolved / new skips |
+| --- | --- | --- | --- |
+| macOS ARM64 | 1349 / 1297 / 49 / 3 | 1382 / 1330 / 49 / 3 | 0 / 0 / 0 / 0 |
+| macOS x64 | 1349 / 1297 / 49 / 3 | 1382 / 1330 / 49 / 3 | 0 / 0 / 0 / 0 |
+| Linux x64 | 1349 / 1297 / 49 / 3 | 1382 / 1330 / 49 / 3 | 0 / 0 / 0 / 0 |
+| Windows x64 | 1349 / 1232 / 114 / 3 | 1382 / 1289 / 90 / 3 | 0 / 0 / 24 / 0 |
+
+The full suite still has inherited failures: 49 on Unix and 90 on Windows. Windows
+resolves 24 base failures. The historical Node22 count was 48; Node24 has the same
+additional worker `ERR_WORKER_INVALID_EXEC_ARGV` failure in base and candidate.
+The three source-suite skips are inherited; packed smoke validation has no skips.
+The previous Intel `SIGABRT` did not recur under the equivalent bounded full-suite
+environment. Its exact native cause remains unproven; it was neither normalized
+nor ignored by the comparator.
+
+Fixes qualifying this run:
+
+- Official ONNX 1.30.0 has no macOS x64 payload. Build the exact pinned upstream
+  source with Node bindings, CoreML and WebGPU; install it before target pruning,
+  then reject wrong architecture, missing/external dylibs, escaping links and an
+  increased deployment floor. Actual installed and extracted embedding passed.
+- Swift's production CLI edge caused an unrelated postinstall HTTP 500. Repack the
+  integrity-pinned Swift 0.7.1 archive after deleting only that manifest dependency;
+  preserve package assets and keep all native lifecycle scripts enabled.
+- Windows GNU tar interpreted an absolute drive-letter archive as a remote host.
+  Relative archive/destination arguments and the pack-directory cwd fix extraction.
+- Windows baseline diagnostics vary by SQLite WAL/SHM cleanup order and random-root
+  graph UUIDs. Only those proven equivalent diagnostics are canonicalized; negative
+  tests preserve changed metadata, paths, nodes, edges and unrelated assertions.
+
+Source lint passed with `pnpm lint --ignore-pattern '.release/**'`. Bare `pnpm lint`
+after packing failed on 1,016 upstream Swift build-source lint errors under generated
+`.release/pack`; no CodeAtlas lint rule was relaxed. The generated directory exclusion
+is explicit. All four candidate builds and focused native regressions passed.
+
+Candidate archive SHA-256:
+
+- macOS ARM64: `daf72db384784be0777539d49899334a121efa5359bad6fed3ff082caa1d840f`
+- macOS x64: `491617858ddea56c6b10128c3f1e50944458bf7bdffe7d9c70d59cb923dce576`
+- Linux x64: `9854531f3f93d4f51dfb5591a4b512dc0df37011b7c8d16ddfc18d3252defa49`
+- Windows x64: `96e048e4e3f8e83e32307bb9c0dd60230e85298059bcdae25cda94533b9df8f3`
+
+Evidence JSONs are saved under `/private/tmp/code-atlas-ci-evidence-5f91d12/`; the
+complete native log is `/private/tmp/code-atlas-5f91d12-all.log`. The documentation-only
+follow-up records this completed code run and uses `[skip ci]`; it changes no code,
+manifest, lockfile or workflow. The qualified runtime SHA remains the one above.
+
+Outstanding qualification limits: native macOS tests ran on macOS 15, so deployment
+metadata at 13.5 is verified but execution on macOS 13.5 and older CoreML APIs is not.
+Windows stream/cleanup tests passed, but a real Windows console visual check was not
+performed. `doctor` is absent in v1.6.0; its existing Unknown-command failure is
+verified rather than introducing a command. The inherited full-suite failures and
+unproven historical native abort are recorded separately from the green release gates.
+No merge, version bump, tag, npm publication, GitHub Release or Homebrew update was
+performed. Phase16C/17 worktrees and immutable v1.6.0 were preserved.
+
 ## Continuation: Clack CLI and macOS x64 runtime
 
 The CLI migration is included on this same isolated packaging branch. Human
@@ -28,9 +128,8 @@ architectures, missing libraries, external Homebrew/build paths and escaping
 symlinks. Bundled Node and all native addons/dylibs are checked with `file`/`otool`.
 A full source build is needed because no exact-version C++ x64 dylib asset exists.
 
-Native x64 compilation and actual embedding are still pending a successful CI run;
-this is an implemented fix awaiting platform qualification, not a verified x64
-success. The native build follows upstream CMake 3.31.8 / Python 3.12 / vcpkg
+Native x64 compilation and actual installed/extracted embedding are qualified in the
+final native run recorded above. The native build follows upstream CMake 3.31.8 / Python 3.12 / vcpkg
 2025.08.27 setup and can require a long C++/WebGPU build. The source build explicitly targets macOS 13.5, matching bundled official Node24;
 `otool -l` validation rejects payload or final bundle binaries with a higher
 minimum OS version or missing deployment metadata. This prevents the macOS15
