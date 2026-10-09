@@ -53,6 +53,7 @@ test("release and portable checks restore and verify the complete parser payload
     assert.match(workflow, /tar -xzf/);
     assert.match(workflow, /tmp\/parser-package/);
     assert.doesNotMatch(workflow, /RUNNER_TEMP\/parser-package/);
+    assert.match(workflow, /rm -rf tmp\/parser-package/);
     assert.match(workflow, /node scripts\/parser-distribution\.mjs verify --all-targets/);
     const verified = workflow.indexOf("verify --all-targets");
     const build = Math.max(workflow.indexOf("pnpm run build"), workflow.indexOf("pnpm build"));

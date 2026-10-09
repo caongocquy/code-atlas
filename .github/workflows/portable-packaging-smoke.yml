@@ -76,6 +76,7 @@ jobs:
           mkdir -p tmp/parser-package vendor
           tar -xzf "$package" -C tmp/parser-package package/vendor/parsers
           cp -R tmp/parser-package/package/vendor/parsers vendor/parsers
+          rm -rf tmp/parser-package
           node scripts/parser-distribution.mjs verify --all-targets
       - name: Build candidate and run packaging regressions
         shell: bash

@@ -134,6 +134,16 @@ skips. The focused parser, packaging, workflow, security and correctness
 selection passed 130/130. These local checks do not replace fresh release-smoke
 and portable CI on the pushed SHA.
 
+On `f88420356960160f500de0884390f7a0a3725484`, the release gate restored and
+verified all parser payloads, built source/dist imports, and packed the npm
+artifact; [release run 37949448163](https://github.com/caongocquy/code-atlas/actions/runs/37949448163)
+then failed at `pnpm run lint` because ESLint traversed the restored payload
+inside `tmp/parser-package/`. The follow-up removes that temporary extraction
+after copying the payload into the already ignored `vendor/parsers/` directory.
+The portable run [37949447969](https://github.com/caongocquy/code-atlas/actions/runs/37949447969)
+had restored and verified payloads on the four platforms and was still running;
+the rerun on the follow-up SHA remains required.
+
 ### Current blockers and publication boundaries
 
 1. Findings 1–5 are addressed on the security/correctness continuation and local full-suite comparisons have zero regressions. The `50c53b1` release/portable runs lacked generated `vendor/parsers/tree-sitter`; `322a323` built and restored the payload, but exposed pack-output parsing and Windows temp-path failures. Both follow-up fixes need per-SHA Actions qualification; do not count skipped tests or consumers as passes.
