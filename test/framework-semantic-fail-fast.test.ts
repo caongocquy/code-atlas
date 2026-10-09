@@ -10,11 +10,12 @@ import { projectFrameworkGraph } from "../src/core/graph/query/framework-query.s
 import { CURRENT_INDEX_VERSION_DOMAINS } from "../src/core/repository/index-version.js";
 import { getRepositoryIdentity } from "../src/core/repository/repository-identity.js";
 import { getRepositoryStatusReadOnly } from "../src/core/repository/repository-status.service.js";
-import { createDefaultProviders } from "../src/infrastructure/provider-defaults.js";
+import { SqliteVectorStore } from "../src/storage/atlas/sqlite-vector.store.js";
 import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
 
 test("fatal framework candidate skips semantic provider and preserves active generation", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "code-atlas-framework-fail-fast-"));
+  let vectorStore: SqliteVectorStore | undefined;
   try {
     await writeFile(path.join(root, "App.tsx"), "export function App() { return <div />; }\n");
     const first = await indexRepository(root, { skipGit: true });
@@ -22,6 +23,7 @@ test("fatal framework candidate skips semantic provider and preserves active gen
 
     await writeFile(path.join(root, "App.tsx"), "import { Missing } from './Missing';\nexport function App() { return <Missing />; }\n");
     let providerCalls = 0;
+    vectorStore = new SqliteVectorStore(path.join(root, ".codeatlas", "atlas.db"), getRepositoryIdentity(root).id);
     const failed = await indexRepository(root, {
       skipGit: true,
       includeSemantic: true,
@@ -32,7 +34,7 @@ test("fatal framework candidate skips semantic provider and preserves active gen
           isAvailable: async () => { providerCalls += 1; return true; },
           embedBatch: async (texts) => { providerCalls += 1; return texts.map(() => [0.1, 0.2, 0.3]); },
         },
-        vectorStore: createDefaultProviders(root).vectorStore,
+        vectorStore,
       },
     });
     assert.equal(failed.kind, "failed");
@@ -47,17 +49,22 @@ test("fatal framework candidate skips semantic provider and preserves active gen
       const repository = store.ensureRepository(getRepositoryIdentity(root));
       assert.equal(store.getActiveGenerationId(repository.id), first.kind === "published" ? first.generationId : undefined);
     } finally { store.close(); }
-  } finally { await rm(root, { recursive: true, force: true, maxRetries: 15, retryDelay: 100 }); }
+  } finally {
+    vectorStore?.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 15, retryDelay: 100 });
+  }
 });
 
 test("known dynamic JSX publishes partial framework and runs semantic once", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "code-atlas-framework-dynamic-"));
+  let vectorStore: SqliteVectorStore | undefined;
   try {
     await writeFile(path.join(root, "package.json"), '{"dependencies":{"react":"19.0.0"}}\n');
     await writeFile(path.join(root, "tsconfig.json"), '{"compilerOptions":{"jsx":"react-jsx"}}\n');
     await writeFile(path.join(root, "App.tsx"), "export function App({ Icon }: { Icon: () => null }) { return <Icon />; }\n");
     let availabilityCalls = 0;
     let embeddingCalls = 0;
+    vectorStore = new SqliteVectorStore(path.join(root, ".codeatlas", "atlas.db"), getRepositoryIdentity(root).id);
     const result = await indexRepository(root, {
       skipGit: true,
       includeSemantic: true,
@@ -68,7 +75,7 @@ test("known dynamic JSX publishes partial framework and runs semantic once", asy
           isAvailable: async () => { availabilityCalls += 1; return true; },
           embedBatch: async (texts) => { embeddingCalls += 1; return texts.map(() => [0.1, 0.2, 0.3]); },
         },
-        vectorStore: createDefaultProviders(root).vectorStore,
+        vectorStore,
       },
     });
     assert.equal(result.kind, "published", result.kind === "failed" ? result.failure.message : undefined);
@@ -100,7 +107,10 @@ test("known dynamic JSX publishes partial framework and runs semantic once", asy
     assert.equal(changedConfigStatus.capabilities.graph.state, "stale");
     assert.equal(changedConfigStatus.graph.status, "stale");
     assert.equal(changedConfigStatus.capabilities.lexical.state, "ready");
-  } finally { await rm(root, { recursive: true, force: true, maxRetries: 15, retryDelay: 100 }); }
+  } finally {
+    vectorStore?.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 15, retryDelay: 100 });
+  }
 });
 
 test("changed dynamic JSX source invalidates its partial framework evidence", async () => {
