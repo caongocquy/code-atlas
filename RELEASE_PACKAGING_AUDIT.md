@@ -9,6 +9,19 @@ Release creation and Homebrew updates remain unauthorized. Historical evidence
 below is preserved; the owner disposition in this section supersedes older
 NO-GO decisions for findings 7 and 8.
 
+## Integration qualification follow-up (2026-10-10)
+
+PR #11 merged as `5c7312dd286e543a2051260ece5658251af99b52`.
+[Release smoke](https://github.com/caongocquy/code-atlas/actions/runs/38015917801),
+[Phase 14B](https://github.com/caongocquy/code-atlas/actions/runs/38015900506) and
+[Phase 15D](https://github.com/caongocquy/code-atlas/actions/runs/38015927382) pass.
+The expanded [consumer matrix](https://github.com/caongocquy/code-atlas/actions/runs/38015900505)
+exposed a stale `1.6.0` assertion before parser checks after successful installs.
+The harness now compares installed metadata with the exact checkout package
+version; compiler, lifecycle, parser and dependency-graph checks remain required.
+A regression guards this metadata comparison. Qualification must run again on
+the follow-up integration SHA; the earlier runs do not qualify the changed HEAD.
+
 ## Owner disposition and integration gate (2026-10-10, Asia/Ho_Chi_Minh)
 
 Decision owner: **Leo**, under the explicit instruction to defer findings 7 and

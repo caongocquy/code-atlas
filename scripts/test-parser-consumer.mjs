@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, URL } from "node:url";
 
 export const APPROVALS = { "onnxruntime-node": "1.30.0", protobufjs: "7.6.6" };
 const COMPILER_TOOLS = new Set(["node-gyp", "cc", "gcc", "c++", "g++", "clang", "clang++", "make", "cmake", "python", "python3", "cl", "msbuild"]);
@@ -288,7 +288,7 @@ async function main() {
     installedManifest = JSON.parse(fs.readFileSync(path.join(packageRoot, "package.json"), "utf8"));
     assert.equal(installedManifest.name, "@showdar2112/code-atlas");
     result.packageVersion = installedManifest.version;
-    assert.equal(result.packageVersion, "1.6.0", "published package version changed during parser distribution work");
+    assert.equal(result.packageVersion, JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")).version, "installed package version must match the checkout");
     result.installedPackageBytes = filesUnder(packageRoot).reduce((sum, file) => sum + fs.statSync(file).size, 0);
     const probe = path.join(root, "parser-probe.mjs");
     fs.writeFileSync(probe, `import assert from "node:assert/strict";\nimport { pathToFileURL } from "node:url";\nimport path from "node:path";\nconst root = ${JSON.stringify(packageRoot)};\nconst { parseSource } = await import(pathToFileURL(path.join(root, "dist/core/graph/parsers/code-parser.js")));\nconst { getLanguageConfig } = await import(pathToFileURL(path.join(root, "dist/core/graph/parsers/languages.js")));\nconst expected = ${JSON.stringify(EXPECTED)};\nconst samples = ${JSON.stringify(SAMPLES)};\nfor (const [file, source] of Object.entries(samples)) { const parsed = parseSource(source, file); assert.ok(parsed, file); assert.equal(parsed.tree.rootNode.hasError, false, file); const config = getLanguageConfig(file); assert.ok(config, file); assert.equal(config.metadata.runtimeName, "tree-sitter", file); assert.equal(config.metadata.runtimeVersion, expected["tree-sitter"], file); assert.equal(config.metadata.grammarVersion, expected[config.metadata.packageName], file); console.log("PASS", file, parsed.tree.rootNode.type, config.metadata.packageName + "@" + config.metadata.grammarVersion); }\nassert.equal(parseSource("plain text", "a.txt"), undefined);\nconsole.log("12/12 parser AST checks passed");\n`);

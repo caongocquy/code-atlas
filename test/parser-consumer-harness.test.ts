@@ -207,3 +207,9 @@ test('compiler guard detects explicit Windows cl.exe paths, including shell argu
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('consumer version gate follows the checkout package metadata', () => {
+  const harness = readFileSync(new URL('../scripts/test-parser-consumer.mjs', import.meta.url), 'utf8');
+  assert.ok(harness.includes('assert.equal(result.packageVersion, JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")).version'));
+  assert.ok(!harness.includes('assert.equal(result.packageVersion, "1.6.0"'));
+});
