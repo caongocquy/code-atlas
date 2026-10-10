@@ -819,6 +819,13 @@ function restoreResolution(row: StoredResolution): GraphEdge["resolution"] | und
   }
 }
 
+// Candidate duplicates are not published legacy vectors, including during first v2 indexing.
+const LEGACY_SEMANTIC_VECTOR_FILTER = `AND NOT EXISTS (
+  SELECT 1 FROM index_generations
+  WHERE index_generations.repository_id = semantic_vectors.repository_id
+    AND index_generations.id = json_extract(semantic_vectors.payload_json, '$.generationId')
+)`;
+
 export class AtlasStore {
   private readonly database: DatabaseSync;
   private readonly readOnly: boolean;
@@ -2575,7 +2582,8 @@ export class AtlasStore {
       : this.database.prepare(
         `SELECT point_id, vector, payload_json
          FROM semantic_vectors
-         WHERE repository_id = ?`,
+         WHERE repository_id = ?
+           ${this.hasTable("index_generations") ? LEGACY_SEMANTIC_VECTOR_FILTER : ""}`,
       ).all(repoId) as Array<{ point_id: string; vector: Uint8Array; payload_json: string }>;
     const results: Array<VectorSearchResult & { pointId: string }> = [];
 
@@ -2623,7 +2631,8 @@ export class AtlasStore {
       ? (indexState.activeGenerationId
         ? this.database.prepare("SELECT count(*) AS count FROM generation_semantic_vectors WHERE repository_id = ? AND generation_id = ?").get(repoId, indexState.activeGenerationId) as { count: number }
         : { count: 0 })
-      : this.database.prepare("SELECT count(*) AS count FROM semantic_vectors WHERE repository_id = ?").get(repoId) as { count: number };
+      : this.database.prepare(`SELECT count(*) AS count FROM semantic_vectors WHERE repository_id = ?
+        ${this.hasTable("index_generations") ? LEGACY_SEMANTIC_VECTOR_FILTER : ""}`).get(repoId) as { count: number };
 
     return row.count;
   }
@@ -2643,6 +2652,7 @@ export class AtlasStore {
         `SELECT point_id, file_path, file_hash
          FROM semantic_vectors
          WHERE repository_id = ?
+           ${this.hasTable("index_generations") ? LEGACY_SEMANTIC_VECTOR_FILTER : ""}
          ORDER BY file_path ASC, point_id ASC`,
       ).all(repoId) as Array<{ point_id: string; file_path: string; file_hash: string }>;
     const states = new Map<string, IndexedFileState>();

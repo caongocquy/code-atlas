@@ -23,6 +23,10 @@ on:
       - src/core/graph/parsers/**
       - .github/workflows/tree-sitter-installation.yml
       - .github/workflows/portable-packaging-smoke.yml
+      - src/storage/atlas/atlas.store.ts
+      - test/release-semantic-vector-isolation.test.ts
+      - .github/workflows/publish.yml
+      - .github/workflows/release-artifacts.yml
       - package.json
       - pnpm-lock.yaml
       - test/onnx-darwin-x64-packaging.test.ts

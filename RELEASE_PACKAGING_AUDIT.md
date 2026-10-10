@@ -2,11 +2,110 @@
 
 Baseline: immutable `v1.6.0`, commit `8f3c2d7671b4d9a9deaa70c83c80c4fccb94689f`.
 Original packaging work is isolated on `chore/release-packaging-161`; the current lint/Windows continuation uses `fix/windows-regression-release-readiness`. The current user request authorizes normal commit/push and native candidate CI on that existing fix branch, while preserving all other worktrees.
-No version bump, merge, tag, npm publication, GitHub Release or Homebrew update
-is authorized. Historical evidence below is preserved; current continuation
-results and decisions are recorded first.
+The 2026-10-10 continuation authorizes merging PR #11 into
+`fix/windows-regression-release-readiness` after disposition and review gates,
+then qualifying the exact integrated SHA. Tag creation, npm publication, GitHub
+Release creation and Homebrew updates remain unauthorized. Historical evidence
+below is preserved; the owner disposition in this section supersedes older
+NO-GO decisions for findings 7 and 8.
 
-## Current release readiness: Windows/lint continuation (2026-10-09)
+## Owner disposition and integration gate (2026-10-10, Asia/Ho_Chi_Minh)
+
+Decision owner: **Leo**, under the explicit instruction to defer findings 7 and
+8 to **v1.6.2 only when no release-critical correctness risk remains**.
+
+- **Finding 7: accepted for v1.6.1; deferred to v1.6.2.** True no-op sync already
+  reuses the active generation. Changed and historical generations remain
+  retained. Publication selects a single active generation and rejects a stale
+  parent under `BEGIN IMMEDIATE`; retaining older rows does not mix them into
+  current reads. The accepted residual risk is increasing disk use and eventual
+  resource exhaustion, not incorrect generation selection. v1.6.2 must design
+  bounded retention/cleanup that preserves pinned readers. No GC is added here.
+- **Finding 8: correctness fixed; duplicate-write/storage cleanup deferred to
+  v1.6.2.** `prepareSemanticCandidateFromFacts` still writes legacy vectors via
+  the built-in `SqliteVectorStore`, and the pipeline stages the generation copy.
+  SQLite search/count/file-state readers already select only the active
+  generation whenever repository generation state exists, including an empty
+  active generation. Review found one release-critical edge: before the first
+  publication, the legacy fallback could expose unpublished candidate duplicates.
+  A narrow fallback predicate now excludes points whose payload generation ID is
+  a registered repository generation. Genuine pre-v2 per-file generation IDs
+  remain readable; read-only legacy databases without generation tables retain
+  their fallback. No schema/index version or vector writer contract changes.
+  After that fix, residual duplicate write cost/storage can be accepted for
+  v1.6.1. v1.6.2 must remove redundant built-in writes and specify safe cleanup.
+
+Reader trace: MCP semantic tools, hybrid retrieval, context compilation and the
+retrieval inspector reach `searchCode`/`SqliteVectorStore.search`, then
+`AtlasStore.searchSemanticVectors`. Status uses `countSemanticVectors`; indexed
+file-state reads delegate to `getSemanticIndexedFileStates`. The reuse path
+`getActiveSemanticPoints` reads generation rows directly. These readers never
+union legacy and generation vectors. Delete/clean paths are mutations, not
+retrieval fallback. Built-in SQLite is the shipped default; injected providers
+must uphold their own VectorStore contract.
+
+`test/release-semantic-vector-isolation.test.ts` reproduced first-index and
+legacy-upgrade leakage before the fix. It now verifies search/count/file-state
+isolation before publication, active generation selection, a rejected competing
+candidate, an empty active generation, retained raw duplicates, and read-only
+legacy schemas. Local focused vector/generation/no-op/security/lexical/config
+selection: **55/55 pass**; workflow regression: **10/10 pass**; typecheck and lint
+pass. Prior regression assertions remain unchanged. GitNexus's stale index could
+not locate the three storage readers; direct current source/caller inspection
+and executable regressions supply the evidence.
+
+Fresh local full-suite comparison against exact `cba67badb7d7ba263e65e551d58de52779bd43cd`
+passed with **zero added/changed failure identities and zero added skips**:
+baseline 1,352 pass / 49 fail / 3 skip; candidate 1,362 pass / 48 fail / 3 skip.
+The baseline-only extra failure is `phase14c-objective-facts.test.ts` / "all
+framework languages materialize linked objective syntax from their parsed tree"
+(`tsx includes directive`); it is not claimed as a fix from this storage change.
+The candidate retains the 48 canonical inherited failures. Initial local runs
+used `cli.js` instead of the named executable required by integration assertions;
+these were discarded and both final runs use executable `dist/code-atlas` shims.
+The suite itself is not all-green; the assertion-level regression comparison is.
+After 1.6.1 version prep, workflow/vector selection passes 13/13 and typecheck,
+lint, build and npm dry-run all pass.
+
+PR head `d7b9ca3b4934bfe7d0e8d2620301958f1b23efd9` was verified mergeable with:
+
+- [Release smoke 37966420706](https://github.com/caongocquy/code-atlas/actions/runs/37966420706): SUCCESS, attempt 2 after an npm-network failure.
+- [Four-platform portable 37966420567](https://github.com/caongocquy/code-atlas/actions/runs/37966420567): SUCCESS, including packed CLI/MCP and real macOS x64 ONNX embedding.
+- [Phase 14B 37966420153](https://github.com/caongocquy/code-atlas/actions/runs/37966420153) and [Phase 15D 37966420173](https://github.com/caongocquy/code-atlas/actions/runs/37966420173): SUCCESS.
+
+Publication review found that the real tag-triggered npm/artifact workflows
+still omitted parser assembly/restore. They now depend on the same four-target
+assembly as the passing qualification workflows and verify the full payload
+before source build. npm prepack stdout is handled when reading pack JSON and
+the tarball filename. Manual historical backfill obtains verification and
+packaging tooling from the same workflow SHA as its parser artifact. The npm
+publish job continues exact tag/version validation and Trusted Publishing;
+GitHub Release waits for exact npm visibility; artifact upload waits for all
+four builds and the release. No publication job is executed during qualification.
+
+Homebrew dependency review (read-only): the current
+[`homebrew-showdar` sync](https://github.com/caongocquy/homebrew-showdar/blob/main/scripts/sync-formulas.mjs)
+uses the latest stable GitHub Release and waits for both macOS archives and both
+`.sha256` assets before generating the formula. Its hourly/manual workflow then
+commits the formula. The installed formula currently remains 1.6.0; no tap changes
+are made. Thus the order remains npm publication → GitHub Release → four portable
+assets/checksums → Homebrew sync.
+
+Independent review found a historical-backfill verifier mismatch; restoring the
+verifier and manifest from the workflow SHA resolved it. Follow-up review found
+no remaining P0/P1 in the reader filter or workflow changes.
+
+**Integration gate:** findings 7 and 8 have the conditional owner disposition
+above; merge only after the new reader/workflow follow-up passes PR review gates.
+The exact integrated SHA must then pass release smoke, four-platform portable,
+packed CLI/MCP stdio and actual macOS x64 ONNX checks. Leo separately authorized 1.6.1 version preparation. Package metadata,
+release
+assertions and changelog now identify 1.6.1. Local npm dry-run prepack verifies all
+four parser targets and includes the CLI, MCP entry and parser distribution
+manifest. Publication still requires a matching
+future tag and separate release authorization.
+
+## Historical Windows/lint continuation (2026-10-09)
 
 Branch: `fix/windows-regression-release-readiness`. Starting SHA: `d74b0cf9d8b8e6c9339aa3881b6b1eb6ff639ee6`. Current tested source fix: `40e418aac70ef53fcdac3875275b7be67d9bc0cf`. **v1.6.1 remains NO-GO.** The older portable qualification below is historical evidence for its named SHA, not proof that the current vendored distribution or release branch is green.
 
@@ -64,10 +163,10 @@ Baseline: read-only audit in Codex chat **Set up Matt Pocock skills**, thread `0
 | 4 | Stale candidate can replace newer active generation | **Fixed in this continuation** | `publishCandidateGeneration` compares the candidate's recorded parent with the active generation inside its `BEGIN IMMEDIATE` publication transaction. A two-connection competing-candidate regression confirms only the still-current parent can publish. |
 | 5 | Config scanning crosses ignored/nested-repo boundaries | **Fixed in this continuation** | Config discovery continues to use resolved Git and repository excludes and now stops at nested repositories identified by a `.git` file or directory. The regression covers ignored config files and nested repositories. |
 | 6 | Unchanged semantic sync re-embeds repository | **Fixed for unchanged sync** | Compatible providers plus no semantic-dirty paths enter the no-op gate at `src/core/indexing/index-pipeline.service.ts:557`; no embedding/publication occurs. Fifteen focused Pre17E tests pass, including zero semantic writes on no-op and reuse when one source changes. |
-| 7 | Every sync retains another full generation forever | **Partially fixed** | No-op sync reuses the active generation, preserving generation count/database snapshot. Changed-generation retention remains unbounded; no generation-pruning path exists. `deleteUnreferencedFactBlobs` at `src/storage/atlas/atlas.store.ts:1414` cannot collect facts still held by historical generation bindings. |
-| 8 | Semantic candidate duplicates legacy/generation vectors | **Open** | `prepareSemanticCandidateFromFacts` at `src/core/semantic/semantic-index.service.ts:96` calls built-in vector upsert, which writes legacy `semantic_vectors` (`src/storage/atlas/sqlite-vector.store.ts:48`); the pipeline then stages `generation_semantic_vectors` at line 986. Duplicate writes/storage remain. |
+| 7 | Every sync retains another full generation forever | **Owner-deferred to v1.6.2** | No-op sync reuses the active generation, preserving generation count/database snapshot. Changed-generation retention remains unbounded; no generation-pruning path exists. `deleteUnreferencedFactBlobs` at `src/storage/atlas/atlas.store.ts:1414` cannot collect facts still held by historical generation bindings. |
+| 8 | Semantic candidate duplicates legacy/generation vectors | **Correctness fixed; storage owner-deferred to v1.6.2** | `prepareSemanticCandidateFromFacts` at `src/core/semantic/semantic-index.service.ts:96` calls built-in vector upsert, which writes legacy `semantic_vectors` (`src/storage/atlas/sqlite-vector.store.ts:48`); the pipeline then stages `generation_semantic_vectors` at line 986. Duplicate writes/storage remain. |
 
-**Reconciled total: six fixed, two deferred/open.** Finding 6 was fixed by the existing no-op sync gate. Finding 7 (historical generation retention) remains deferred; this request explicitly excludes storage GC. Finding 8 (duplicate legacy/generation semantic vector writes) remains open and was not expanded into this security/correctness slice. Evidence for findings 1–5 is from the isolated `fix/v1.6.1-security-correctness` continuation and its tests below; the stale source/graph index was not used as proof.
+**Reconciled total: six original findings fixed, two owner-deferred to v1.6.2 with the first-publication correctness edge of finding 8 fixed.** Finding 6 was fixed by the existing no-op sync gate. Finding 7 (historical generation retention) remains deferred; this request explicitly excludes storage GC. Finding 8 duplication remains deferred; the first-publication leakage discovered in the later review is fixed as documented in the owner disposition above. Evidence for findings 1–5 is from the isolated `fix/v1.6.1-security-correctness` continuation and its tests below; the stale source/graph index was not used as proof.
 
 ### Security/correctness continuation (2026-10-09)
 
@@ -152,14 +251,14 @@ identities and zero added skips. The focused parser, packaging, workflow,
 security, and correctness selection passed 130/130; the final workflow-cleanup
 regression passed 10/10.
 
-### Current blockers and publication boundaries
+### Historical PR qualification boundaries (superseded by owner disposition)
 
 1. Findings 1–6 are fixed. Release smoke and all four portable platform gates pass on PR head `8fc50be0dcfe668be39e30a167f30f10e3ef8d54`; local comparison against `cba67bad` reports zero added/changed failures and zero new skips. Earlier missing-payload, package-output, Windows temp-path, and lint-staging failures are resolved and retained above as historical evidence.
-2. Finding 7 remains deferred because storage GC is explicitly out of scope; historical-generation retention remains unbounded. Finding 8 remains open because duplicate legacy/generation semantic vector writes were outside this requested slice. Overall release readiness remains **NO-GO until release owners record whether finding 8 blocks this release**.
+2. Finding 7 remains deferred because storage GC is explicitly out of scope; historical-generation retention remains unbounded. Finding 8 remains open because duplicate legacy/generation semantic vector writes were outside this requested slice. The later owner-disposition section accepts these storage costs for v1.6.1 after fixing first-publication leakage; its integration/version gates now govern readiness.
 3. Because this PR is intentionally unmerged, run final packed CLI/MCP, portable, macOS x64 ONNX embedding, and distribution qualification again on the integrated commit before release sign-off. PR-head results above do not qualify a later integrated SHA.
-4. The candidate version remains 1.6.0. No version bump, tag, npm publication, GitHub Release or Homebrew update is included in this task.
+4. That checkpoint remained version 1.6.0. The subsequent owner-approved version preparation above changes metadata to 1.6.1; no tag, npm publication, GitHub Release or Homebrew update is performed.
 
-All other valid worktrees were snapshotted before the fix: 22 checkouts, 2,513 dirty/untracked file hashes plus HEAD/status. A subsequent verification found **zero drift** in all 22 HEADs/statuses and 2,513 file hashes. Changes remain isolated to this branch. No merge, tag, npm/GitHub publication or Homebrew update is authorized or performed.
+All other valid worktrees were snapshotted before the fix: 22 checkouts, 2,513 dirty/untracked file hashes plus HEAD/status. A subsequent verification found **zero drift** in all 22 HEADs/statuses and 2,513 file hashes. At that checkpoint changes remained isolated and no merge, tag, npm/GitHub publication or Homebrew update was performed. The later owner request authorizes the PR #11 integration merge after review gates; publication remains unauthorized.
 
 ## Historical native qualification (2026-10-09, 5f91d12)
 

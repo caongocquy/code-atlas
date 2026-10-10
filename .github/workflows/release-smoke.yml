@@ -14,6 +14,10 @@ on:
       - .github/workflows/tree-sitter-installation.yml
       - test/phase14f-release-workflows.test.ts
       - test/phase14b-parser-packaging.test.ts
+      - test/release-semantic-vector-isolation.test.ts
+      - src/storage/atlas/atlas.store.ts
+      - .github/workflows/publish.yml
+      - .github/workflows/release-artifacts.yml
 
 permissions:
   contents: read
@@ -86,6 +90,11 @@ jobs:
           pnpm run lint
           pnpm exec node --import tsx/esm --test \
             test/phase14f-release-workflows.test.ts \
+            test/release-semantic-vector-isolation.test.ts \
+            test/http-security.test.ts \
+            test/phase16c-b3-owner-aware-lexical.test.ts \
+            test/phase14c-publication.test.ts \
+            test/phase14c-config.test.ts \
             test/cli-startup.test.ts \
             test/cli-presentation.test.ts \
             test/cli-ux-cleanup.test.ts \
