@@ -46,9 +46,19 @@ export function isIndexConfigPath(relativePath: string): boolean {
 
 export async function scanModuleConfigFiles(repoPath: string): Promise<string[]> {
   const found: string[] = [];
-  const excludes = await resolveRepositoryExcludes(repoPath);
+  const rootPath = path.resolve(repoPath);
+  const excludes = await resolveRepositoryExcludes(rootPath);
 
   async function visit(directory: string): Promise<void> {
+    if (directory !== rootPath) {
+      try {
+        await fs.lstat(path.join(directory, ".git"));
+        return;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
+
     for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
       if (entry.isSymbolicLink()) continue;
       const fullPath = path.join(directory, entry.name);

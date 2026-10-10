@@ -4,6 +4,20 @@ All notable changes to CodeAtlas are documented here.
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-10-10
+
+### Security and correctness
+
+- Bind the HTTP inspector to loopback by default; require explicit external binding and validate Host/Origin. Source access is restricted to indexed, non-secret, non-ignored files and rejects symlink traversal/replacement.
+- Keep lexical ranking for long owner-context queries without exceeding SQLite parameter limits, including repeated and Unicode terms.
+- Enforce generation-parent checks within the publication transaction and respect ignored directories and nested repositories when scanning config.
+- Prevent unpublished semantic candidate vectors from leaking through legacy readers during first indexing or migration. Historical generation retention and duplicate vector storage are deferred to v1.6.2.
+
+### Distribution
+
+- Restore and verify pinned Tree-sitter bindings and four-platform native payloads in fresh qualification and publication checkouts, preserving all twelve supported languages.
+- Handle npm prepack output and Windows artifact paths, and retain portable CLI/MCP and macOS x64 ONNX embedding checks.
+
 ## [1.6.0] - 2026-10-08
 
 ### React lazy routes and MCP guidance

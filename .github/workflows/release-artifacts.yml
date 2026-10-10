@@ -58,9 +58,16 @@ jobs:
             }
           '
 
+  parser-payload:
+    needs: metadata
+    uses: ./.github/workflows/tree-sitter-installation.yml
+    with:
+      assemble_only: true
+      ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || needs.metadata.outputs.tag }}
+
   build:
     name: Build ${{ matrix.platform }}-${{ matrix.arch }}
-    needs: metadata
+    needs: [metadata, parser-payload]
     strategy:
       fail-fast: false
       matrix:
@@ -90,15 +97,17 @@ jobs:
           ref: ${{ needs.metadata.outputs.tag }}
           fetch-depth: 0
 
-      - name: Refresh release packager for manual backfill
+      - name: Refresh release tooling for manual backfill
         if: github.event_name == 'workflow_dispatch'
         shell: bash
         env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          WORKFLOW_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          git fetch origin "$DEFAULT_BRANCH" --depth=1
+          git fetch origin "$WORKFLOW_SHA" --depth=1
           mkdir -p scripts
+          git show FETCH_HEAD:scripts/parser-distribution.mjs > scripts/parser-distribution.mjs
+          git show FETCH_HEAD:scripts/parser-sources.json > scripts/parser-sources.json
           git show FETCH_HEAD:scripts/package-release-bundle.mjs > scripts/package-release-bundle.mjs
           git show FETCH_HEAD:scripts/prune-release-bundle.mjs > scripts/prune-release-bundle.mjs
           git show FETCH_HEAD:scripts/smoke-release-bundle.mjs > scripts/smoke-release-bundle.mjs
@@ -110,12 +119,33 @@ jobs:
         with:
           node-version: 24
 
-      - name: Install and build
+      - name: Install repository dependencies
         run: |
           corepack enable
           corepack prepare pnpm@11.22.0 --activate
           pnpm install --frozen-lockfile
-          pnpm build
+
+      - name: Download and verify universal parser payload
+        uses: actions/download-artifact@v4
+        with:
+          name: code-atlas-parser-consumer-package
+          path: .parser-package
+
+      - name: Restore parser payload before source build
+        shell: bash
+        run: |
+          set -euo pipefail
+          package=$(find .parser-package -type f -name '*.tgz' -print)
+          test -n "$package"
+          test "$(printf '%s\n' "$package" | wc -l | tr -d '[:space:]')" -eq 1
+          mkdir -p tmp/parser-package vendor
+          tar -xzf "$package" -C tmp/parser-package package/vendor/parsers
+          cp -R tmp/parser-package/package/vendor/parsers vendor/parsers
+          rm -rf tmp/parser-package
+          node scripts/parser-distribution.mjs verify --all-targets
+
+      - name: Build source with restored parsers
+        run: pnpm build
 
       - name: Set up pinned Python for ONNX macOS x64 build
         if: matrix.platform == 'darwin' && matrix.arch == 'x64'

@@ -819,6 +819,13 @@ function restoreResolution(row: StoredResolution): GraphEdge["resolution"] | und
   }
 }
 
+// Candidate duplicates are not published legacy vectors, including during first v2 indexing.
+const LEGACY_SEMANTIC_VECTOR_FILTER = `AND NOT EXISTS (
+  SELECT 1 FROM index_generations
+  WHERE index_generations.repository_id = semantic_vectors.repository_id
+    AND index_generations.id = json_extract(semantic_vectors.payload_json, '$.generationId')
+)`;
+
 export class AtlasStore {
   private readonly database: DatabaseSync;
   private readonly readOnly: boolean;
@@ -2201,9 +2208,13 @@ export class AtlasStore {
     this.database.exec("BEGIN IMMEDIATE;");
     try {
       const generation = this.database.prepare(
-        "SELECT repository_id, status, versions_json FROM index_generations WHERE id = ?",
-      ).get(generationId) as { repository_id: string; status: string; versions_json: string } | undefined;
+        "SELECT repository_id, parent_generation_id, status, versions_json FROM index_generations WHERE id = ?",
+      ).get(generationId) as { repository_id: string; parent_generation_id: string | null; status: string; versions_json: string } | undefined;
       if (!generation || generation.status !== "candidate") throw new Error("Candidate generation is missing or already published");
+      const activeGenerationId = this.getActiveGenerationId(generation.repository_id) ?? null;
+      if (generation.parent_generation_id !== activeGenerationId) {
+        throw new Error("Candidate parent generation is no longer active");
+      }
       if (!this.database.prepare("SELECT 1 FROM index_manifests WHERE generation_id = ?").get(generationId)) throw new Error("Candidate manifest is missing");
       if (options.requireGraph && !options.graphStaged && !this.database.prepare("SELECT 1 FROM generation_symbols WHERE generation_id = ? LIMIT 1").get(generationId)) throw new Error("Candidate graph is incomplete");
       if (options.requireLexical && !options.lexicalStaged && !this.database.prepare("SELECT 1 FROM generation_lexical_documents WHERE generation_id = ? LIMIT 1").get(generationId)) throw new Error("Candidate lexical index is incomplete");
@@ -2363,7 +2374,7 @@ export class AtlasStore {
         ? `(${terms.map(() => `CASE WHEN ${columns.map((column) => `lower(COALESCE(${column}, '')) LIKE ?`).join(" OR ")} THEN 1 ELSE 0 END`).join(" + ")}) * 1.0 / ${terms.length}`
         : "0";
       const ownerMatch = ownerContextNames.length > 0
-        ? `lower(substr(COALESCE(qualified_name, ''), 1, instr(COALESCE(qualified_name, ''), '.') - 1)) IN (${ownerContextNames.map(() => "?").join(", ")})`
+        ? "lower(substr(COALESCE(qualified_name, ''), 1, instr(COALESCE(qualified_name, ''), '.') - 1)) IN (SELECT value FROM owner_context)"
         : "0";
       const nameCoverageOrder = terms.length > 0
         ? `(${terms.map(() => `CASE WHEN lower(COALESCE(symbol_name, '')) LIKE ?
@@ -2398,7 +2409,8 @@ export class AtlasStore {
         ? "file ASC, start_line ASC, document_id ASC"
         : "exact_name_match DESC, name_coverage DESC, file_coverage DESC, content_coverage DESC, file ASC, start_line ASC, document_id ASC";
       const rows = this.database.prepare(
-        `SELECT document_id, file, symbol_name, qualified_name, symbol_type,
+        `WITH owner_context(value) AS (SELECT value FROM json_each(?))
+         SELECT document_id, file, symbol_name, qualified_name, symbol_type,
                 content, start_line, end_line,
                 ${exactNameOrder} AS exact_name_match,
                 (${nameCoverageOrder}) AS name_coverage,
@@ -2411,9 +2423,10 @@ export class AtlasStore {
          ORDER BY ${orderBy}
          LIMIT ?`,
       ).all(
+        JSON.stringify(ownerContextNames),
         ...normalizedTerms,
         ...normalizedTerms,
-        ...patterns.flatMap((pattern) => [pattern, ...ownerContextNames, pattern]),
+        ...patterns.flatMap((pattern) => [pattern, pattern]),
         ...patterns,
         ...patterns,
         repoId,
@@ -2569,7 +2582,8 @@ export class AtlasStore {
       : this.database.prepare(
         `SELECT point_id, vector, payload_json
          FROM semantic_vectors
-         WHERE repository_id = ?`,
+         WHERE repository_id = ?
+           ${this.hasTable("index_generations") ? LEGACY_SEMANTIC_VECTOR_FILTER : ""}`,
       ).all(repoId) as Array<{ point_id: string; vector: Uint8Array; payload_json: string }>;
     const results: Array<VectorSearchResult & { pointId: string }> = [];
 
@@ -2617,7 +2631,8 @@ export class AtlasStore {
       ? (indexState.activeGenerationId
         ? this.database.prepare("SELECT count(*) AS count FROM generation_semantic_vectors WHERE repository_id = ? AND generation_id = ?").get(repoId, indexState.activeGenerationId) as { count: number }
         : { count: 0 })
-      : this.database.prepare("SELECT count(*) AS count FROM semantic_vectors WHERE repository_id = ?").get(repoId) as { count: number };
+      : this.database.prepare(`SELECT count(*) AS count FROM semantic_vectors WHERE repository_id = ?
+        ${this.hasTable("index_generations") ? LEGACY_SEMANTIC_VECTOR_FILTER : ""}`).get(repoId) as { count: number };
 
     return row.count;
   }
@@ -2637,6 +2652,7 @@ export class AtlasStore {
         `SELECT point_id, file_path, file_hash
          FROM semantic_vectors
          WHERE repository_id = ?
+           ${this.hasTable("index_generations") ? LEGACY_SEMANTIC_VECTOR_FILTER : ""}
          ORDER BY file_path ASC, point_id ASC`,
       ).all(repoId) as Array<{ point_id: string; file_path: string; file_hash: string }>;
     const states = new Map<string, IndexedFileState>();

@@ -4,6 +4,16 @@ on:
   push:
     branches: [chore/tree-sitter-install-reliability, fix/windows-regression-release-readiness]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: false
+        default: ""
+      assemble_only:
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -27,6 +37,8 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22.23.3
@@ -74,6 +86,8 @@ jobs:
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22.23.3
@@ -130,6 +144,7 @@ jobs:
           compression-level: 0
 
   consumer-install:
+    if: ${{ !inputs.assemble_only }}
     name: Consumer ${{ matrix.target.platform }}-${{ matrix.target.arch }} Node ${{ matrix.node }} ${{ matrix.manager }}
     needs: assemble-package
     strategy:
@@ -154,6 +169,8 @@ jobs:
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
@@ -198,6 +215,7 @@ jobs:
           compression-level: 0
 
   release-suite-comparison:
+    if: ${{ !inputs.assemble_only }}
     name: Release regression ${{ matrix.target.platform }}
     needs: native-prebuild
     strategy:
@@ -216,6 +234,8 @@ jobs:
     timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24.21.0

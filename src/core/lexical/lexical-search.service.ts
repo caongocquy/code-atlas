@@ -19,8 +19,8 @@ export type LexicalSearchResult = SearchResult & {
 
 function identifierParts(value: string): string[] {
   return value
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .split(/[^a-zA-Z0-9]+/)
+    .replace(/([\p{Ll}\p{N}])([\p{Lu}])/gu, "$1 $2")
+    .split(/[^\p{L}\p{N}]+/u)
     .map((part) => part.toLowerCase())
     .filter(Boolean);
 }
@@ -29,7 +29,7 @@ function queryTokens(query: string): string[] {
   return Array.from(
     new Set(
       query
-        .split(/[^a-zA-Z0-9_$]+/)
+        .split(/[^\p{L}\p{N}_$]+/u)
         .map((token) => token.replace(/\$/g, ""))
         .filter(Boolean)
         .filter((token) => !STOP_WORDS.has(token.toLowerCase())),
@@ -67,7 +67,7 @@ function toMatchQuery(query: string): string {
 
 function bareIdentifier(query: string): string | undefined {
   const trimmed = query.trim();
-  if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(trimmed)) return undefined;
+  if (!/^[\p{L}_$][\p{L}\p{N}_$]*$/u.test(trimmed)) return undefined;
   const normalized = trimmed.replace(/\$/g, "").toLowerCase();
   return normalized || undefined;
 }

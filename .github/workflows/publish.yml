@@ -9,8 +9,14 @@ permissions:
   contents: read
 
 jobs:
+  parser-payload:
+    uses: ./.github/workflows/tree-sitter-installation.yml
+    with:
+      assemble_only: true
+
   publish:
     name: Verify and publish npm package
+    needs: parser-payload
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -75,6 +81,25 @@ jobs:
           pnpm --version
           pnpm install --frozen-lockfile
 
+      - name: Download and verify universal parser payload
+        uses: actions/download-artifact@v4
+        with:
+          name: code-atlas-parser-consumer-package
+          path: .parser-package
+
+      - name: Restore parser payload before source build
+        shell: bash
+        run: |
+          set -euo pipefail
+          package=$(find .parser-package -type f -name '*.tgz' -print)
+          test -n "$package"
+          test "$(printf '%s\n' "$package" | wc -l | tr -d '[:space:]')" -eq 1
+          mkdir -p tmp/parser-package vendor
+          tar -xzf "$package" -C tmp/parser-package package/vendor/parsers
+          cp -R tmp/parser-package/package/vendor/parsers vendor/parsers
+          rm -rf tmp/parser-package
+          node scripts/parser-distribution.mjs verify --all-targets
+
       - name: Run release verification
         env:
           CODE_ATLAS_CLI: ${{ github.workspace }}/node_modules/.bin/code-atlas
@@ -91,6 +116,8 @@ jobs:
           command -v code-atlas
           pnpm run lint
           CODE_ATLAS_CLI="$global_bin/code-atlas" node --import tsx/esm --test \
+            test/phase14f-release-workflows.test.ts \
+            test/release-semantic-vector-isolation.test.ts \
             test/cli-presentation.test.ts \
             test/cli-ux-cleanup.test.ts \
             test/phase12-cli-regression.test.ts \
@@ -105,7 +132,9 @@ jobs:
           npm pack --dry-run --json > "$RUNNER_TEMP/code-atlas-pack.json"
           PACK_FILE="$RUNNER_TEMP/code-atlas-pack.json" node <<'NODE'
           const fs = require("node:fs");
-          const pack = JSON.parse(fs.readFileSync(process.env.PACK_FILE, "utf8"))[0];
+          const output = fs.readFileSync(process.env.PACK_FILE, "utf8");
+          const jsonStart = output.lastIndexOf("\n[");
+          const pack = JSON.parse(jsonStart < 0 ? output : output.slice(jsonStart + 1))[0];
           const required = [
             "dist/cli.js",
             "dist/adapters/cli/cli-output.js",
@@ -114,6 +143,7 @@ jobs:
             "README.md",
             "LICENSE",
             "package.json",
+            "vendor/parsers/tree-sitter/package.json",
           ];
           const files = new Set(pack.files.map(({ path }) => path));
           for (const file of required) {
@@ -127,7 +157,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tarball="$(npm pack --silent --pack-destination "$RUNNER_TEMP")"
+          tarball="$(npm pack --silent --pack-destination "$RUNNER_TEMP" | tail -n 1)"
           consumer="$RUNNER_TEMP/code-atlas-consumer"
           repo="$RUNNER_TEMP/code-atlas-smoke-repo"
           mkdir -p "$consumer" "$repo" "$consumer/home" "$consumer/xdg"
@@ -143,8 +173,9 @@ jobs:
             HOME="$consumer/home" XDG_CONFIG_HOME="$consumer/xdg" "$bin" init --no-index --no-guidance --json > "$RUNNER_TEMP/code-atlas-json.txt"
           )
           node -e 'const fs=require("node:fs"); const files=process.argv.slice(1); for (const file of files) { const text=fs.readFileSync(file,"utf8"); if (/\u001b\[/.test(text)) throw new Error(`ANSI in ${file}`); } JSON.parse(fs.readFileSync(files.at(-1),"utf8"));' "$RUNNER_TEMP/code-atlas-help.txt" "$RUNNER_TEMP/code-atlas-init.txt" "$RUNNER_TEMP/code-atlas-status.txt" "$RUNNER_TEMP/code-atlas-json.txt"
-          printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"release-smoke","version":"1"}}}\n' | "$bin" mcp > "$RUNNER_TEMP/code-atlas-mcp.txt"
+          printf '%s\n%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"release-smoke","version":"1"}}}' '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | "$bin" mcp > "$RUNNER_TEMP/code-atlas-mcp.txt"
           node -e 'const fs=require("node:fs"); const text=fs.readFileSync(process.argv[1],"utf8"); if (/\u001b\[/.test(text)) throw new Error("ANSI in MCP stdout"); for (const line of text.trim().split(/\n/)) JSON.parse(line);' "$RUNNER_TEMP/code-atlas-mcp.txt"
+          grep -q 'compile_task_context' "$RUNNER_TEMP/code-atlas-mcp.txt"
 
       - name: Check registry and publish once
         id: registry

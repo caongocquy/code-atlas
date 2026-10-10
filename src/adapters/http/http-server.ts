@@ -16,7 +16,7 @@ import { AtlasStore } from "../../storage/atlas/atlas.store.js";
 import { getRepositoryIdentity } from "../../core/repository/repository-identity.js";
 import { createDefaultProviders } from "../../infrastructure/provider-defaults.js";
 import { getRepositoryStatus } from "../../core/repository/repository-status.service.js";
-import { resolveRepoSourcePath } from "./repository-source-path.js";
+import { readIndexedRepoSource } from "./repository-source-path.js";
 import {
   inspectRetrieval,
   type RetrievalInspectOptions,
@@ -27,6 +27,47 @@ const repoPath = path.resolve(process.env.CODE_RAG_REPO_PATH ?? process.cwd());
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const uiRoot = path.join(packageRoot, "dist", "ui");
 const defaultProviders = createDefaultProviders(repoPath);
+const localHostnames = new Set(["localhost", "127.0.0.1", "::1"]);
+
+function hostnameFromAuthority(authority: string): string | undefined {
+  try {
+    return new URL(`http://${authority}`).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  } catch {
+    return undefined;
+  }
+}
+
+const bindHost = process.env.CODE_ATLAS_HTTP_HOST ?? "127.0.0.1";
+const localBinding = localHostnames.has(bindHost.toLowerCase());
+const allowedHostnames = new Set(
+  localBinding
+    ? localHostnames
+    : (process.env.CODE_ATLAS_HTTP_ALLOWED_HOSTS ?? "").split(",")
+      .map((host) => hostnameFromAuthority(host.trim()))
+      .filter((host): host is string => host !== undefined),
+);
+
+app.addHook("onRequest", async (request, reply) => {
+  const hostHeader = request.headers.host;
+  const hostname = hostHeader ? hostnameFromAuthority(hostHeader) : undefined;
+  if (!hostname || !allowedHostnames.has(hostname)) {
+    return reply.code(403).send({ error: "Host is not allowed" });
+  }
+
+  const origin = request.headers.origin;
+  if (origin) {
+    try {
+      const parsed = new URL(origin);
+      if (!hostHeader || parsed.host.toLowerCase() !== hostHeader.toLowerCase()
+        || !allowedHostnames.has(parsed.hostname.toLowerCase().replace(/^\[|\]$/g, ""))
+        || parsed.protocol !== `${request.protocol}:`) {
+        return reply.code(403).send({ error: "Cross-origin requests are not allowed" });
+      }
+    } catch {
+      return reply.code(403).send({ error: "Cross-origin requests are not allowed" });
+    }
+  }
+});
 
 async function loadGraph() {
   const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
@@ -170,15 +211,20 @@ app.get("/api/source", async (request, reply) => {
     return reply.code(400).send({ error: "Query parameter path is required" });
   }
 
-  let absolutePath: string;
+  let content: string;
   try {
-    absolutePath = resolveRepoSourcePath(repoPath, query.path);
+    const graph = await loadGraph();
+    const indexedPaths = new Set(getIndexedGraphFiles(graph).map((file) => file.path));
+    content = await readIndexedRepoSource(repoPath, query.path, indexedPaths);
   } catch (error) {
-    return reply.code(400).send(requestError(error));
+    const statusCode = error instanceof Error && /not indexed|Sensitive|Ignored|Symbolic|nested repositories|regular file|changed while/i.test(error.message)
+      ? 403
+      : 404;
+    return reply.code(statusCode).send(requestError(error));
   }
 
   try {
-    const lines = (await fs.readFile(absolutePath, "utf8")).split(/\r?\n/);
+    const lines = content.split(/\r?\n/);
     const hasRange = query.startLine !== undefined || query.endLine !== undefined;
     const startLine = hasRange ? Math.max(1, Math.floor(numberParam(query.startLine, 1))) : 1;
     const endLine = hasRange
@@ -234,9 +280,12 @@ app.setNotFoundHandler(async (request, reply) => {
 
 const start = async (): Promise<void> => {
   try {
+    if (!localBinding && allowedHostnames.size === 0) {
+      throw new Error("External HTTP binding requires CODE_ATLAS_HTTP_ALLOWED_HOSTS");
+    }
     await app.listen({
       port: Number(process.env.PORT ?? 3000),
-      host: "0.0.0.0",
+      host: bindHost,
     });
   } catch (error) {
     app.log.error(error);

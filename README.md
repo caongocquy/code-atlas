@@ -512,6 +512,12 @@ code-atlas mcp
 code-atlas serve [path]
 ```
 
+The HTTP Inspector binds to `127.0.0.1` by default. Remote binding requires an
+explicit `CODE_ATLAS_HTTP_HOST` (for example, `0.0.0.0`) and a comma-separated
+`CODE_ATLAS_HTTP_ALLOWED_HOSTS` allowlist. Requests with other Host values or a
+cross-origin Origin are rejected; `/api/source` only reads indexed, non-ignored
+source files.
+
 ## Repository lifecycle
 
 ```text
