@@ -502,6 +502,7 @@ function incompleteFrameworkContext(snapshot: FrameworkSnapshot | undefined): st
   const diagnostics = snapshot.diagnostics;
   const outputs = [...snapshot.relationships, ...snapshot.classifications];
   const unresolvedByReason: Record<string, number> = {};
+  const coverageByCategory: Record<string, number> = {};
   for (const item of coverage) {
     for (const [reason, count] of [
       ["coverage_not_supported", Math.max(0, item.applicable - item.supported)],
@@ -510,9 +511,9 @@ function incompleteFrameworkContext(snapshot: FrameworkSnapshot | undefined): st
       ["coverage_unknown", item.unknown],
       ["coverage_unsupported", item.unsupported],
       ["coverage_budget_exhausted", item.budgetExhausted],
-    ] as const) if (count > 0) unresolvedByReason[reason] = (unresolvedByReason[reason] ?? 0) + count;
+    ] as const) if (count > 0) coverageByCategory[reason] = (coverageByCategory[reason] ?? 0) + count;
   }
-  for (const item of diagnostics) unresolvedByReason[item.code] = (unresolvedByReason[item.code] ?? 0) + 1;
+  for (const item of diagnostics) unresolvedByReason[item.code] = (unresolvedByReason[item.code] ?? 0) + item.evidenceIds.length;
   const incompleteConfig = snapshot.config.filter((item) => !item.complete).length;
   const incompleteDependencies = snapshot.dependencies.filter((item) => !item.complete).length;
   if (incompleteConfig) unresolvedByReason.config_incomplete = incompleteConfig;
@@ -527,18 +528,20 @@ function incompleteFrameworkContext(snapshot: FrameworkSnapshot | undefined): st
       framework, file,
       owner: snapshot.dependencies.find((item) => item.framework === framework && item.ownerPath === file)?.ownerPath,
       attemptedSites: rows.reduce((total, item) => total + item.attempted, 0),
-      representedSites: new Set(related.flatMap((item) => item.provenance.evidenceIds)).size,
-      resolvedSites: rows.reduce((total, item) => total + item.resolved, 0),
+      representedSites: new Set([...related.flatMap((item) => item.provenance.evidenceIds), ...unresolved.flatMap((item) => item.evidenceIds)]).size,
+      resolvedSites: new Set(related.flatMap((item) => item.provenance.evidenceIds)).size,
       uniqueRelations: related.filter((item) => item.outputKind === "relationship").length,
-      unresolved: unresolved.length,
+      unresolved: new Set(unresolved.flatMap((item) => item.evidenceIds)).size,
     };
   }).sort((left, right) => right.unresolved - left.unresolved || left.framework.localeCompare(right.framework) || left.file.localeCompare(right.file));
   return JSON.stringify({
     attemptedSites: coverage.reduce((total, item) => total + item.attempted, 0),
-    representedSites: new Set(outputs.flatMap((item) => item.provenance.evidenceIds)).size,
-    resolvedSites: coverage.reduce((total, item) => total + item.resolved, 0),
+    representedSites: new Set([...outputs.flatMap((item) => item.provenance.evidenceIds), ...diagnostics.flatMap((item) => item.evidenceIds)]).size,
+    resolvedSites: new Set(outputs.flatMap((item) => item.provenance.evidenceIds)).size,
+    unresolvedSites: new Set(diagnostics.flatMap((item) => item.evidenceIds)).size,
     uniqueRelations: snapshot.relationships.length,
     unresolvedByReason,
+    coverageByCategory,
     files: fileSummaries.slice(0, 5),
     omittedFiles: Math.max(0, fileSummaries.length - 5),
     unresolvedSamples: diagnostics.slice(0, 5).map((item) => ({
@@ -556,6 +559,14 @@ function incompleteFrameworkContext(snapshot: FrameworkSnapshot | undefined): st
 
 function canPublishFramework(snapshot: FrameworkSnapshot): boolean {
   if (snapshot.config.some((item) => !item.complete) || snapshot.dependencies.some((item) => !item.complete) || snapshot.detections.some((item) => !item.complete)) return false;
+  const coverageKeys = new Set(snapshot.coverage.map((item) => stableJson([
+    item.framework, item.capability, item.relativePath, item.strategy, item.outputKind, item.kind,
+  ])));
+  if (snapshot.relationships.some((item) => item.provenance.framework === "react"
+    && item.provenance.capability === "react.component_usage" && item.provenance.strategy === "jsx-component-usage"
+    && item.provenance.refs.some((ref) => !coverageKeys.has(stableJson([
+      "react", "react.component_usage", ref.relativePath, "jsx-component-usage", "relationship", "component_usage",
+    ]))))) return false;
 
   const dynamicCounts = new Map<string, number>();
   const dynamicEvidenceIds = new Set<string>();
@@ -565,9 +576,15 @@ function canPublishFramework(snapshot: FrameworkSnapshot): boolean {
     ...(ref.range ? [stableJson(["range", ref.relativePath, ref.inputKey, ref.range])] : []),
   ];
   for (const item of snapshot.diagnostics) {
+    const reactUnresolved = item.framework === "react" && item.capability === "react.component_usage"
+      && item.strategy === "jsx-component-usage" && item.reason === "relationship endpoint is not unique"
+      && ((item.code === "framework_target_unknown" && item.outcome === "unknown")
+        || (item.code === "framework_target_ambiguous" && item.outcome === "ambiguous"))
+      && item.evidenceIds.length === 1
+      && item.refs.length === 1 && Boolean(item.refs[0]?.localId && item.refs[0]?.range);
     if ((!(item.code === "framework_construct_unsupported" && item.outcome === "unsupported"
       && item.framework === "react" && item.capability === "react.component_usage"
-      && item.strategy === "jsx-dynamic-component-usage" && item.reason === "framework construct is unsupported") && !isPublishableScheduledDiagnostic(item) && !isPublishableMessageDiagnostic(item))
+      && item.strategy === "jsx-dynamic-component-usage" && item.reason === "framework construct is unsupported") && !reactUnresolved && !isPublishableScheduledDiagnostic(item) && !isPublishableMessageDiagnostic(item))
       || item.evidenceIds.length === 0
       || !item.refs.some((ref) => ref.relativePath === item.relativePath && ref.inputKey === `facts:${item.relativePath}`)) return false;
     if (isPublishableMessageDiagnostic(item) && item.evidenceIds.length !== 1) return false;
@@ -592,6 +609,25 @@ function canPublishFramework(snapshot: FrameworkSnapshot): boolean {
     .some((item) => item.provenance.refs.some((ref) => evidenceRefKeys(ref).some((key) => unsupportedMessageRefs.has(key))))) return false;
 
   for (const item of snapshot.coverage) {
+    if (item.framework === "react" && item.capability === "react.component_usage"
+      && (item.strategy === "jsx-component-usage" || item.strategy === "jsx-dynamic-component-usage")) {
+      const diagnostics = snapshot.diagnostics.filter((diagnostic) => diagnostic.framework === item.framework
+        && diagnostic.capability === item.capability && diagnostic.relativePath === item.relativePath && diagnostic.strategy === item.strategy);
+      const outputs = snapshot.relationships.filter((output) => output.provenance.framework === item.framework
+        && output.provenance.capability === item.capability && output.provenance.strategy === item.strategy
+        && output.provenance.refs.some((ref) => ref.relativePath === item.relativePath));
+      const resolvedIds = new Set(outputs.flatMap((output) => output.provenance.evidenceIds));
+      const unresolvedIds = new Set(diagnostics.flatMap((diagnostic) => diagnostic.evidenceIds));
+      // Publication requires every attempted JSX site, including unresolved sites, to survive staging.
+      if (item.outputKind !== "relationship" || item.kind !== "component_usage" || item.attempted !== item.applicable
+        || item.budgetExhausted || item.weakDropped || item.supported !== item.applicable - item.unsupported
+        || item.resolved !== outputs.length || resolvedIds.size !== outputs.reduce((sum, output) => sum + output.provenance.evidenceIds.length, 0)
+        || resolvedIds.size + unresolvedIds.size !== item.attempted
+        || ["unknown", "ambiguous", "unsupported"].some((outcome) => diagnostics.filter((diagnostic) => diagnostic.outcome === outcome)
+          .reduce((sum, diagnostic) => sum + diagnostic.evidenceIds.length, 0) !== item[outcome as "unknown" | "ambiguous" | "unsupported"])) return false;
+      dynamicCounts.delete(stableJson([item.framework, item.capability, item.relativePath, item.strategy]));
+      continue;
+    }
     if (item.attempted !== item.applicable || item.ambiguous || item.unknown || item.budgetExhausted || item.weakDropped) return false;
     const key = stableJson([item.framework, item.capability, item.relativePath, item.strategy]);
     if (item.unsupported || item.supported !== item.applicable) {
@@ -2171,7 +2207,31 @@ export class AtlasStore {
       "SELECT framework_resolution_version, complete FROM generation_framework_state WHERE repository_id = ? AND generation_id = ?",
     ).get(repositoryId, generationId) as { framework_resolution_version: string; complete: number } | undefined;
     const snapshot = this.loadFrameworkInternal(repositoryId, generationId);
-    if (!frameworkState || frameworkState.framework_resolution_version !== expectedVersion || !snapshot || !canPublishFramework(snapshot)) {
+    const unresolvedJsx = snapshot?.diagnostics.filter((item) => item.framework === "react"
+      && item.capability === "react.component_usage" && item.strategy === "jsx-component-usage") ?? [];
+    const resolvedJsx = snapshot?.relationships.filter((item) => item.provenance.framework === "react"
+      && item.provenance.capability === "react.component_usage" && item.provenance.strategy === "jsx-component-usage") ?? [];
+    const sourceFacts = this.loadMessageSourceFacts(repositoryId, generationId, [...new Set([
+      ...unresolvedJsx.map((item) => item.relativePath),
+      ...resolvedJsx.flatMap((item) => item.provenance.refs.map((ref) => ref.relativePath)),
+    ])]);
+    const validJsxSites = unresolvedJsx.every((item) => {
+      const facts = sourceFacts.get(item.relativePath);
+      const ref = item.refs[0];
+      const site = facts?.frameworkSyntax?.nodes.find((node) => node.id === ref?.localId);
+      return facts?.frameworkSyntax?.complete === true && site?.kind === "jsx"
+        && Boolean(site.name && !/^[a-z]/.test(site.name)) && ref?.range !== undefined && stableJson(site.range) === stableJson(ref.range)
+        && item.evidenceIds[0] === `react-jsx:${item.relativePath}:${site.id}`;
+    });
+    const validResolvedJsxSites = resolvedJsx.every((item) => item.provenance.evidenceIds.every((id) => item.provenance.refs.some((ref) => {
+      const facts = sourceFacts.get(ref.relativePath);
+      const site = facts?.frameworkSyntax?.nodes.find((node) => id === `react-jsx:${ref.relativePath}:${node.id}`);
+      // v1.6.1 accepted output refs may be file-only; their site IDs still require persisted syntax proof.
+      return facts?.frameworkSyntax?.complete === true && site?.kind === "jsx"
+        && Boolean(site.name && !/^[a-z]/.test(site.name)) && ref.inputKey === `facts:${ref.relativePath}`
+        && (ref.localId === undefined || ref.localId === site.id) && (ref.range === undefined || stableJson(ref.range) === stableJson(site.range));
+    })));
+    if (!frameworkState || frameworkState.framework_resolution_version !== expectedVersion || !snapshot || !canPublishFramework(snapshot) || !validJsxSites || !validResolvedJsxSites) {
       throw new Error(`Candidate framework materialization is incomplete: ${incompleteFrameworkContext(snapshot)}`);
     }
   }

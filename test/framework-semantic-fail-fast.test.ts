@@ -13,7 +13,7 @@ import { getRepositoryStatusReadOnly } from "../src/core/repository/repository-s
 import { SqliteVectorStore } from "../src/storage/atlas/sqlite-vector.store.js";
 import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
 
-test("fatal framework candidate skips semantic provider and preserves active generation", async () => {
+test("fatal configuration skips semantic provider and preserves active generation", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "code-atlas-framework-fail-fast-"));
   let vectorStore: SqliteVectorStore | undefined;
   try {
@@ -22,6 +22,7 @@ test("fatal framework candidate skips semantic provider and preserves active gen
     assert.equal(first.kind, "published", first.kind === "failed" ? first.failure.message : undefined);
 
     await writeFile(path.join(root, "App.tsx"), "import { Missing } from './Missing';\nexport function App() { return <Missing />; }\n");
+    await writeFile(path.join(root, "tsconfig.json"), '{"compilerOptions":');
     let providerCalls = 0;
     vectorStore = new SqliteVectorStore(path.join(root, ".codeatlas", "atlas.db"), getRepositoryIdentity(root).id);
     const failed = await indexRepository(root, {
@@ -39,8 +40,7 @@ test("fatal framework candidate skips semantic provider and preserves active gen
     });
     assert.equal(failed.kind, "failed");
     if (failed.kind !== "failed") return;
-    assert.match(failed.failure.message, /Candidate framework materialization is incomplete/);
-    assert.match(failed.failure.message, /framework_target_unknown/);
+    assert.match(failed.failure.message, /config_invalid_json/);
     assert.equal(providerCalls, 0);
     assert.equal(failed.phaseTimingsMs?.semanticBuild, undefined);
 
