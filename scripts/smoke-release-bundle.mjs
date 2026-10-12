@@ -173,7 +173,7 @@ export async function importWithChunkRetry<T>(importer: () => Promise<T>): Promi
 export function lazyRouteNamed<T extends Record<string, unknown>>(importer: () => Promise<T>, exportName: keyof T & string) {
   return lazy(() => importWithChunkRetry(importer).then((module) => ({ default: module[exportName] })));
 }`);
-        write("src/lazy-pages.ts", 'import { lazyRouteNamed } from "./lazy-route"; export const Page = lazyRouteNamed(() => import("@/Page"), "Page");');
+        write("src/lazy-pages.ts", 'import { lazyRouteNamed } from "./lazy-route"; export const Page = lazyRouteNamed(() => import("@/Page"), "Page",);');
         write("src/Page.tsx", 'export function Page() { return <div />; }');
         write("src/routes.tsx", 'import { Page } from "./lazy-pages"; export function Routes() { return <Page />; }');
         const { indexRepository, syncRepository } = await load("core/indexing/index-pipeline.service.js");
@@ -191,9 +191,16 @@ export function lazyRouteNamed<T extends Record<string, unknown>>(importer: () =
         } finally { store.close(); }
         assert.ok(["published", "reused"].includes((await syncRepository(root, { skipGit: true })).kind));
         write("src/Page.tsx", 'export function RenamedPage() { return <div />; }');
-        const invalid = await syncRepository(root, { skipGit: true });
-        assert.equal(invalid.kind, "failed");
-        assert.match(invalid.failure.message, /framework_target_unknown/);
+        const unresolved = await syncRepository(root, { skipGit: true });
+        assert.equal(unresolved.kind, "published", JSON.stringify(unresolved));
+        const updatedStore = new AtlasStore(path.join(root, ".codeatlas/atlas.db"));
+        try {
+          const id = updatedStore.findRepository(getRepositoryIdentity(root)).id;
+          const framework = updatedStore.loadFramework(id);
+          assert.equal(framework.relationships.length, 0);
+          assert.deepEqual(framework.diagnostics.map((item) => item.code), ["framework_target_unknown"]);
+          assert.equal(framework.diagnostics[0].evidenceIds.length, 1);
+        } finally { updatedStore.close(); }
       } finally { fs.rmSync(root, { recursive: true, force: true }); }
     });
     await test("ONNX and Transformers load from the packaged runtime", async () => {
