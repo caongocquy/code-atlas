@@ -146,12 +146,15 @@ test("nested JSX imports use referenced tsconfig.app paths without baseUrl", asy
     } finally { store.close(); }
     await writeFile(path.join(root, "tsconfig.app.json"), JSON.stringify({ compilerOptions: { paths: { "@/*": ["./missing/*"] } }, include: ["src"] }));
     const changed = await syncRepository(root, { skipGit: true });
-    assert.equal(changed.kind, "failed");
-    if (changed.kind === "failed") assert.match(changed.failure.message, /framework_target_unknown/);
+    assert.equal(changed.kind, "published");
     const after = new AtlasStore(path.join(root, ".codeatlas", "atlas.db"));
     try {
       const repository = after.ensureRepository(getRepositoryIdentity(root));
-      assert.equal(after.getActiveGenerationId(repository.id), result.kind === "published" ? result.generationId : undefined);
+      assert.equal(after.getActiveGenerationId(repository.id), changed.kind === "published" ? changed.generationId : undefined);
+      const framework = after.loadFramework(repository.id)!;
+      assert.equal(framework.relationships.length, 0);
+      assert.equal(framework.diagnostics.length, 3);
+      assert.ok(framework.diagnostics.every((item) => item.code === "framework_target_unknown"));
     } finally { after.close(); }
   } finally { await rm(root, { recursive: true, force: true }); }
 });

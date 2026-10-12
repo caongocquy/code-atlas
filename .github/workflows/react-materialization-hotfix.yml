@@ -1,0 +1,98 @@
+name: React materialization hotfix (native Windows)
+
+on:
+  push:
+    branches: [fix/react-materialization-v162]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      npm_config_cache: ${{ github.workspace }}/.npm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.3
+      - run: corepack enable
+      - run: corepack prepare pnpm@11.22.0 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/parser-distribution.mjs prepare --build-missing
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: pnpm build
+      - run: pnpm lint
+      - run: pnpm exec tsc --noEmit
+      - name: Native parser, actual init/index, coverage and publication regressions
+        run: node --import tsx/esm --test test/react-lazy-route-framework.test.ts test/react-materialization-contract.test.ts test/framework-semantic-fail-fast.test.ts test/phase14c-react-components.test.ts test/phase14c-storage.test.ts test/phase14c-publication.test.ts test/phase14a-generation.test.ts
+      - name: Encrypted consumer input self-check
+        run: node scripts/verify-react-materialization-consumer.mjs --self-test
+      - name: Verify private consumer copy with native Windows init and sync
+        env:
+          REACT_V162_CONSUMER_KEY: ${{ secrets.REACT_V162_CONSUMER_KEY }}
+          REACT_V162_CONSUMER_DIGEST: 38155945f6b239db123fa23be05398c689c088cdbf0ff8da0507b09b949c7218
+          REACT_V162_CONSUMER_COMMIT: 7d57f9d588404cb16ef7924f9368824a8ff40350
+        run: |
+          set -euo pipefail
+          payload="$RUNNER_TEMP/react-v162-consumer.payload"
+          : > "$payload"
+          printf '%s' '${{ secrets.REACT_V162_CONSUMER_00 }}' >> "$payload"
+          printf '%s' '${{ secrets.REACT_V162_CONSUMER_01 }}' >> "$payload"
+          printf '%s' '${{ secrets.REACT_V162_CONSUMER_02 }}' >> "$payload"
+          printf '%s' '${{ secrets.REACT_V162_CONSUMER_03 }}' >> "$payload"
+          printf '%s' '${{ secrets.REACT_V162_CONSUMER_04 }}' >> "$payload"
+          printf '%s' '${{ secrets.REACT_V162_CONSUMER_05 }}' >> "$payload"
+          printf '%s' '${{ secrets.REACT_V162_CONSUMER_06 }}' >> "$payload"
+          printf '%s' '${{ secrets.REACT_V162_CONSUMER_07 }}' >> "$payload"
+          printf '%s' '${{ secrets.REACT_V162_CONSUMER_08 }}' >> "$payload"
+          printf '%s' '${{ secrets.REACT_V162_CONSUMER_09 }}' >> "$payload"
+          printf '%s' '${{ secrets.REACT_V162_CONSUMER_10 }}' >> "$payload"
+          printf '%s' '${{ secrets.REACT_V162_CONSUMER_11 }}' >> "$payload"
+          printf '%s' '${{ secrets.REACT_V162_CONSUMER_12 }}' >> "$payload"
+          printf '%s' '${{ secrets.REACT_V162_CONSUMER_13 }}' >> "$payload"
+          printf '%s' '${{ secrets.REACT_V162_CONSUMER_14 }}' >> "$payload"
+          printf '%s' '${{ secrets.REACT_V162_CONSUMER_15 }}' >> "$payload"
+          printf '%s' '${{ secrets.REACT_V162_CONSUMER_16 }}' >> "$payload"
+          printf '%s' '${{ secrets.REACT_V162_CONSUMER_17 }}' >> "$payload"
+          node scripts/verify-react-materialization-consumer.mjs "$payload"
+          rm "$payload"
+      - uses: actions/checkout@v4
+        with:
+          ref: af42204f6daf9ba301b2c93ae967987fc59f4516
+          path: .release-base
+      - name: Build immutable v1.6.1 with identical native parser payload
+        run: |
+          cd .release-base
+          pnpm install --frozen-lockfile
+          mkdir -p vendor
+          cp -R ../vendor/parsers vendor/parsers
+          pnpm build
+      - name: Compare full native suites by failure identity
+        run: |
+          mkdir -p .evidence
+          if (cd .release-base && node --import tsx/esm --test --test-concurrency=2 --test-reporter=tap test/*.test.ts) > .evidence/baseline-tests.log 2>&1; then
+            echo 0 > .evidence/baseline-tests.exit
+          else
+            echo "$?" > .evidence/baseline-tests.exit
+          fi
+          if node --import tsx/esm --test --test-concurrency=2 --test-reporter=tap test/*.test.ts > .evidence/candidate-tests.log 2>&1; then
+            echo 0 > .evidence/candidate-tests.exit
+          else
+            echo "$?" > .evidence/candidate-tests.exit
+          fi
+          node scripts/compare-release-tests.mjs --normalize-root "$GITHUB_WORKSPACE/.release-base" --normalize-root "$GITHUB_WORKSPACE" .evidence/baseline-tests.log .evidence/candidate-tests.log .evidence/regression-comparison.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: react-materialization-windows-evidence
+          path: .evidence/
+          include-hidden-files: true

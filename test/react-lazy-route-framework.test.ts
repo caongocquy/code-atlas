@@ -63,7 +63,7 @@ test("18 named lazy routes resolve to their exact declared page functions throug
     const usages: string[] = [];
     for (let i = 0; i < count; i++) {
       const name = `Page${i}`;
-      declarations.push(`export const ${name} = lazyRouteNamed(() => import("@/features/${name}"), "${name}");`);
+      declarations.push(`export const ${name} = lazyRouteNamed(\n () => import("@/features/${name}"),\n "${name}",\n);`);
       usages.push(`<${name} />`);
       await write(root, `src/features/${name}.tsx`, `export function ${name}() { return <div />; }\n`);
     }
@@ -102,12 +102,15 @@ test("18 named lazy routes resolve to their exact declared page functions throug
     // Editing one exported target invalidates the old framework proof.
     await write(root, "src/features/Page0.tsx", "export function RenamedPage() { return <div />; }\n");
     const invalid = await syncRepository(root, { skipGit: true });
-    assert.equal(invalid.kind, "failed");
-    if (invalid.kind !== "failed") return;
-    assert.match(invalid.failure.message, /Candidate framework materialization is incomplete/);
-    assert.match(invalid.failure.message, /framework_target_unknown/);
+    assert.equal(invalid.kind, "published");
+    if (invalid.kind !== "published") return;
     const current = state(root);
-    try { assert.equal(current.store.getActiveGenerationId(current.repositoryId), first.generationId); }
+    try {
+      assert.equal(current.store.getActiveGenerationId(current.repositoryId), invalid.generationId);
+      const framework = current.store.loadFramework(current.repositoryId)!;
+      assert.equal(framework.relationships.length, 17);
+      assert.deepEqual(framework.diagnostics.map((item) => item.code), ["framework_target_unknown"]);
+    }
     finally { current.store.close(); }
   });
 });
@@ -123,8 +126,13 @@ test("computed export names and dynamic import paths remain unknown, never guess
       await write(root, "src/app/router/lazy-pages.ts", `import { lazyRouteNamed } from "./lazy-route";\nexport const Page = ${variant};\n`);
       await write(root, "src/app/router/routes.tsx", 'import { Page } from "./lazy-pages";\nexport function Routes() { return <Page />; }\n');
       const indexed = await indexRepository(root, { skipGit: true });
-      assert.equal(indexed.kind, "failed", variant);
-      if (indexed.kind === "failed") assert.match(indexed.failure.message, /framework_target_unknown/, variant);
+      assert.equal(indexed.kind, "published", variant);
+      const current = state(root);
+      try {
+        const framework = current.store.loadFramework(current.repositoryId)!;
+        assert.equal(framework.relationships.length, 0);
+        assert.deepEqual(framework.diagnostics.map((item) => item.code), ["framework_target_unknown"]);
+      } finally { current.store.close(); }
     });
   }
 });
@@ -136,7 +144,12 @@ test("unverified same-name wrappers cannot manufacture framework edges", async (
     await write(root, "src/app/router/lazy-pages.ts", 'import { lazyRouteNamed } from "./lazy-route";\nexport const Page = lazyRouteNamed(() => import("@/features/Page"), "Page");\n');
     await write(root, "src/app/router/routes.tsx", 'import { Page } from "./lazy-pages";\nexport function Routes() { return <Page />; }\n');
     const indexed = await indexRepository(root, { skipGit: true });
-    assert.equal(indexed.kind, "failed");
-    if (indexed.kind === "failed") assert.match(indexed.failure.message, /framework_target_unknown/);
+    assert.equal(indexed.kind, "published");
+    const current = state(root);
+    try {
+      const framework = current.store.loadFramework(current.repositoryId)!;
+      assert.equal(framework.relationships.length, 0);
+      assert.deepEqual(framework.diagnostics.map((item) => item.code), ["framework_target_unknown"]);
+    } finally { current.store.close(); }
   });
 });

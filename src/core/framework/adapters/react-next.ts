@@ -168,7 +168,7 @@ function verifiedLazyNamedExport(
   // Strictly recognize the two-literal lazyRouteNamed(() => import("path"), "Export") form.
   // This is parser-derived initializer text, never arbitrary source-file regex matching.
   // Computed specifiers, computed export names, extra arguments and other wrappers fail closed.
-  const literalCall = /^\s*lazyRouteNamed\s*\(\s*\(\s*\)\s*=>\s*import\s*\(\s*(["'])([^"'\x60\\\r\n]+)\1\s*\)\s*,\s*(["'])([$A-Za-z_][$\w]*)\3\s*\)\s*$/s.exec(expression.text);
+  const literalCall = /^\s*lazyRouteNamed\s*\(\s*\(\s*\)\s*=>\s*import\s*\(\s*(["'])([^"'\x60\\\r\n]+)\1\s*\)\s*,\s*(["'])([$A-Za-z_][$\w]*)\3\s*,?\s*\)\s*$/s.exec(expression.text);
   if (!literalCall) return result;
   const [, , specifier, , exportName] = literalCall;
   if (!specifier || !exportName || !fileFacts.exports.some((item) => item.localName === localName && !item.moduleSpecifier)) return result;
@@ -347,7 +347,7 @@ function analyze(ctx: FrameworkAnalysisContext): { evidence: readonly FrameworkE
       evidence.push({
         evidenceId: `react-jsx:${materialized.relativePath}:${jsx.id}`,
         framework: "react", adapterId: "react-next", adapterVersion: "1.0.0", strategy: dynamicLocal ? "jsx-dynamic-component-usage" : "jsx-component-usage", capability: "react.component_usage",
-        relativePath: materialized.relativePath, origin: "framework_inferred", confidence: "exact", refs: dynamicLocal ? [{ relativePath: materialized.relativePath, inputKey, localId: jsx.id, range: jsx.range }] : refsFor(materialized.relativePath, inputKey), entities: [], applicable: true, supported: !dynamicLocal, attempted: true, state: dynamicLocal ? "unsupported" : "candidate",
+        relativePath: materialized.relativePath, origin: "framework_inferred", confidence: "exact", refs: [{ relativePath: materialized.relativePath, inputKey, localId: jsx.id, range: jsx.range }], entities: [], applicable: true, supported: !dynamicLocal, attempted: true, state: dynamicLocal ? "unsupported" : "candidate",
         outputKind: "relationship", relationKind: "component_usage", sourceCandidates: source, targetCandidates: targets,
       });
     }
