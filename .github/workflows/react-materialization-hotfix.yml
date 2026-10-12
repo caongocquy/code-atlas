@@ -21,11 +21,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 22.23.3
       - run: corepack enable
       - run: corepack prepare pnpm@11.22.0 --activate
       - run: pnpm install --frozen-lockfile
       - run: node scripts/parser-distribution.mjs prepare --build-missing
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
       - run: pnpm build
       - run: pnpm lint
       - run: pnpm exec tsc --noEmit
