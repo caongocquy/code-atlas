@@ -4,6 +4,18 @@ All notable changes to CodeAtlas are documented here.
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-10-12
+
+### React materialization hotfix
+
+- Accept a trailing comma in statically verified `lazyRouteNamed(() => import("literal"), "NamedExport",)` calls while keeping computed targets, extra arguments and unverified wrappers fail-closed.
+- Publish unresolved React JSX as structured diagnostics when every attempted site has persisted syntax evidence and complete accounting, without guessing component relationships. Missing or forged evidence, invalid configuration and stale generation parents still reject publication.
+- Report represented, resolved and unresolved JSX site counts separately from unique relationships and overlapping coverage categories; partial framework evidence remains non-authoritative for negative results.
+
+### Release recovery
+
+- Allow manual GitHub Release recovery for an existing immutable tag after its exact npm version becomes visible, without republishing npm or moving the tag.
+
 ## [1.6.1] - 2026-10-10
 
 ### Security and correctness
