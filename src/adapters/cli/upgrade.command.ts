@@ -1,14 +1,16 @@
 import { note } from "@clack/prompts";
 import { execFile as execFileCallback } from "node:child_process";
-import { realpath } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import { startCliPresentation } from "./cli-presentation.js";
 
 const PACKAGE_NAME = "@showdar2112/code-atlas";
+const BREW_FORMULA = "caongocquy/showdar/code-atlas";
 const execFileAsync = promisify(execFileCallback);
 const execOptions = { encoding: "utf8", shell: false, windowsHide: true } as const;
 
-type PackageManager = "npm" | "pnpm";
+type PackageManager = "npm" | "pnpm" | "brew";
 type ExecOptions = { encoding: "utf8"; shell: false; windowsHide: true };
 
 export type UpgradeCheckDependencies = {
@@ -16,6 +18,7 @@ export type UpgradeCheckDependencies = {
   packageRoot: string;
   execPath?: string;
   realpath(path: string): Promise<string>;
+  readFile?(path: string, encoding: "utf8"): Promise<string>;
   execFile(file: string, args: string[], options: ExecOptions): Promise<{ stdout: string }>;
 };
 
@@ -28,22 +31,69 @@ type UpgradeCheckResult = {
   verifiedVersion: string | null;
 };
 
+export async function execUpgradeProcess(
+  file: string,
+  args: string[],
+  platform: string = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ stdout: string }> {
+  if (platform === "win32" && (file === "npm" || file === "pnpm")) {
+    const script = file === "npm" ? "npm-cli.js" : "pnpm.cjs";
+    let entrypoint: string | undefined;
+    for (const directory of (env.PATH ?? env.Path ?? "").split(";").filter(Boolean)) {
+      const root = directory.replace(/^"|"$/g, "");
+      for (const candidate of [
+        path.join(root, `${file}.exe`),
+        path.join(root, "node_modules", file, "bin", script),
+        path.join(root, "node_modules", "corepack", "dist", `${file}.js`),
+      ]) {
+        try {
+          if ((await stat(candidate)).isFile()) {
+            entrypoint = await realpath(candidate);
+            break;
+          }
+        } catch {
+          // Only known executable/script entrypoints are eligible; never execute .cmd shims.
+        }
+      }
+      if (entrypoint) break;
+    }
+    if (!entrypoint) throw new Error(`Cannot find a shell-free ${file} entrypoint on PATH. Use the original installation method to update CodeAtlas.`);
+    if (entrypoint.toLowerCase().endsWith(".exe")) file = entrypoint;
+    else {
+      file = process.execPath;
+      args = [entrypoint, ...args];
+    }
+  }
+  const { stdout } = await execFileAsync(file, args, execOptions);
+  return { stdout };
+}
+
 function systemDependencies(): UpgradeCheckDependencies {
   return {
     platform: process.platform,
     packageRoot: path.resolve(import.meta.dirname, "../../../"),
     execPath: process.execPath,
     realpath,
-    async execFile(file, args) {
-      const { stdout } = await execFileAsync(file, args, execOptions);
-      return { stdout };
-    },
+    readFile,
+    execFile: (file, args) => execUpgradeProcess(file, args),
   };
 }
 
 async function detectInstallManager(dependencies: UpgradeCheckDependencies): Promise<PackageManager | null> {
-  if (dependencies.platform === "win32") return null;
   const currentRoot = await dependencies.realpath(dependencies.packageRoot);
+  if (dependencies.platform === "darwin" && currentRoot.endsWith(path.join("libexec", "node_modules", ...PACKAGE_NAME.split("/")))) {
+    const installation = path.resolve(currentRoot, "../../../..");
+    try {
+      const receipt = JSON.parse(await (dependencies.readFile ?? readFile)(path.join(installation, "INSTALL_RECEIPT.json"), "utf8"));
+      if (receipt?.source?.tap === "caongocquy/showdar") {
+        const { stdout } = await dependencies.execFile("brew", ["--cellar", BREW_FORMULA], execOptions);
+        if (stdout.trim() && await dependencies.realpath(stdout.trim()) === path.dirname(installation)) return "brew";
+      }
+    } catch {
+      // A matching package path alone does not establish Homebrew ownership.
+    }
+  }
   const matches: PackageManager[] = [];
 
   for (const manager of ["npm", "pnpm"] as const) {
@@ -69,20 +119,29 @@ async function verifyInstalledVersion(
   targetVersion: string,
   dependencies: UpgradeCheckDependencies,
 ): Promise<string> {
-  const { stdout } = await dependencies.execFile(manager, ["root", "-g"], execOptions);
-  const globalRoot = stdout.trim();
-  if (!globalRoot) throw new Error(`${manager} returned an empty global package root`);
-  const managerRoot = await dependencies.realpath(globalRoot);
-  const packageRoot = await dependencies.realpath(path.join(globalRoot, ...PACKAGE_NAME.split("/")));
-  const relativeRoot = path.relative(managerRoot, packageRoot);
-  if (!relativeRoot || relativeRoot === ".." || relativeRoot.startsWith(`..${path.sep}`) || path.isAbsolute(relativeRoot)) {
-    throw new Error(`${manager} resolved CodeAtlas outside its global package root`);
+  let entrypoint: string;
+  let execPath = dependencies.execPath ?? process.execPath;
+  if (manager === "brew") {
+    const { stdout } = await dependencies.execFile("brew", ["--prefix", BREW_FORMULA], execOptions);
+    if (!stdout.trim()) throw new Error("brew returned an empty installed prefix");
+    const prefix = await dependencies.realpath(stdout.trim());
+    entrypoint = path.join(prefix, "libexec", "node_modules", ...PACKAGE_NAME.split("/"), "dist", "cli.js");
+    execPath = path.join(prefix, "libexec", "runtime", "node");
+  } else {
+    const { stdout } = await dependencies.execFile(manager, ["root", "-g"], execOptions);
+    const globalRoot = stdout.trim();
+    if (!globalRoot) throw new Error(`${manager} returned an empty global package root`);
+    const managerRoot = await dependencies.realpath(globalRoot);
+    const packageRoot = await dependencies.realpath(path.join(globalRoot, ...PACKAGE_NAME.split("/")));
+    const relativeRoot = path.relative(managerRoot, packageRoot);
+    if (!relativeRoot || relativeRoot === ".." || relativeRoot.startsWith(`..${path.sep}`) || path.isAbsolute(relativeRoot)) {
+      throw new Error(`${manager} resolved CodeAtlas outside its global package root`);
+    }
+    entrypoint = path.join(packageRoot, "dist", "cli.js");
   }
-
-  const entrypoint = path.join(packageRoot, "dist", "cli.js");
   let installedVersion: string;
   try {
-    const result = await dependencies.execFile(dependencies.execPath ?? process.execPath, [entrypoint, "--version"], execOptions);
+    const result = await dependencies.execFile(execPath, [entrypoint, "--version"], execOptions);
     installedVersion = result.stdout.trim();
   } catch (error) {
     throw new Error(`Unable to run the installed CodeAtlas CLI at ${entrypoint}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
@@ -134,21 +193,24 @@ export function compareSemVer(leftVersion: string, rightVersion: string): number
 async function getCheckResult(
   currentVersion: string,
   dependencies: UpgradeCheckDependencies,
+  manager: PackageManager | null,
 ): Promise<UpgradeCheckResult> {
-  if (dependencies.platform === "win32") {
-    throw new Error(
-      `Windows registry checks are unavailable because npm and pnpm use .cmd shims that this shell-free command cannot invoke. To check manually, run \`npm view ${PACKAGE_NAME}@latest version\` in a Windows terminal.`,
-    );
-  }
-  const manager = await detectInstallManager(dependencies);
   const lookupManager = manager ?? "npm";
   let latestVersion: string;
   try {
-    const { stdout } = await dependencies.execFile(lookupManager, ["view", `${PACKAGE_NAME}@latest`, "version"], execOptions);
-    latestVersion = stdout.trim();
+    if (manager === "brew") {
+      const { stdout } = await dependencies.execFile("brew", ["info", "--json=v2", BREW_FORMULA], execOptions);
+      const info = JSON.parse(stdout);
+      const formula = Array.isArray(info?.formulae) ? info.formulae.find((item: { full_name?: string }) => item?.full_name === BREW_FORMULA) : undefined;
+      if (typeof formula?.versions?.stable !== "string") throw new Error("brew returned no stable version for the CodeAtlas formula");
+      latestVersion = formula.versions.stable;
+    } else {
+      const { stdout } = await dependencies.execFile(lookupManager, ["view", `${PACKAGE_NAME}@latest`, "version"], execOptions);
+      latestVersion = stdout.trim();
+    }
   } catch (error) {
     throw new Error(
-      `Unable to check for CodeAtlas updates using ${lookupManager}. Check its configured registry and network connection, then retry. (${error instanceof Error ? error.message : String(error)})`,
+      `Unable to check for CodeAtlas updates using ${lookupManager}. ${manager === "brew" ? "Run `brew update` to refresh formula metadata, then retry." : "Check its configured registry and network connection, then retry."} (${error instanceof Error ? error.message : String(error)})`,
       { cause: error },
     );
   }
@@ -192,17 +254,25 @@ export async function runUpgradeCommand(
   if (args.some((arg) => arg !== "--check" && arg !== "--json")) {
     throw new Error("Use `code-atlas upgrade [--check] [--json]`.");
   }
-  if (dependencies.platform === "win32" && !checkOnly) {
-    throw new Error("Automatic upgrade is unavailable on Windows because npm and pnpm use .cmd shims that this shell-free command cannot invoke. Use the original installation method to update CodeAtlas.");
+  if (!args.includes("--json") && !write) startCliPresentation("CLI updates");
+  const manager = await detectInstallManager(dependencies);
+  if (manager === "brew" && !checkOnly) {
+    try {
+      await dependencies.execFile("brew", ["update"], execOptions);
+    } catch (error) {
+      throw new Error(`Unable to refresh Homebrew updates. Run \`brew update\` and retry. (${error instanceof Error ? error.message : String(error)})`, { cause: error });
+    }
   }
-  const result = await getCheckResult(currentVersion, dependencies);
+  const result = await getCheckResult(currentVersion, dependencies, manager);
   if (!checkOnly && result.updateAvailable) {
     if (!result.manager) {
       throw new Error("Automatic update is unavailable for this installation. Use the original installation method to update CodeAtlas; no package manager can be safely inferred.");
     }
     const installCommand = result.manager === "npm" ? "install" : "add";
     try {
-      await dependencies.execFile(result.manager, [installCommand, "-g", `${PACKAGE_NAME}@${result.latestVersion}`], execOptions);
+      await dependencies.execFile(result.manager, result.manager === "brew"
+        ? ["upgrade", BREW_FORMULA]
+        : [installCommand, "-g", `${PACKAGE_NAME}@${result.latestVersion}`], execOptions);
     } catch (error) {
       throw new Error(`Unable to install CodeAtlas ${result.latestVersion} using ${result.manager}. Check global package permissions and retry. (${error instanceof Error ? error.message : String(error)})`, { cause: error });
     }

@@ -13,6 +13,7 @@ import test from "node:test";
 import { formatIndexResult, formatInitResult } from "../src/adapters/cli/cli-output.js";
 import { formatCommandHelp, formatRootHelp } from "../src/adapters/cli/cli-help.js";
 import { createProgressTask, runProgressTasks } from "../src/adapters/cli/cli-progress-reporter.js";
+import { createCliCommandReporter } from "../src/adapters/cli/cli-command-reporter.js";
 import type { IndexPipelineResult } from "../src/core/indexing/index-pipeline.service.js";
 
 const execFile = promisify(execFileCallback);
@@ -78,6 +79,14 @@ async function runProcessInTty(repoPath: string, command: string[]) {
 }
 
 async function runCliInTty(repoPath: string, args: string[]) {
+  if (process.platform === "win32") {
+    // Unix uses a real PTY; Windows runs the CLI with explicit terminal capabilities.
+    const terminal = "data:text/javascript,Object.defineProperty(process.stdout,'isTTY',{value:true});Object.defineProperty(process.stdout,'columns',{value:90})";
+    return execFile(process.execPath, ["--import", terminal, "--import", tsxLoader, cliPath, ...args], {
+      cwd: repoPath,
+      env: { ...process.env, HOME: repoPath, USERPROFILE: repoPath, CODEX_HOME: path.join(repoPath, ".codex-home"), NO_COLOR: "1", CI: "false" },
+    });
+  }
   return runProcessInTty(repoPath, [process.execPath, "--import", tsxLoader, cliPath, ...args]);
 }
 
@@ -118,6 +127,45 @@ async function runCliResult(repoPath: string, args: string[]) {
 function count(text: string, pattern: RegExp): number {
   return text.match(pattern)?.length ?? 0;
 }
+
+test("interactive command startup displays the pixel logo", async () => {
+  const { output } = await withFakeTty(async () => createCliCommandReporter({ command: "integrations" }));
+  assert.match(output, /██████╗/);
+  assert.equal(count(output, /Agent integrations/g), 1);
+});
+
+test("root and command help display the logo with terminal capabilities", async () => {
+  const repoPath = await fixture("help-logo");
+  try {
+    for (const args of [[], ["--help"], ["status", "--help"]]) {
+      const { stdout } = await runCliInTty(repoPath, args);
+      assert.match(stdout, /██████╗/);
+      assert.match(stdout, /Usage: code-atlas/);
+    }
+  } finally {
+    await rm(repoPath, { recursive: true, force: true });
+  }
+});
+
+test("JSON and quiet reporters remain undecorated in a terminal", async () => {
+  const { output } = await withFakeTty(async () => {
+    createCliCommandReporter({ command: "status", json: true });
+    createCliCommandReporter({ command: "status", quiet: true });
+  });
+  assert.equal(output, "");
+});
+
+test("JSON help and version output stay undecorated with terminal capabilities", async () => {
+  const repoPath = await fixture("plain-help");
+  try {
+    for (const args of [["--help", "--json"], ["status", "--help", "--json"], ["--version"]]) {
+      const { stdout } = await runCliInTty(repoPath, args);
+      assert.doesNotMatch(stdout, /██████╗|CODEATLAS|┌/);
+    }
+  } finally {
+    await rm(repoPath, { recursive: true, force: true });
+  }
+});
 
 test("Clack progress tasks forward title, updates, and percentage changes", async () => {
   const task = createProgressTask("Scanning repository", async (reporter) => {

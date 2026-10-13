@@ -481,14 +481,18 @@ stable fields: `currentVersion`, `latestVersion`, `updateAvailable`, `manager`,
 global install is found. `code-atlas upgrade` installs an available update, and
 successful `code-atlas upgrade --json` runs return the same fields.
 
-Automatic updates are supported only for an unambiguous global npm or pnpm
-installation on POSIX. CodeAtlas installs the exact registry version and runs the
-installed CLI to verify it. Local, linked, Homebrew, wrapper-based, or ambiguous
-installations fail closed without an automatic install; POSIX check-only mode can
-still check the npm registry. On Windows, both automatic updates and registry
-checks fail closed without invoking package manager shims; `upgrade --check`
-directs contributors to run `npm view @showdar2112/code-atlas@latest version`
-manually.
+Automatic updates support unambiguous global npm/pnpm installations on POSIX and
+Windows. Windows invokes known JavaScript entrypoints through Node or standalone
+executables, without a shell or `.cmd` shims. CodeAtlas installs the exact registry
+version and runs the installed CLI to verify it.
+
+Homebrew installations from `caongocquy/showdar` use the CodeAtlas formula instead
+of npm. Check-only mode reads the current local formula metadata without running
+`brew update`; run that command separately to refresh it. An explicit upgrade
+runs `brew update`, upgrades only the CodeAtlas formula, and verifies the installed
+CLI with its bundled Node runtime. Local, linked, portable archive, other-tap,
+wrapper-based, or ambiguous installations still fail closed without an automatic
+install; check-only mode can check npm when a supported npm entrypoint is available.
 
 Common workflows:
 

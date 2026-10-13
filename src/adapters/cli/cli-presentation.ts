@@ -44,8 +44,8 @@ export function startCliPresentation(
   capabilities: TerminalCapabilities = getTerminalCapabilities(),
 ): void {
   if (!capabilities.interactive) return;
-  intro("CODEATLAS");
-  log.message(subtitle);
+  intro();
+  log.message(renderBrandHeader(subtitle, capabilities).trimStart());
 }
 
 function colors(capabilities: TerminalCapabilities) {

@@ -3,7 +3,7 @@
 import { createCliCommandReporter } from "./adapters/cli/cli-command-reporter.js";
 import { formatCommandFailure } from "./adapters/cli/cli-output.js";
 import { formatCommandHelp, formatRootHelp, isKnownCommand } from "./adapters/cli/cli-help.js";
-import { applyNoColorPrecedence } from "./adapters/cli/cli-presentation.js";
+import { applyNoColorPrecedence, startCliPresentation } from "./adapters/cli/cli-presentation.js";
 import { createRequire } from "node:module";
 import path from "node:path";
 
@@ -16,14 +16,17 @@ async function main(): Promise<void> {
     return;
   }
   if (command === "--help" || command === "-h" || command === undefined) {
+    if (!args.includes("--json")) startCliPresentation("Local-first code intelligence");
     process.stdout.write(`${formatRootHelp()}\n`);
     return;
   }
   if (args.includes("--help") && command && command !== "--help" && command !== "help" && isKnownCommand(command)) {
+    if (!args.includes("--json")) startCliPresentation(`${command} help`);
     process.stdout.write(`${formatCommandHelp(command)}\n`);
     return;
   }
   if (command === "help" && args[0]) {
+    if (!args.includes("--json")) startCliPresentation(`${args[0]} help`);
     process.stdout.write(`${formatCommandHelp(args[0])}\n`);
     return;
   }
@@ -137,6 +140,7 @@ async function main(): Promise<void> {
       return;
     }
     case "help":
+      if (!args.includes("--json")) startCliPresentation("Local-first code intelligence");
       process.stdout.write(args[0] ? `${formatCommandHelp(args[0])}\n` : `${formatRootHelp()}\n`);
       return;
     default:

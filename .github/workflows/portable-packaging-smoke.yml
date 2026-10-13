@@ -14,6 +14,11 @@ on:
       - test/fixtures/release-windows-assertions.json
       - src/adapters/cli/**
       - src/cli.ts
+      - test/cli-presentation.test.ts
+      - test/cli-ux-cleanup.test.ts
+      - test/phase15e-upgrade-check.test.ts
+      - test/phase15e-upgrade-install.test.ts
+      - test/upgrade-platforms.test.ts
       - scripts/verify-release-archive.mjs
       - scripts/build-onnx-darwin-x64.mjs
       - scripts/onnx-darwin-x64.mjs
@@ -100,7 +105,7 @@ jobs:
             export CODE_ATLAS_CLI="$(node -p 'require("node:path").resolve("node_modules/.bin/code-atlas")')"
           fi
           export PATH="$PWD/node_modules/.bin:$PATH"
-          node --import tsx/esm --test test/release-bundle-pruning.test.ts test/release-swift-runtime.test.ts test/onnx-darwin-x64-packaging.test.ts test/release-archive-integrity.test.ts test/release-regression-comparison.test.ts test/cli-startup.test.ts test/cli-presentation.test.ts test/cli-ux-cleanup.test.ts test/integration-picker.test.ts test/phase12-cli-regression.test.ts test/phase14b-parser-packaging.test.ts test/semantic-lifecycle.test.ts test/phase16b-scip-indexer.test.ts test/react-lazy-route-framework.test.ts
+          node --import tsx/esm --test test/release-bundle-pruning.test.ts test/release-swift-runtime.test.ts test/onnx-darwin-x64-packaging.test.ts test/release-archive-integrity.test.ts test/release-regression-comparison.test.ts test/cli-startup.test.ts test/cli-presentation.test.ts test/cli-ux-cleanup.test.ts test/integration-picker.test.ts test/phase12-cli-regression.test.ts test/phase14b-parser-packaging.test.ts test/semantic-lifecycle.test.ts test/phase16b-scip-indexer.test.ts test/react-lazy-route-framework.test.ts test/phase15e-upgrade-check.test.ts test/phase15e-upgrade-install.test.ts test/upgrade-platforms.test.ts
       - name: Check out immutable release base for equivalent full-suite comparison
         uses: actions/checkout@v4
         with:
