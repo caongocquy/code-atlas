@@ -143,13 +143,14 @@ test("upgrade check leaves local, linked, and ambiguous installs unsupported", a
   }
 });
 
-test("Windows skips install-source detection and keeps check non-mutating", async () => {
-  const { dependencies, calls } = fakeDependencies({ platform: "win32", latest: "1.2.1" });
-  await assert.rejects(
-    () => runUpgradeCommand(["--check", "--json"], "1.2.0", dependencies, () => {}),
-    /Windows.*(?:\.cmd|shell).*manual.*npm view/i,
-  );
-  assert.deepEqual(calls, []);
+test("Windows checks a detected npm global install without installing", async () => {
+  const root = path.join(tempRoot, "windows-npm-global");
+  const { dependencies, calls } = fakeDependencies({ platform: "win32", packageRoot: globalPackage(root), roots: { npm: root }, latest: "1.2.1" });
+  let output = "";
+  await runUpgradeCommand(["--check", "--json"], "1.2.0", dependencies, (value) => { output += value; });
+  assert.equal(JSON.parse(output).manager, "npm");
+  assert.equal(JSON.parse(output).updateAvailable, true);
+  assert.equal(calls.some(({ args }) => args[0] === "install"), false);
 });
 
 test("strict SemVer comparison handles prerelease precedence and rejects invalid versions", () => {

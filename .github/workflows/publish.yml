@@ -120,6 +120,9 @@ jobs:
             test/release-semantic-vector-isolation.test.ts \
             test/cli-presentation.test.ts \
             test/cli-ux-cleanup.test.ts \
+            test/phase15e-upgrade-check.test.ts \
+            test/phase15e-upgrade-install.test.ts \
+            test/upgrade-platforms.test.ts \
             test/phase12-cli-regression.test.ts \
             test/phase14d-reliability-contract.test.ts \
             test/phase14d-reliability-incremental.test.ts \

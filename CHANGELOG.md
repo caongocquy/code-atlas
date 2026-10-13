@@ -4,6 +4,18 @@ All notable changes to CodeAtlas are documented here.
 
 ## [Unreleased]
 
+## [1.6.3] - 2026-10-13
+
+### CLI fixes
+
+- Restore the responsive CodeAtlas pixel logo in interactive command startup and root/command help. JSON, quiet, CI, non-TTY and version output retain their existing contracts.
+
+### Upgrade fixes
+
+- Support checks and verified exact-version upgrades for detected global npm/pnpm installations on Windows by invoking known JavaScript entrypoints through Node or standalone executables without a shell or `.cmd` shims.
+- Recognize Homebrew installations owned by `caongocquy/showdar`, check the CodeAtlas formula version, refresh Homebrew metadata only on explicit upgrade, and verify the newly installed CLI with its bundled Node runtime.
+- Keep local, linked, portable archive, other-tap and ambiguous installation sources fail-closed. Homebrew check-only mode reads local formula metadata; run `brew update` separately to refresh it.
+
 ## [1.6.2] - 2026-10-12
 
 ### React materialization hotfix

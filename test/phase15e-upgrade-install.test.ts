@@ -125,7 +125,7 @@ test("upgrade fails when the installed entrypoint cannot run", async () => {
   );
 });
 
-test("unsupported and Windows installations fail closed before install", async () => {
+test("unsupported installations fail closed before install", async () => {
   const unsupported = fakeDependencies({ manager: null });
   await assert.rejects(
     () => runUpgradeCommand([], "1.2.0", unsupported.dependencies, () => {}),
@@ -133,10 +133,15 @@ test("unsupported and Windows installations fail closed before install", async (
   );
   assert.equal(unsupported.calls.some(({ args }) => args[0] === "install" || args[0] === "add"), false);
 
-  const windows = fakeDependencies({ manager: "npm", platform: "win32" });
-  await assert.rejects(
-    () => runUpgradeCommand([], "1.2.0", windows.dependencies, () => {}),
-    /Windows.*automatic.*upgrade|Windows.*\.cmd/i,
-  );
-  assert.deepEqual(windows.calls, []);
 });
+
+for (const manager of ["npm", "pnpm"] as const) {
+  test(`Windows upgrades and verifies a detected ${manager} global install`, async () => {
+    const { dependencies, calls } = fakeDependencies({ manager, platform: "win32" });
+    let output = "";
+    await runUpgradeCommand(["--json"], "1.2.0", dependencies, (value) => { output += value; });
+    assert.equal(JSON.parse(output).upgraded, true);
+    assert.equal(JSON.parse(output).verifiedVersion, "1.2.1");
+    assert.ok(calls.every((call) => call.shell === false));
+  });
+}
