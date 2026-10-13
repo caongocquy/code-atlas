@@ -9,14 +9,14 @@ const formula = "caongocquy/showdar/code-atlas";
 const packageName = "@showdar2112/code-atlas";
 
 function brewDependencies(options: { installed?: string; tap?: string; latest?: string; fail?: string } = {}) {
-  const cellar = "/opt/homebrew/Cellar/code-atlas";
+  const cellar = path.join(os.tmpdir(), "code-atlas-brew-fixture", "Cellar", "code-atlas");
   const calls: string[][] = [];
   const dependencies: upgrade.UpgradeCheckDependencies = {
     platform: "darwin",
-    packageRoot: `${cellar}/1.6.2/libexec/node_modules/${packageName}`,
+    packageRoot: path.join(cellar, "1.6.2", "libexec", "node_modules", ...packageName.split("/")),
     realpath: async (value) => value,
     readFile: async (file) => {
-      assert.equal(file, `${cellar}/1.6.2/INSTALL_RECEIPT.json`);
+      assert.equal(file, path.join(cellar, "1.6.2", "INSTALL_RECEIPT.json"));
       return JSON.stringify({ source: { tap: options.tap ?? "caongocquy/showdar" } });
     },
     execFile: async (file, args, execOptions) => {
@@ -29,12 +29,12 @@ function brewDependencies(options: { installed?: string; tap?: string; latest?: 
         if (options.fail === args[0]) throw new Error("brew unavailable");
         return { stdout: "" };
       }
-      if (args[0] === "--prefix") return { stdout: `${cellar}/${options.installed ?? "1.6.3"}` };
+      if (args[0] === "--prefix") return { stdout: path.join(cellar, options.installed ?? "1.6.3") };
       if (args.at(-1) === "--version") return { stdout: options.installed ?? "1.6.3" };
       throw new Error(`Unexpected process: ${file} ${args.join(" ")}`);
     },
   };
-  return { dependencies, calls };
+  return { dependencies, calls, cellar };
 }
 
 test("brew check reads formula metadata without refreshing or installing", async () => {
@@ -49,7 +49,7 @@ test("brew check reads formula metadata without refreshing or installing", async
 });
 
 test("brew upgrade refreshes its tap and verifies the newly installed CLI with its bundled Node", async () => {
-  const { dependencies, calls } = brewDependencies();
+  const { dependencies, calls, cellar } = brewDependencies();
   let output = "";
   await upgrade.runUpgradeCommand(["--json"], "1.6.2", dependencies, (value) => { output += value; });
   assert.equal(JSON.parse(output).upgraded, true);
@@ -57,8 +57,8 @@ test("brew upgrade refreshes its tap and verifies the newly installed CLI with i
   assert.ok(calls.findIndex(([, command]) => command === "update") < calls.findIndex(([, command]) => command === "info"));
   assert.deepEqual(calls.find(([, command]) => command === "upgrade"), ["brew", "upgrade", formula]);
   assert.deepEqual(calls.at(-1), [
-    "/opt/homebrew/Cellar/code-atlas/1.6.3/libexec/runtime/node",
-    `/opt/homebrew/Cellar/code-atlas/1.6.3/libexec/node_modules/${packageName}/dist/cli.js`, "--version",
+    path.join(cellar, "1.6.3", "libexec", "runtime", "node"),
+    path.join(cellar, "1.6.3", "libexec", "node_modules", ...packageName.split("/"), "dist", "cli.js"), "--version",
   ]);
 });
 
