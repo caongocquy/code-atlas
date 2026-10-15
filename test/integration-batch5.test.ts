@@ -22,6 +22,64 @@ after(async () => {
   if (testCliDirectory) await rm(testCliDirectory, { recursive: true, force: true });
 });
 
+for (const mode of ["picker", "all"] as const) {
+  test(`connect ${mode} repairs stale launchers and preserves invalid config`, async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "code-atlas-connect-stale-"));
+    const bin = path.join(root, "bin");
+    const previousCi = process.env.CI;
+    delete process.env.CI;
+    try {
+      await mkdir(bin);
+      for (const id of ["codex", "opencode", "gemini"]) {
+        await writeFile(path.join(bin, id), "#!/bin/sh\n");
+        await chmod(path.join(bin, id), 0o755);
+      }
+      const codexRoot = path.join(root, ".codex-home");
+      const openCodeRoot = path.join(root, ".xdg", "opencode");
+      await mkdir(codexRoot);
+      await mkdir(openCodeRoot, { recursive: true });
+      await mkdir(path.join(root, ".gemini"));
+      await writeFile(path.join(codexRoot, "config.toml"), '[mcp_servers.code-atlas]\ncommand = "/missing/node"\nargs = ["/missing/cli.js", "mcp"]\n');
+      await writeFile(path.join(openCodeRoot, "opencode.json"), JSON.stringify({
+        mcp: { "code-atlas": { type: "local", command: ["/missing/node", "/missing/cli.js", "mcp"] } },
+        theme: "existing-theme",
+      }));
+      const invalidConfig = path.join(root, ".gemini", "settings.json");
+      await writeFile(invalidConfig, "{invalid-json");
+      const service = createAgentIntegrationService({
+        platform: "linux", cwd: root, home: root,
+        env: { PATH: bin, CODEX_HOME: codexRoot, XDG_CONFIG_HOME: path.join(root, ".xdg") },
+      }, async () => ({ command: process.execPath, args: [cliPath, "mcp"] }));
+      const options = { repoPath: root, noGuidance: true };
+      for (const id of ["codex", "opencode"]) {
+        assert.equal((await service.status(id, options)).connection.state, "stale");
+      }
+      assert.equal((await service.status("gemini", options)).connection.state, "invalid_config");
+      await runIntegrationCommand(["connect", "--no-guidance", ...(mode === "all" ? ["--all", "--json"] : [])], root, {
+        createService: () => service,
+        stdin: { isTTY: true } as PickerStdin,
+        stdout: { isTTY: true } as PickerStdout,
+        picker: async ({ rows }) => {
+          assert.equal(rows.find((row) => row.id === "codex")?.selectable, true);
+          assert.equal(rows.find((row) => row.id === "opencode")?.selectable, true);
+          assert.equal(rows.find((row) => row.id === "gemini")?.selectable, false);
+          assert.equal(rows.find((row) => row.id === "claude")?.selectable, false);
+          return { kind: "confirmed", selected: ["codex", "opencode"] };
+        },
+      });
+      for (const id of ["codex", "opencode"]) {
+        assert.equal((await service.status(id, options)).connection.state, "connected");
+      }
+      assert.equal(JSON.parse(await readFile(path.join(openCodeRoot, "opencode.json"), "utf8")).theme, "existing-theme");
+      assert.equal(await readFile(invalidConfig, "utf8"), "{invalid-json");
+    } finally {
+      if (previousCi === undefined) delete process.env.CI;
+      else process.env.CI = previousCi;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}
+
 test("connect --all configures only detected integrations in registry order", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "code-atlas-batch5-all-"));
   const bin = path.join(root, "bin");

@@ -221,7 +221,6 @@ function batchTargets(statuses: IntegrationStatus[], connecting: boolean): Batch
 
 function connectable(status: IntegrationStatus): boolean {
   return status.installation.state === "installed"
-    && status.connection.state !== "stale"
     && status.connection.state !== "invalid_config";
 }
 
