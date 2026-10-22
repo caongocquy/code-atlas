@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 import { compareReports } from "../scripts/compare-ca01-tests.mjs";
 
 // @ts-expect-error JavaScript tooling intentionally has no generated declaration files.
-import report from "../scripts/ca01-test-reporter.mjs";
+import report, { ca01ReporterSpecifier, suiteProcessFailed } from "../scripts/ca01-test-reporter.mjs";
 
 const identity = { file: "test/existing.test.ts", line: 10, column: 1, nesting: 0, name: "contract" };
 const error = { name: "AssertionError", code: "ERR_ASSERTION", actual: 1, expected: 2, stack: "at run (/baseline/src/file.ts:12:3)", cause: { code: "ROOT", message: "cause" } };
@@ -69,6 +69,24 @@ for (const malformed of [undefined, null, false, "error", [], {}, { $type: "unde
 test("CA-01 reporter fails closed before emitting a failure without evidence", async () => {
   async function* input() { yield { type: "test:fail", data: { file: "test/x.ts", name: "missing", details: {} } }; }
   await assert.rejects(async () => { for await (const _line of report(input())) { assert.fail("must not emit missing evidence"); } }, /error evidence/);
+});
+test("CA-01 reporter uses file URLs for Windows and POSIX module specifiers", async () => {
+  const windows = ca01ReporterSpecifier("file:///D:/a/repo/scripts/run-ca01-suite.mjs");
+  assert.equal(windows, "file:///D:/a/repo/scripts/ca01-test-reporter.mjs");
+  assert.equal(new URL(windows).protocol, "file:");
+  assert.doesNotMatch(windows, /^[A-Z]:\\/i);
+
+  const runnerUrl = new URL("../scripts/run-ca01-suite.mjs", import.meta.url).href;
+  const posix = ca01ReporterSpecifier(runnerUrl);
+  assert.equal(new URL(posix).protocol, "file:");
+  assert.equal((await import(posix)).default, report);
+});
+test("CA-01 suite recorder fails closed on process errors, signals and unexpected exit codes", () => {
+  assert.equal(suiteProcessFailed({ status: 0, signal: null, error: null }), false);
+  assert.equal(suiteProcessFailed({ status: 1, signal: null, error: null }), false);
+  assert.equal(suiteProcessFailed({ status: null, signal: null, error: new Error("spawn failed") }), true);
+  assert.equal(suiteProcessFailed({ status: null, signal: "SIGTERM", error: null }), true);
+  assert.equal(suiteProcessFailed({ status: 2, signal: null, error: null }), true);
 });
 for (const counter of ["tests", "pass", "fail", "cancelled", "skipped", "todo"]) {
   test(`CA-01 CI rejects inaccurate ${counter} summary`, () => {

@@ -1,5 +1,14 @@
 import path from "node:path";
 import process from "node:process";
+import { URL } from "node:url";
+
+export function ca01ReporterSpecifier(scriptUrl) {
+  return new URL("./ca01-test-reporter.mjs", scriptUrl).href;
+}
+
+export function suiteProcessFailed(result) {
+  return Boolean(result.error || result.signal || ![0, 1].includes(result.status));
+}
 
 function plain(value, seen = new Set()) {
   if (value === undefined) return { $type: "undefined" };
