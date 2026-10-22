@@ -338,6 +338,73 @@ include field guidance and constraints. Each tool also publishes the standard
 annotations. These are hints for MCP clients, not access controls. Current tool
 handlers work with local repositories and state and make no network calls.
 
+### Optional MCP response controls (CA-01)
+
+Calls **without `response` keep their existing behavior**, including each tool's
+existing `detail: "compact" | "full"` defaults and safety caps. To reduce navigation
+output, opt in on `search_code`, `get_symbol`, `find_callers`, `find_callees`,
+`find_imports`, `find_imported_by`, `impact`, `trace`, `execution_flow`,
+`inspect_retrieval`, `get_community`, `list_communities`, `important_symbols`,
+`architectural_bridges`, `find_cycles`, `repository_map`, `list_entries`, or
+`message_links`:
+
+```json
+{
+  "query": "AuthService",
+  "limit": 80,
+  "response": {
+    "mode": "focused",
+    "maxOutputBytes": 16000,
+    "pageSize": 20
+  }
+}
+```
+
+`compact` omits source/provenance and retains relationship identity; `focused`
+keeps source prefixes up to 600 UTF-16 units and provenance; `full` keeps the
+existing full handler depth. Existing upstream result/source caps still apply.
+Focused and compact omit repeated retrieval stage/context representations.
+`inspect_retrieval` exposes its primary fused ranking as `results` when `stages`
+is omitted; selecting `stages` retains the existing stage field names. Explicit
+source inclusion in compact mode uses prefixes up to 160 UTF-16 units.
+Use `context_read` to deliver source and `get_symbol` to resolve indexed identity.
+
+| `response` option | Contract |
+| --- | --- |
+| `mode` | Required: `compact`, `focused`, or `full` |
+| `sections` | Optional explicit selection of `source`, `relationships`, `provenance`, `stages`; `[]` omits these sections. Unselected evidence is intentional omission, not evidence that it does not exist. |
+| `relationKinds` | Optional array of `calls`, `imports`, `extends`, `implements`, `references`, `contains`; filters returned relation records, not traversal or ranking. |
+| `maxOutputBytes` | 512–1,000,000; default 64,000. Bounds UTF-8 bytes of the complete successful MCP CallToolResult, including both text and structuredContent. JSON-RPC framing is excluded. |
+| `maxOutputTokens` | 128–250,000; approximate allowance of 4 bytes per requested token, combined with the byte limit using the smaller allowance. **Not an exact tokenizer/model guarantee.** |
+| `pageSize` | 1–100; default 100 per top-level collection. Existing `limit` still bounds retrieval, at most 1,000 where supported. |
+| `cursor` | Opaque continuation from `output.nextCursor`; repeat the same tool, arguments and response options, adding only this field. |
+
+`output.hasMore` and `remainingItems` describe pagination of the retrieved window,
+**not all matches in the repository**. `projectionComplete` describes projection
+of that window, not graph completeness. `truncated`, `omittedFields`,
+`filteredRelations`, and the original `mayBeIncomplete`/reliability evidence
+distinguish reduced output from missing index coverage. Source prefixes are not
+whole symbols; original line ranges identify the complete symbol. Full mode can
+still require continuation when a byte/page budget applies.
+
+Cursors preserve returned ordering, bind query/filter/options/result snapshot and
+active index generation, expire after 15 minutes, and become invalid on server
+restart. Repeating a cursor is safe. Index changes during retrieval fail closed;
+incremental publication invalidates old cursors. Restart without cursor on
+`invalid_cursor`, `expired_cursor`, or `stale_cursor`. There is no persistent
+per-client pagination state. Pagination applies to top-level collections; a
+nested object remains one whole item. `output_budget_too_small` means essential
+metadata or the next whole item cannot fit: increase the byte budget, choose
+compact, or use the legacy detailed call. No JSON or UTF-8 sequence is sliced.
+Unknown controls are rejected by the existing strict-schema policy.
+
+The adapter projects before MCP serialization. Shared retrieval still hydrates
+SQLite source rows; it does not change lexical/hybrid ranking, embeddings, graph
+resolution, or context-delivery receipts. Small/empty results can grow due to
+explicit projection metadata; use legacy calls when reduction is unnecessary.
+Workspace, durable task-context and change-policy tools retain their existing
+independent contracts. See [CA-01 qualification and reproducible evidence](docs/ca01-qualification.md).
+
 ## Trustworthy evidence
 
 Graph readiness is not the same as graph completeness.
@@ -609,3 +676,9 @@ These are independent of the lightweight graph and lexical core.
 ## License
 
 ISC. See `package.json` for the package metadata.
+
+Opt-in relation responses expose `output.resultCounts.beforeFilter` and
+`output.resultCounts.afterFilter` for the handler's bounded result window, before
+pagination. `totalReturned` counts only `results` in the current page, including
+zero after full filtering. These counts are not repository-wide totals. Calls
+without response options retain the legacy handler contract.

@@ -10,6 +10,10 @@ on:
         type: string
         required: false
         default: ""
+      ca01:
+        type: boolean
+        required: false
+        default: false
       assemble_only:
         type: boolean
         required: false
@@ -357,3 +361,136 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           compression-level: 0
+
+  ca01-same-target:
+    if: ${{ inputs.ca01 }}
+    needs: assemble-package
+    name: CA-01 ${{ matrix.target.platform }} Node ${{ matrix.node }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - runner: macos-15
+            platform: darwin-arm64
+          - runner: macos-15-intel
+            platform: darwin-x64
+          - runner: ubuntu-22.04
+            platform: linux-x64
+          - runner: windows-2022
+            platform: win32-x64
+        node: ['22.23.3', '24.21.0']
+    runs-on: ${{ matrix.target.runner }}
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    env:
+      CA01_BASE: d2570bd789095d82442ff332beb36a5ddd998194
+      CA01_PR_BASE: ${{ github.event.pull_request.base.sha }}
+      CODE_ATLAS_EVAL_OFFLINE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          ref: d2570bd789095d82442ff332beb36a5ddd998194
+          path: .release-base
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: code-atlas-parser-consumer-package
+          path: .ca01-package
+      - name: Verify target and equivalent dependency inputs
+        shell: bash
+        run: |
+          test "$(git -C .release-base rev-parse HEAD)" = "$CA01_BASE"
+          if [[ -n "$CA01_PR_BASE" && "$CA01_PR_BASE" != "$CA01_BASE" ]]; then
+            echo 'CA-01 integration target changed; explicit target approval and new baseline qualification required.' >&2
+            exit 1
+          fi
+          git merge-base --is-ancestor "$CA01_BASE" HEAD
+          git diff --exit-code "$CA01_BASE" -- package.json pnpm-lock.yaml scripts/parser-sources.json
+          corepack enable
+          corepack prepare pnpm@11.22.0 --activate
+          mkdir -p .evidence
+          node -p 'JSON.stringify({target:process.env.CA01_BASE,node:process.version,platform:process.platform,arch:process.arch})' > .evidence/runtime.json
+          git rev-parse HEAD > .evidence/candidate-head.txt
+      - name: Restore identical pinned parser distribution
+        shell: bash
+        run: |
+          package=$(find .ca01-package -type f -name '*.tgz' -print)
+          test "$(printf '%s\n' "$package" | wc -l | tr -d '[:space:]')" -eq 1
+          test -n "$package"
+          mkdir -p vendor .release-base/vendor
+          tar -xzf "$package" --strip-components=2 -C vendor package/vendor/parsers
+          cp -R vendor/parsers .release-base/vendor/parsers
+          node scripts/parser-distribution.mjs verify --all-targets
+          node .release-base/scripts/parser-distribution.mjs verify --all-targets
+      - name: Install and build both revisions
+        shell: bash
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+          pnpm exec tsc --noEmit
+          pnpm lint
+          pnpm --dir .release-base install --frozen-lockfile
+          (cd .release-base && pnpm build)
+      - name: Require CA-01 focused contracts and comparator checks
+        shell: bash
+        run: |
+          node --import tsx/esm --test test/ca01-mcp-response.test.ts test/ca01-response-budget.test.ts test/ca01-mcp-stdio.test.ts test/ca01-qualification.test.ts test/ca01-ci-regression.test.ts test/phase14g-mcp-response-efficiency.test.ts test/phase15e-mcp-metadata.test.ts > .evidence/focused.tap 2>&1
+          node --import tsx/esm eval/mcp/legacy-parity.ts .release-base > .evidence/legacy-parity.log 2>&1
+      - name: Capture complete suites and compare full assertion trees
+        shell: bash
+        run: |
+          baseline_root="$(node -p 'require("node:path").resolve(".release-base")')"
+          output_root="$(node -p 'require("node:path").resolve(".evidence")')"
+          recorder="$(node -p 'require("node:path").resolve("scripts/run-ca01-suite.mjs")')"
+          run_suite() {
+            mkdir -p node_modules/.bin
+            chmod +x dist/cli.js
+            if [[ "$RUNNER_OS" == "Windows" ]]; then
+              # Pass Windows paths as data so printf cannot consume their backslashes.
+              printf '%s\r\n' '@echo off' 'node "%~dp0..\..\dist\cli.js" %*' > node_modules/.bin/code-atlas.cmd
+              export CODE_ATLAS_CLI="$(node -p 'require("node:path").resolve("node_modules/.bin/code-atlas.cmd")')"
+            else
+              ln -sf "$PWD/dist/cli.js" node_modules/.bin/code-atlas
+              export CODE_ATLAS_CLI="$(node -p 'require("node:path").resolve("node_modules/.bin/code-atlas")')"
+            fi
+            export PATH="$PWD/node_modules/.bin:$PATH"
+            node "$recorder" "$1"
+          }
+          (cd .release-base && run_suite "$output_root/baseline")
+          run_suite "$output_root/candidate"
+          temp_root="$(node -p 'require("node:os").tmpdir()')"
+          node scripts/compare-ca01-tests.mjs "$output_root/baseline" "$output_root/candidate" "$output_root/comparison.json" "$baseline_root" "$(node -p 'process.cwd()')" "$temp_root"
+      - name: Pack and verify clean consumer MCP contract
+        shell: bash
+        run: |
+          mkdir -p .ca01-consumer
+          printf '{"name":"ca01-ci-consumer","private":true}\n' > .ca01-consumer/package.json
+          tarball=$(npm pack --silent --pack-destination .ca01-package | tail -n 1)
+          tarball="$(pwd)/.ca01-package/$tarball"
+          npm install --prefix .ca01-consumer --ignore-scripts --no-audit --no-fund "$tarball" > .evidence/consumer-install.log 2>&1
+          node scripts/ca01-packed-mcp-smoke.mjs .ca01-consumer .evidence/packed-mcp.json
+      - name: Record independent strict and differential status
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f .evidence/comparison.json ]]; then
+            node --input-type=module -e 'import fs from "node:fs"; const r=JSON.parse(fs.readFileSync(".evidence/comparison.json")); fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `CA-01 strict candidate: ${r.strictGreen.candidate?"PASS":"FAIL"}; differential: ${r.differentialPass?"PASS":"FAIL"}. Baseline failures: ${r.baseline.fail}; candidate failures: ${r.candidate.fail}. Policy B remains unapproved; no merge/release authorization.\n`);'
+          else
+            echo 'CA-01 comparison NOT RUN or incomplete; no qualification claim.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ca01-${{ matrix.target.platform }}-node${{ matrix.node }}
+          path: |
+            .evidence/
+            artifacts/closure-legacy-parity.json
+          include-hidden-files: true
+          if-no-files-found: error
