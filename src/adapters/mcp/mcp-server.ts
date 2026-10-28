@@ -4,12 +4,14 @@ import { queryWorkspaceMessageLinks } from "../../core/workspace/workspace-messa
 import type { WorkspaceMessageLinksInput } from "../../core/workspace/workspace-message-links.types.js";
 import path from "node:path";
 import fs from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { McpResponseError, optimizeResponse, optimizedTools, readResponseGeneration, responseOptionsSchema } from "./response-options.js";
 
 import { getRepositoryStatus, getRepositoryStatusReadOnly } from "../../core/repository/repository-status.service.js";
 import { canonicalRepositoryPath } from "../../core/repository/repository-identity.js";
@@ -184,6 +186,8 @@ function errorResult(error: unknown): CallToolResult {
     ? { code: error.operationError.code, message: error.operationError.message, details: error.operationError }
     : error instanceof SemanticProviderError
     ? { code: error.code, message: error.message, ...(error.env ? { env: error.env } : {}) }
+    : error instanceof McpResponseError
+    ? { code: error.code, message: error.message }
     : error instanceof McpToolError
     ? { code: error.code, message: error.message, ...(error.details ? { details: error.details } : {}) }
     : { code: "internal_error", message: error instanceof Error ? error.message : String(error) };
@@ -205,6 +209,8 @@ function jsonResult(value: unknown): CallToolResult {
   };
 }
 
+const responseKeys = new WeakMap<McpServer, Buffer>();
+
 function registerJsonTool(
   server: McpServer,
   name: string,
@@ -212,9 +218,19 @@ function registerJsonTool(
   schema: z.ZodType,
   handler: (args: JsonObject) => Promise<unknown>,
 ): void {
-  server.registerTool(name, { description, inputSchema: schema, annotations: toolAnnotations[name] }, async (args) => {
+  const inputSchema = optimizedTools.has(name) && schema instanceof z.ZodObject
+    ? schema.safeExtend({ response: responseOptionsSchema.optional() }) : schema;
+  if (!responseKeys.has(server)) responseKeys.set(server, randomBytes(32));
+  server.registerTool(name, { description, inputSchema, annotations: toolAnnotations[name] }, async (args) => {
     try {
-      return jsonResult(await handler(args as JsonObject));
+      const input = args as JsonObject;
+      if (!input.response) return jsonResult(await handler(input));
+      const repoPath = resolveRepo(input.repoPath as string | undefined);
+      const generation = readResponseGeneration(repoPath);
+      const mode = (input.response as { mode: string }).mode;
+      const value = await handler({ ...input, detail: mode === "full" ? "full" : input.detail });
+      if (readResponseGeneration(repoPath) !== generation) throw new McpResponseError("stale_cursor", "Index changed during retrieval; restart without cursor.");
+      return jsonResult(optimizeResponse(name, input, value as JsonObject, generation, responseKeys.get(server)!));
     } catch (error) {
       return errorResult(error);
     }
