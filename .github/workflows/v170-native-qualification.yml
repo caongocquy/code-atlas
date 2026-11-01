@@ -1,0 +1,399 @@
+name: v1.7.0 native qualification
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/v170-native-qualification.yml'
+      - 'scripts/*ca01*'
+      - 'test/ca01-common-harness.test.ts'
+      - 'test/ca01-v170-receipts.test.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CA01_BASE_SHA: 7520618fa68e378e6c480e8f6e2ce9c6ed73a476
+  CA01_CANDIDATE_SHA: 0e49b3e1e50887b1e0fc800d26e8551ca6a22a38
+  CA01_FROZEN_SHA: d2570bd789095d82442ff332beb36a5ddd998194
+  CA01_CONTRACT_SHA256: 05cba612301e563e842eda1c92f3a05019ae0a930003b6c1504118c000221ff1
+  CA01_REF_PROTECTED: ${{ github.ref_protected }}
+
+jobs:
+  controller-tests:
+    name: Controller tests on Node ${{ matrix.node }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.23.3', '24.21.0']
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Install the locked test toolchain
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.22.0 --activate
+          pnpm install --frozen-lockfile
+      - name: Run receipt and relocation controller regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          loader=$(node -e 'const {createRequire}=require("node:module");const {pathToFileURL}=require("node:url");console.log(pathToFileURL(createRequire(process.cwd()+"/package.json").resolve("tsx/esm")).href)')
+          node --test test/ca01-v170-receipts.test.mjs
+          node --import "$loader" --test test/ca01-common-harness.test.ts
+
+  preflight:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      environment_rules_sha256: ${{ steps.trust.outputs.environment_rules_sha256 }}
+      environment_reviewers_json: ${{ steps.trust.outputs.environment_reviewers_json }}
+      workflow_tree: ${{ steps.trust.outputs.workflow_tree }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          path: .harness
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 7520618fa68e378e6c480e8f6e2ce9c6ed73a476
+          fetch-depth: 0
+          path: .approved-base
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 0e49b3e1e50887b1e0fc800d26e8551ca6a22a38
+          fetch-depth: 0
+          path: .candidate
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: d2570bd789095d82442ff332beb36a5ddd998194
+          fetch-depth: 0
+          path: .frozen
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.23.3
+      - name: Verify protected master, controller identity and required approval environment
+        id: trust
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/master
+          test "$CA01_REF_PROTECTED" = true
+          test "$(git -C .harness rev-parse HEAD)" = "$GITHUB_SHA"
+          curl --fail --silent --show-error \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/environments/ca01-v170-native-qualification" \
+            > "$RUNNER_TEMP/ca01-environment.json"
+          node .harness/scripts/verify-ca01-v170-trust.mjs "$RUNNER_TEMP/ca01-environment.json" "$GITHUB_WORKSPACE/.harness"
+      - name: Verify exact source and dependency inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C .frozen rev-parse HEAD)" = "$CA01_FROZEN_SHA"
+          test "$(git -C .frozen rev-parse 'HEAD^{tree}')" = 977b67ce7327efd4760fdb54cee941f93754f71a
+          node .harness/scripts/verify-ca01-v170-inputs.mjs .harness/scripts/ca01-v170-common-harness.json "$GITHUB_WORKSPACE/.approved-base" "$GITHUB_WORKSPACE/.candidate" "$GITHUB_WORKSPACE/.harness" "$GITHUB_WORKSPACE/.frozen" "$CA01_CONTRACT_SHA256"
+          echo "qualification controller revision=$GITHUB_SHA; frozen target retained=$CA01_FROZEN_SHA"
+
+  approval-gate:
+    if: github.event_name == 'workflow_dispatch'
+    needs: [preflight, controller-tests]
+    runs-on: ubuntu-22.04
+    environment: ca01-v170-native-qualification
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          path: .harness
+      - name: Confirm approval gate used the verified environment configuration
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_OUTPUT: ${{ runner.temp }}/trust-output
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ needs.preflight.result }}" = success
+          test "${{ needs.controller-tests.result }}" = success
+          curl --fail --silent --show-error \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/environments/ca01-v170-native-qualification" \
+            > "$RUNNER_TEMP/ca01-environment.json"
+          node .harness/scripts/verify-ca01-v170-trust.mjs "$RUNNER_TEMP/ca01-environment.json" "$GITHUB_WORKSPACE/.harness"
+          grep -F "environment_rules_sha256=${{ needs.preflight.outputs.environment_rules_sha256 }}" "$RUNNER_TEMP/trust-output"
+
+  native-differential:
+    name: Common-harness ${{ matrix.target.platform }}-${{ matrix.target.arch }} Node ${{ matrix.node }}
+    needs: [preflight, controller-tests, approval-gate]
+    if: github.event_name == 'workflow_dispatch' && needs.preflight.result == 'success' && needs.controller-tests.result == 'success' && needs.approval-gate.result == 'success'
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - runner: macos-15
+            platform: darwin
+            arch: arm64
+          - runner: macos-15-intel
+            platform: darwin
+            arch: x64
+          - runner: ubuntu-22.04
+            platform: linux
+            arch: x64
+          - runner: windows-2022
+            platform: win32
+            arch: x64
+        node: ['22.23.3', '24.21.0']
+    runs-on: ${{ matrix.target.runner }}
+    timeout-minutes: 300
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          path: .harness
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 7520618fa68e378e6c480e8f6e2ce9c6ed73a476
+          fetch-depth: 0
+          path: .approved-base
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 0e49b3e1e50887b1e0fc800d26e8551ca6a22a38
+          fetch-depth: 0
+          path: .candidate
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: d2570bd789095d82442ff332beb36a5ddd998194
+          fetch-depth: 0
+          path: .frozen
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Verify workflow, revisions, runtime and dependency contract
+        shell: bash
+        env:
+          NODE_OPTIONS: ''
+          NODE_PATH: ''
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/master
+          test "$CA01_REF_PROTECTED" = true
+          test "$(git -C .harness rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git -C .frozen rev-parse HEAD)" = "$CA01_FROZEN_SHA"
+          test "$(git -C .frozen rev-parse 'HEAD^{tree}')" = 977b67ce7327efd4760fdb54cee941f93754f71a
+          node .harness/scripts/verify-ca01-v170-inputs.mjs .harness/scripts/ca01-v170-common-harness.json "$GITHUB_WORKSPACE/.approved-base" "$GITHUB_WORKSPACE/.candidate" "$GITHUB_WORKSPACE/.harness" "$GITHUB_WORKSPACE/.frozen" "$CA01_CONTRACT_SHA256"
+          node --input-type=module -e 'const allowed=new Set(["22.23.3","24.21.0"]);if(!allowed.has(process.versions.node))throw new Error("Unsupported Node runtime");if(!["darwin","linux","win32"].includes(process.platform)||((process.platform==="darwin")? !["arm64","x64"].includes(process.arch):process.arch!=="x64"))throw new Error("Unsupported native target");console.log(JSON.stringify({node:process.version,platform:process.platform,arch:process.arch,workflowSha:process.env.GITHUB_SHA,base:process.env.CA01_BASE_SHA,candidate:process.env.CA01_CANDIDATE_SHA,frozen:process.env.CA01_FROZEN_SHA}))'
+          corepack enable
+          corepack prepare pnpm@11.22.0 --activate
+          mkdir -p "$RUNNER_TEMP/ca01-evidence"
+      - name: Install and build exact frozen, approved-base and candidate trees
+        shell: bash
+        env:
+          NODE_OPTIONS: ''
+          NODE_PATH: ''
+        run: |
+          set -euo pipefail
+          for root in .frozen .approved-base .candidate; do
+            (cd "$root" && pnpm install --frozen-lockfile && pnpm build)
+          done
+      - name: Build candidate parser payload and share it with the compared source trees
+        shell: bash
+        env:
+          NODE_OPTIONS: ''
+          NODE_PATH: ''
+        run: |
+          set -euo pipefail
+          (cd .candidate && node scripts/parser-distribution.mjs prepare --build-missing)
+          mkdir -p .approved-base/vendor .frozen/vendor
+          cp -R .candidate/vendor/parsers .approved-base/vendor/parsers
+          cp -R .candidate/vendor/parsers .frozen/vendor/parsers
+          for root in .candidate .approved-base .frozen; do (cd "$root" && node scripts/parser-distribution.mjs verify --all-targets); done
+      - name: Require candidate focused contracts and legacy parity
+        shell: bash
+        env:
+          NODE_OPTIONS: ''
+          NODE_PATH: ''
+        run: |
+          set -euo pipefail
+          candidate="$GITHUB_WORKSPACE/.candidate"
+          loader=$(node -e 'const {createRequire}=require("node:module");const p=require("node:path");const r=createRequire(p.join(process.argv[1],"package.json"));console.log(require("node:fs").realpathSync(r.resolve("tsx/esm")))' "$candidate")
+          loader_url=$(node -e 'console.log(require("node:url").pathToFileURL(process.argv[1]).href)' "$loader")
+          (cd .candidate && node --import "$loader_url" --test test/ca01-mcp-response.test.ts test/ca01-response-budget.test.ts test/ca01-mcp-stdio.test.ts test/ca01-qualification.test.ts test/ca01-ci-regression.test.ts test/phase14g-mcp-response-efficiency.test.ts test/phase15e-mcp-metadata.test.ts > "$RUNNER_TEMP/ca01-evidence/focused.tap" 2>&1)
+          (cd .candidate && node --import "$loader_url" eval/mcp/legacy-parity.ts "$GITHUB_WORKSPACE/.approved-base" > "$RUNNER_TEMP/ca01-evidence/legacy-parity.log" 2>&1)
+          node --input-type=module -e 'import fs from "node:fs";if(!/^ok \d+ -/m.test(fs.readFileSync(process.argv[1],"utf8")))throw new Error("Focused test TAP missing passing records")' "$RUNNER_TEMP/ca01-evidence/focused.tap"
+      - name: Pack candidate and verify a clean native consumer
+        shell: bash
+        env:
+          NODE_OPTIONS: ''
+          NODE_PATH: ''
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ca01-evidence/package" .ca01-consumer
+          printf '%s\n' '{"name":"ca01-v170-consumer","private":true}' > .ca01-consumer/package.json
+          tarball=$(cd .candidate && npm pack --silent --pack-destination "$RUNNER_TEMP/ca01-evidence/package" | tail -n 1)
+          tarball="$RUNNER_TEMP/ca01-evidence/package/$tarball"
+          npm install --prefix .ca01-consumer --ignore-scripts --no-audit --no-fund "$tarball" > "$RUNNER_TEMP/ca01-evidence/consumer-install.log" 2>&1
+          node .candidate/scripts/ca01-packed-mcp-smoke.mjs .ca01-consumer "$RUNNER_TEMP/ca01-evidence/packed-mcp.json"
+          node --input-type=module -e 'import fs from "node:fs";import crypto from "node:crypto";const p=process.argv[1];fs.writeFileSync(process.argv[2],JSON.stringify({file:p,sha256:crypto.createHash("sha256").update(fs.readFileSync(p)).digest("hex")},null,2)+"\n")' "$tarball" "$RUNNER_TEMP/ca01-evidence/package-sha256.json"
+      - name: Capture full raw suites with one absolute loader and reporter
+        id: capture_suites
+        shell: bash
+        env:
+          NODE_OPTIONS: ''
+          NODE_PATH: ''
+        run: |
+          set -euo pipefail
+          runner="$GITHUB_WORKSPACE/.harness/scripts/run-ca01-qualified-suite.mjs"
+          candidate="$GITHUB_WORKSPACE/.candidate"
+          run_suite() {
+            root="$1"
+            label="$2"
+            mkdir -p "$root/node_modules/.bin"
+            chmod +x "$root/dist/cli.js"
+            if [[ "$RUNNER_OS" == Windows ]]; then
+              printf '%s\r\n' '@echo off' 'node "%~dp0..\..\dist\cli.js" %*' > "$root/node_modules/.bin/code-atlas.cmd"
+              cli="$root/node_modules/.bin/code-atlas.cmd"
+            else
+              ln -sf "$root/dist/cli.js" "$root/node_modules/.bin/code-atlas"
+              cli="$root/node_modules/.bin/code-atlas"
+            fi
+            PATH="$root/node_modules/.bin:$PATH" CODE_ATLAS_CLI="$cli" node "$runner" "$root" "$RUNNER_TEMP/ca01-evidence/$label" "$candidate"
+          }
+          run_suite "$GITHUB_WORKSPACE/.frozen" frozen
+          run_suite "$GITHUB_WORKSPACE/.approved-base" baseline
+          run_suite "$candidate" candidate
+      - name: Compare approved base with the explicit four source-verified relocations
+        shell: bash
+        env:
+          NODE_OPTIONS: ''
+          NODE_PATH: ''
+          CA01_COMPARISON_OUTPUT: ${{ runner.temp }}/ca01-evidence/common-harness-comparison.json
+        run: |
+          set -uo pipefail
+          status=0
+          node .harness/scripts/ca01-common-harness.mjs \
+            .harness/scripts/ca01-v170-common-harness.json \
+            "$RUNNER_TEMP/ca01-evidence/baseline" "$RUNNER_TEMP/ca01-evidence/candidate" \
+            "$GITHUB_WORKSPACE/.approved-base" "$GITHUB_WORKSPACE/.candidate" "$RUNNER_TEMP" "$CA01_CONTRACT_SHA256" \
+            > "$RUNNER_TEMP/ca01-evidence/common-harness.stdout" 2> "$RUNNER_TEMP/ca01-evidence/common-harness.stderr" || status=$?
+          echo "$status" > "$RUNNER_TEMP/ca01-evidence/common-harness.exit"
+          test "$status" -eq 0
+      - name: Preserve untouched frozen comparison as an independent strict failure report
+        if: ${{ !cancelled() && steps.capture_suites.outcome == 'success' }}
+        shell: bash
+        env:
+          NODE_OPTIONS: ''
+          NODE_PATH: ''
+        run: |
+          set -euo pipefail
+          status=0
+          node .frozen/scripts/compare-ca01-tests.mjs \
+            "$RUNNER_TEMP/ca01-evidence/frozen" "$RUNNER_TEMP/ca01-evidence/candidate" \
+            "$RUNNER_TEMP/ca01-evidence/frozen-strict-comparison.json" \
+            "$GITHUB_WORKSPACE/.frozen" "$GITHUB_WORKSPACE/.candidate" "$RUNNER_TEMP" \
+            > "$RUNNER_TEMP/ca01-evidence/frozen-strict.stdout" 2> "$RUNNER_TEMP/ca01-evidence/frozen-strict.stderr" || status=$?
+          echo "$status" > "$RUNNER_TEMP/ca01-evidence/frozen-strict.exit"
+          test "$status" -eq 1
+          node --input-type=module -e 'import fs from "node:fs";const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));if(p.differentialPass!==false)throw new Error("Frozen strict failure was not preserved");console.log(JSON.stringify({strictGreen:p.strictGreen,differentialPass:p.differentialPass,missing:p.missingTests.length,added:p.addedFailures.length,changed:p.changedFailures.length,skips:p.newSkips.length,todos:p.newTodos.length}))' "$RUNNER_TEMP/ca01-evidence/frozen-strict-comparison.json" >> "$GITHUB_STEP_SUMMARY"
+          node --input-type=module -e 'import fs from "node:fs";const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));const expected=[1060,1959,2809,3523].map((column,index)=>({file:"test/phase11k-closure.test.ts",line:1,column,nesting:0,name:["init indexes graph and lexical capabilities by default","init --no-index skips graph and lexical indexing","init preserves bootstrap when indexing fails and exits non-zero","init --no-index preserves an existing graph and lexical index"][index]}));if(JSON.stringify(p.missingTests)!==JSON.stringify(expected)||p.strictGreen.baseline!==false||p.strictGreen.candidate!==false||p.differentialPass!==false)throw new Error("Untouched frozen strict evidence differs from the four retained identity failures");if(p.newSkips.length||p.newTodos.length||p.baseline.cancelled||p.candidate.cancelled)throw new Error("Frozen strict report changed skip/todo/cancellation evidence")' "$RUNNER_TEMP/ca01-evidence/frozen-strict-comparison.json"
+      - name: Write hash-bound native cell receipt
+        if: ${{ always() && !cancelled() }}
+        shell: bash
+        env:
+          CA01_PLATFORM: ${{ matrix.target.platform }}
+          CA01_ARCH: ${{ matrix.target.arch }}
+          CA01_ENVIRONMENT_APPROVED: 'true'
+          CA01_ENVIRONMENT_RULES_SHA256: ${{ needs.preflight.outputs.environment_rules_sha256 }}
+          CA01_ENVIRONMENT_REVIEWERS_JSON: ${{ needs.preflight.outputs.environment_reviewers_json }}
+        run: node .harness/scripts/write-ca01-v170-receipt.mjs "$RUNNER_TEMP/ca01-evidence"
+      - name: Record separated qualification decisions
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/ca01-evidence"
+          node --input-type=module -e 'import fs from "node:fs";const dir=process.env.RUNNER_TEMP+"/ca01-evidence";let common=null,frozen=null;try{common=JSON.parse(fs.readFileSync(dir+"/common-harness-comparison.json"))}catch{}try{frozen=JSON.parse(fs.readFileSync(dir+"/frozen-strict-comparison.json"))}catch{}const out={workflowRevision:process.env.GITHUB_SHA,approvedBase:process.env.CA01_BASE_SHA,candidate:process.env.CA01_CANDIDATE_SHA,frozenTarget:process.env.CA01_FROZEN_SHA,commonHarness:{differentialPass:common?.differentialPass??null,strictGreen:common?.strictGreen??null,relocations:common?.relocations??null},untouchedFrozen:{differentialPass:frozen?.differentialPass??null,strictGreen:frozen?.strictGreen??null,missingTests:frozen?.missingTests??null},release:"NO-GO until strict gate and owner release decision"};fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,JSON.stringify(out,null,2)+"\n")'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: ca01-native-${{ matrix.target.platform }}-${{ matrix.target.arch }}-node${{ matrix.node }}
+          path: ${{ runner.temp }}/ca01-evidence/
+          include-hidden-files: true
+          if-no-files-found: warn
+          compression-level: 0
+
+  aggregate-native-receipts:
+    name: Receipt integrity (frozen strict gate remains NO-GO)
+    if: always() && github.event_name == 'workflow_dispatch'
+    needs: [preflight, controller-tests, approval-gate, native-differential]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          path: .harness
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.23.3
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: ca01-native-*
+          path: receipts
+      - name: Recheck protected master and live approval environment
+        id: trust
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_OUTPUT: ${{ runner.temp }}/trust-output
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ needs.preflight.result }}" = success
+          test "${{ needs.approval-gate.result }}" = success
+          test "${{ needs.native-differential.result }}" = success
+          curl --fail --silent --show-error \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/environments/ca01-v170-native-qualification" \
+            > "$RUNNER_TEMP/ca01-environment.json"
+          node .harness/scripts/verify-ca01-v170-trust.mjs "$RUNNER_TEMP/ca01-environment.json" "$GITHUB_WORKSPACE/.harness"
+          grep -F "environment_rules_sha256=${{ needs.preflight.outputs.environment_rules_sha256 }}" "$RUNNER_TEMP/trust-output"
+      - name: Fail closed unless all eight exact native receipts agree
+        env:
+          CA01_PREFLIGHT_RESULT: ${{ needs.preflight.result }}
+          CA01_CONTROLLER_TESTS_RESULT: ${{ needs.controller-tests.result }}
+          CA01_APPROVAL_GATE_RESULT: ${{ needs.approval-gate.result }}
+          CA01_MATRIX_RESULT: ${{ needs.native-differential.result }}
+          CA01_WORKFLOW_TREE: ${{ needs.preflight.outputs.workflow_tree }}
+          CA01_ENVIRONMENT_RULES_SHA256: ${{ needs.preflight.outputs.environment_rules_sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node .harness/scripts/aggregate-ca01-v170-receipts.mjs receipts > "$RUNNER_TEMP/aggregate-result.json"
+          cat "$RUNNER_TEMP/aggregate-result.json" >> "$GITHUB_STEP_SUMMARY"
