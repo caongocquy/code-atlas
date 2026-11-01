@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import process from "node:process";
 import path from "node:path";
 
 const [contractPath, baseRoot, candidateRoot, harnessRoot, frozenRoot, expectedContractSha] = process.argv.slice(2);

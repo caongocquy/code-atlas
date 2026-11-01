@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { readFileSync, realpathSync } from "node:fs";
+import process from "node:process";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { compareReports } from "./ca01-v170-compare-ca01-tests.mjs";

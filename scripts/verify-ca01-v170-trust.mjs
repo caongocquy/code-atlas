@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import process from "node:process";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
