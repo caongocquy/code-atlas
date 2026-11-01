@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { parseCodeSymbols } from "./parsers/code-parser.js";
-import { getRepoId, scanRepo } from "../repository/repository-files.js";
+import { getRepoId, repositoryRelativePath, scanRepo } from "../repository/repository-files.js";
 import { canonicalRepositoryPath } from "../repository/repository-identity.js";
 import {
   extractImports,
@@ -566,7 +566,7 @@ export async function buildCodeGraphWithResolution(
   const files = sourceFiles ?? await scanRepo(absoluteRepoPath);
 
   const relativeFiles = files.map((filePath) =>
-    path.relative(absoluteRepoPath, filePath),
+    repositoryRelativePath(absoluteRepoPath, filePath),
   );
 
   const fileSet = new Set(relativeFiles);
@@ -614,7 +614,7 @@ export async function buildCodeGraphWithResolution(
       continue;
     }
 
-    const relativePath = path.relative(absoluteRepoPath, filePath);
+    const relativePath = repositoryRelativePath(absoluteRepoPath, filePath);
 
     const fileNodeId = fileNodeIds.get(relativePath);
 
@@ -668,7 +668,7 @@ export async function buildCodeGraphWithResolution(
   //
 
   for (const filePath of files) {
-    const relativePath = path.relative(absoluteRepoPath, filePath);
+    const relativePath = repositoryRelativePath(absoluteRepoPath, filePath);
 
     const importerNodeId = fileNodeIds.get(relativePath);
 
@@ -715,7 +715,7 @@ export async function buildCodeGraphWithResolution(
   //
 
   for (const filePath of files) {
-    const relativePath = path.relative(absoluteRepoPath, filePath);
+    const relativePath = repositoryRelativePath(absoluteRepoPath, filePath);
 
     const source = await fs.readFile(filePath, "utf8");
 

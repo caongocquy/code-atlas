@@ -4,6 +4,17 @@ All notable changes to CodeAtlas are documented here.
 
 ## [Unreleased]
 
+## [1.7.0] - Unreleased
+
+### MCP context optimization
+
+- Add opt-in compact, focused, and full response modes with section and relation selection, bounded output, and generation-bound pagination. Existing requests keep their legacy response behavior.
+- Report truncation and continuation explicitly, while preserving retrieval order and evidence in qualified workloads. Token estimates are approximate.
+
+### CLI fixes
+
+- Allow reconnecting stale integrations through the integration picker.
+
 ## [1.6.3] - 2026-10-13
 
 ### CLI fixes

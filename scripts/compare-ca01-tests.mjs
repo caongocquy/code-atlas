@@ -29,6 +29,73 @@ function normalize(error, { root, tempRoot }) {
   return visit(error);
 }
 
+// Only this known assertion serializes CodeGraph values as JSON strings.
+// Keep the original errors in the report; canonicalize copies for comparison.
+function graphAssertion(error) {
+  const assertion = error?.cause ?? error;
+  if (assertion?.code !== "ERR_ASSERTION" || assertion.operator !== "strictEqual"
+    || assertion.generatedMessage !== true) return null;
+  try {
+    const graphs = [assertion.actual, assertion.expected].map(value => JSON.parse(value));
+    // Unknown UUID-bearing attributes may encode additional identity relations.
+    // Reject rather than let the generic error normalizer erase those relations.
+    const hasUuid = value => /\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/i.test(JSON.stringify(value));
+    const labels = new Map(), owners = new Map();
+    const stable = value => {
+      if (Array.isArray(value)) return value.map(stable);
+      if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort().map(key => [key, stable(value[key])]));
+      return value;
+    };
+    for (const graph of graphs) {
+      if (!graph || Object.keys(graph).sort().join() !== "edges,nodes"
+        || !Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) return null;
+      const ids = new Set();
+      for (const node of graph.nodes) {
+        if (!node || typeof node.id !== "string" || typeof node.file !== "string"
+          || typeof node.type !== "string" || typeof node.name !== "string" || ids.has(node.id)) return null;
+        ids.add(node.id);
+        const { id, ...attributes } = node;
+        if (hasUuid(attributes)) return null;
+        const label = JSON.stringify(stable(attributes));
+        if ((labels.has(id) && labels.get(id) !== label) || (owners.has(label) && owners.get(label) !== id)) return null;
+        labels.set(id, label); owners.set(label, id);
+      }
+      if (graph.edges.some(edge => !edge || !ids.has(edge.from) || !ids.has(edge.to) || typeof edge.type !== "string")) return null;
+      if (graph.edges.some(edge => {
+        const attributes = { ...edge };
+        delete attributes.from; delete attributes.to;
+        return hasUuid(attributes);
+      })) return null;
+    }
+    const canonical = graphs.map(graph => JSON.stringify({
+      nodes: graph.nodes.map(({ id }) => labels.get(id)).sort(),
+      edges: graph.edges.map(({ from, to, ...attributes }) => JSON.stringify(stable({ from: labels.get(from), to: labels.get(to), ...attributes }))).sort(),
+    }));
+    const copy = globalThis.structuredClone(error), target = copy.cause ?? copy;
+    [target.actual, target.expected] = canonical;
+    for (const item of new Set([copy, target])) {
+      if (typeof item.message !== "string" || !item.message.startsWith("Expected values to be strictly equal:")) return null;
+      const originalMessage = item.message;
+      item.message = "Expected values to be strictly equal: <graph assertion>";
+      if (typeof item.stack !== "string" || !item.stack.includes("Expected values to be strictly equal:")) return null;
+      const frames = item.stack.indexOf("\n    at ");
+      if (frames < 0 && !(item !== target && item.code === "ERR_TEST_FAILURE"
+        && item.stack === `Error [ERR_TEST_FAILURE]: ${originalMessage}`)) return null;
+      item.stack = item.stack.slice(0, item.stack.indexOf("Expected values")) + item.message + (frames < 0 ? "" : item.stack.slice(frames));
+    }
+    return copy;
+  } catch { return null; }
+}
+
+function errorsEquivalent(before, after, identity, locations) {
+  if (identity.file === "test/phase0-incremental.test.ts"
+    && identity.name === "incremental sync handles unchanged, one changed importer impact, deletion, and deterministic output") {
+    const a = graphAssertion(before), b = graphAssertion(after);
+    return Boolean(a && b && isDeepStrictEqual(normalize(a, locations.baseline), normalize(b, locations.candidate)));
+  }
+  return isDeepStrictEqual(normalize(before, locations.baseline), normalize(after, locations.candidate));
+}
+
 export function compareReports(baseline, candidate, locations) {
   const read = events => {
     const tests = new Map(), summary = {};
@@ -69,7 +136,7 @@ export function compareReports(baseline, candidate, locations) {
     if (after.todo && !before?.todo) newTodos.push(after.identity);
     if (after.type === "test:fail") {
       if (before?.type !== "test:fail") addedFailures.push(after);
-      else if (!isDeepStrictEqual(normalize(before.error, locations.baseline), normalize(after.error, locations.candidate))) changedFailures.push({ identity: after.identity, baseline: before.error, candidate: after.error });
+      else if (!errorsEquivalent(before.error, after.error, after.identity, locations)) changedFailures.push({ identity: after.identity, baseline: before.error, candidate: after.error });
       else equivalentFailures.push(after.identity);
     }
   }

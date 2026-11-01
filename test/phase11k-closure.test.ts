@@ -5,6 +5,7 @@ import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 
 import { getRepositoryStatus } from "../src/core/repository/repository-status.service.js";
@@ -19,7 +20,7 @@ async function fixture(name: string): Promise<string> {
 }
 
 async function runCli(repoPath: string, ...args: string[]): Promise<{ stdout: string; stderr: string }> {
-  return execFile(process.execPath, ["--import", tsxLoader, cliPath, ...args], {
+  return execFile(process.execPath, ["--import", pathToFileURL(tsxLoader).href, cliPath, ...args], {
     cwd: repoPath,
     env: { ...process.env, HOME: repoPath, NO_COLOR: "1" },
   });
