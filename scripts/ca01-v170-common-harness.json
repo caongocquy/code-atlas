@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "contractId": "ca01-v170-approved-base-common-harness",
+  "approval": {
+    "mode": "solo-owner-qualification",
+    "classification": "owner-approved"
+  },
+  "base": {
+    "commit": "7520618fa68e378e6c480e8f6e2ce9c6ed73a476",
+    "tree": "7faeaf7c2abb75b3b92a6f27926415221216238f",
+    "packageJsonSha256": "2266b5c0d871171594102940fc6f04c53efd487002b9ab639cd0f12d8cdda65b",
+    "packageVersion": "1.6.3"
+  },
+  "candidate": {
+    "commit": "0e49b3e1e50887b1e0fc800d26e8551ca6a22a38",
+    "tree": "30abfc47c051582979505e8f5f5f186a10a61d15",
+    "packageJsonSha256": "ddece8f1ddf0e8bdf1f7ea2eb36417f51b09609d254e20a295bf75d069cf7da6",
+    "packageVersion": "1.7.0"
+  },
+  "frozenTarget": {
+    "commit": "d2570bd789095d82442ff332beb36a5ddd998194",
+    "tree": "977b67ce7327efd4760fdb54cee941f93754f71a"
+  },
+  "dependencies": {
+    "pnpmVersion": "11.22.0",
+    "lockfileSha256": "e86976bc8b04aac60d1645b24d076b627e43cd15b3bf605e4bac09b490c4505b",
+    "parserSourcesSha256": "aaef99edbb76c320f89a2c54c6e8b2446cb14219c314a3539c79014636c820df",
+    "strictComparatorSha256": "24492d4cbaeff2ac90f5e91f93716c378d4fde973400199da8c0bacd8e589e76",
+    "packageName": "@showdar2112/code-atlas",
+    "allowedPackageJsonDifference": "root version field only"
+  },
+  "execution": {
+    "tsxVersion": "4.23.13",
+    "loaderSha256": "206f38b4bddcbc686dab39ff37df516eedfb1b2d58afbc3c47ea5b9417d3ad54"
+  },
+  "parser": {
+    "package": "@babel/core",
+    "version": "8.0.1"
+  },
+  "runtime": {
+    "nodes": ["22.23.3", "24.21.0"],
+    "targets": [
+      { "platform": "darwin", "arch": "arm64" },
+      { "platform": "darwin", "arch": "x64" },
+      { "platform": "linux", "arch": "x64" },
+      { "platform": "win32", "arch": "x64" }
+    ]
+  },
+  "requiredRelocationCount": 4,
+  "source": {
+    "path": "test/phase11k-closure.test.ts",
+    "baseSha256": "4d247d44264380b2dac2c01f3fadd2973551afed98fd7bd780c560485e3dcb22",
+    "candidateSha256": "551b12bf0de0e1dce6fedeaf6c02d8b39e4d9c6845743f7d46123acf94639f54",
+    "reviewedChangeDiffSha256": "3483e10aa4278b251f4f11eabd87e9c8e38093e586b5b8416bb9d754e5e9e2b6",
+    "reviewScope": "Add pathToFileURL import and pass its absolute file URL to execFile; complete registered call-expression bytes remain identical.",
+    "names": [
+      "init indexes graph and lexical capabilities by default",
+      "init --no-index skips graph and lexical indexing",
+      "init preserves bootstrap when indexing fails and exits non-zero",
+      "init --no-index preserves an existing graph and lexical index"
+    ],
+    "registrationSha256": {
+      "init indexes graph and lexical capabilities by default": "6b704b3e851164f139b52d0fead2f23c704cd239da995bce16ba54aaa13920fa",
+      "init --no-index skips graph and lexical indexing": "b777a6c41739601aabc648512a22a7912e9525dff73f8435f7f5aac5a0fd3c62",
+      "init preserves bootstrap when indexing fails and exits non-zero": "013daace96ffc492696a3a335b26748cf15adc5f89c9c59bd8fa65c1589b2bc3",
+      "init --no-index preserves an existing graph and lexical index": "1f2903bbce91f19aa517df7d0042aefa12dc9f2c08d1565ffaba7551ebe3690f"
+    }
+  },
+  "relocations": [
+    {
+      "from": { "file": "test/phase11k-closure.test.ts", "line": 1, "column": 1060, "nesting": 0, "name": "init indexes graph and lexical capabilities by default" },
+      "to": { "file": "test/phase11k-closure.test.ts", "line": 1, "column": 1116, "nesting": 0, "name": "init indexes graph and lexical capabilities by default" }
+    },
+    {
+      "from": { "file": "test/phase11k-closure.test.ts", "line": 1, "column": 1959, "nesting": 0, "name": "init --no-index skips graph and lexical indexing" },
+      "to": { "file": "test/phase11k-closure.test.ts", "line": 1, "column": 2015, "nesting": 0, "name": "init --no-index skips graph and lexical indexing" }
+    },
+    {
+      "from": { "file": "test/phase11k-closure.test.ts", "line": 1, "column": 2809, "nesting": 0, "name": "init preserves bootstrap when indexing fails and exits non-zero" },
+      "to": { "file": "test/phase11k-closure.test.ts", "line": 1, "column": 2865, "nesting": 0, "name": "init preserves bootstrap when indexing fails and exits non-zero" }
+    },
+    {
+      "from": { "file": "test/phase11k-closure.test.ts", "line": 1, "column": 3523, "nesting": 0, "name": "init --no-index preserves an existing graph and lexical index" },
+      "to": { "file": "test/phase11k-closure.test.ts", "line": 1, "column": 3579, "nesting": 0, "name": "init --no-index preserves an existing graph and lexical index" }
+    }
+  ],
+  "trustBoundary": "This contract is data, not an approval or signature. Solo-owner approval is operational evidence, not independent attestation. Qualification must run from the exact controller on protected master; G2, G3 and D16 remain blocked pending independent attestation."
+}
