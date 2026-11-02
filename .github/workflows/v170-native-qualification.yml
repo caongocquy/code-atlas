@@ -16,7 +16,7 @@ env:
   CA01_BASE_SHA: 7520618fa68e378e6c480e8f6e2ce9c6ed73a476
   CA01_CANDIDATE_SHA: 0e49b3e1e50887b1e0fc800d26e8551ca6a22a38
   CA01_FROZEN_SHA: d2570bd789095d82442ff332beb36a5ddd998194
-  CA01_CONTRACT_SHA256: 05cba612301e563e842eda1c92f3a05019ae0a930003b6c1504118c000221ff1
+  CA01_CONTRACT_SHA256: d35f63583d7d7cb0ee094c6c87903d326c19162d4b746172796ca135b96b1e64
   CA01_REF_PROTECTED: ${{ github.ref_protected }}
 
 jobs:
@@ -59,6 +59,10 @@ jobs:
     outputs:
       environment_rules_sha256: ${{ steps.trust.outputs.environment_rules_sha256 }}
       environment_reviewers_json: ${{ steps.trust.outputs.environment_reviewers_json }}
+      environment_id: ${{ steps.trust.outputs.environment_id }}
+      approval_mode: ${{ steps.trust.outputs.approval_mode }}
+      repository_owner_id: ${{ steps.trust.outputs.repository_owner_id }}
+      repository_owner_login: ${{ steps.trust.outputs.repository_owner_login }}
       workflow_tree: ${{ steps.trust.outputs.workflow_tree }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -100,7 +104,13 @@ jobs:
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/environments/ca01-v170-native-qualification" \
             > "$RUNNER_TEMP/ca01-environment.json"
-          node .harness/scripts/verify-ca01-v170-trust.mjs "$RUNNER_TEMP/ca01-environment.json" "$GITHUB_WORKSPACE/.harness"
+          curl --fail --silent --show-error \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY" \
+            > "$RUNNER_TEMP/ca01-repository.json"
+          node .harness/scripts/verify-ca01-v170-trust.mjs "$RUNNER_TEMP/ca01-environment.json" "$GITHUB_WORKSPACE/.harness" "$RUNNER_TEMP/ca01-repository.json"
       - name: Verify exact source and dependency inputs
         shell: bash
         run: |
@@ -139,8 +149,17 @@ jobs:
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/environments/ca01-v170-native-qualification" \
             > "$RUNNER_TEMP/ca01-environment.json"
-          node .harness/scripts/verify-ca01-v170-trust.mjs "$RUNNER_TEMP/ca01-environment.json" "$GITHUB_WORKSPACE/.harness"
+          curl --fail --silent --show-error \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY" \
+            > "$RUNNER_TEMP/ca01-repository.json"
+          node .harness/scripts/verify-ca01-v170-trust.mjs "$RUNNER_TEMP/ca01-environment.json" "$GITHUB_WORKSPACE/.harness" "$RUNNER_TEMP/ca01-repository.json"
           grep -F "environment_rules_sha256=${{ needs.preflight.outputs.environment_rules_sha256 }}" "$RUNNER_TEMP/trust-output"
+          grep -F "repository_owner_id=${{ needs.preflight.outputs.repository_owner_id }}" "$RUNNER_TEMP/trust-output"
+          grep -F "repository_owner_login=${{ needs.preflight.outputs.repository_owner_login }}" "$RUNNER_TEMP/trust-output"
+          grep -F "approval_mode=solo-owner-qualification" "$RUNNER_TEMP/trust-output"
 
   native-differential:
     name: Common-harness ${{ matrix.target.platform }}-${{ matrix.target.arch }} Node ${{ matrix.node }}
@@ -323,12 +342,26 @@ jobs:
         if: ${{ always() && !cancelled() }}
         shell: bash
         env:
+          GH_TOKEN: ${{ github.token }}
           CA01_PLATFORM: ${{ matrix.target.platform }}
           CA01_ARCH: ${{ matrix.target.arch }}
           CA01_ENVIRONMENT_APPROVED: 'true'
           CA01_ENVIRONMENT_RULES_SHA256: ${{ needs.preflight.outputs.environment_rules_sha256 }}
           CA01_ENVIRONMENT_REVIEWERS_JSON: ${{ needs.preflight.outputs.environment_reviewers_json }}
-        run: node .harness/scripts/write-ca01-v170-receipt.mjs "$RUNNER_TEMP/ca01-evidence"
+          CA01_ENVIRONMENT_ID: ${{ needs.preflight.outputs.environment_id }}
+          CA01_APPROVAL_MODE: ${{ needs.preflight.outputs.approval_mode }}
+          CA01_REPOSITORY_OWNER_ID: ${{ needs.preflight.outputs.repository_owner_id }}
+          CA01_REPOSITORY_OWNER_LOGIN: ${{ needs.preflight.outputs.repository_owner_login }}
+          CA01_APPROVAL_HISTORY_PATH: ${{ runner.temp }}/ca01-approval-history.json
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/approvals" \
+            > "$CA01_APPROVAL_HISTORY_PATH"
+          node .harness/scripts/write-ca01-v170-receipt.mjs "$RUNNER_TEMP/ca01-evidence"
       - name: Record separated qualification decisions
         if: always()
         shell: bash
@@ -382,8 +415,18 @@ jobs:
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/environments/ca01-v170-native-qualification" \
             > "$RUNNER_TEMP/ca01-environment.json"
-          node .harness/scripts/verify-ca01-v170-trust.mjs "$RUNNER_TEMP/ca01-environment.json" "$GITHUB_WORKSPACE/.harness"
+          curl --fail --silent --show-error \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY" \
+            > "$RUNNER_TEMP/ca01-repository.json"
+          node .harness/scripts/verify-ca01-v170-trust.mjs "$RUNNER_TEMP/ca01-environment.json" "$GITHUB_WORKSPACE/.harness" "$RUNNER_TEMP/ca01-repository.json"
           grep -F "environment_rules_sha256=${{ needs.preflight.outputs.environment_rules_sha256 }}" "$RUNNER_TEMP/trust-output"
+          grep -F "repository_owner_id=${{ needs.preflight.outputs.repository_owner_id }}" "$RUNNER_TEMP/trust-output"
+          grep -F "repository_owner_login=${{ needs.preflight.outputs.repository_owner_login }}" "$RUNNER_TEMP/trust-output"
+          grep -F "environment_id=${{ needs.preflight.outputs.environment_id }}" "$RUNNER_TEMP/trust-output"
+          grep -F "approval_mode=solo-owner-qualification" "$RUNNER_TEMP/trust-output"
       - name: Fail closed unless all eight exact native receipts agree
         env:
           CA01_PREFLIGHT_RESULT: ${{ needs.preflight.result }}
@@ -392,6 +435,10 @@ jobs:
           CA01_MATRIX_RESULT: ${{ needs.native-differential.result }}
           CA01_WORKFLOW_TREE: ${{ needs.preflight.outputs.workflow_tree }}
           CA01_ENVIRONMENT_RULES_SHA256: ${{ needs.preflight.outputs.environment_rules_sha256 }}
+          CA01_ENVIRONMENT_ID: ${{ needs.preflight.outputs.environment_id }}
+          CA01_APPROVAL_MODE: ${{ needs.preflight.outputs.approval_mode }}
+          CA01_REPOSITORY_OWNER_ID: ${{ needs.preflight.outputs.repository_owner_id }}
+          CA01_REPOSITORY_OWNER_LOGIN: ${{ needs.preflight.outputs.repository_owner_login }}
         shell: bash
         run: |
           set -euo pipefail

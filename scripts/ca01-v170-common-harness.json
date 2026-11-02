@@ -1,6 +1,10 @@
 {
   "schemaVersion": 1,
   "contractId": "ca01-v170-approved-base-common-harness",
+  "approval": {
+    "mode": "solo-owner-qualification",
+    "classification": "owner-approved"
+  },
   "base": {
     "commit": "7520618fa68e378e6c480e8f6e2ce9c6ed73a476",
     "tree": "7faeaf7c2abb75b3b92a6f27926415221216238f",
@@ -80,5 +84,5 @@
       "to": { "file": "test/phase11k-closure.test.ts", "line": 1, "column": 3579, "nesting": 0, "name": "init --no-index preserves an existing graph and lexical index" }
     }
   ],
-  "trustBoundary": "This contract is data, not an approval or signature. Qualification must run from a reviewed workflow on protected master; external branch/environment protections must be verified before treating it as authorized."
+  "trustBoundary": "This contract is data, not an approval or signature. Solo-owner approval is operational evidence, not independent attestation. Qualification must run from the exact controller on protected master; G2, G3 and D16 remain blocked pending independent attestation."
 }

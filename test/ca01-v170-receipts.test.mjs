@@ -9,7 +9,7 @@ import process from "node:process";
 import test from "node:test";
 
 import { aggregateReceipts, evidenceFiles } from "../scripts/aggregate-ca01-v170-receipts.mjs";
-import { verifyApprovalEnvironment, verifyTrustedRun } from "../scripts/verify-ca01-v170-trust.mjs";
+import { verifyApprovalEnvironment, verifyOwnerApproval, verifyRepositoryOwner, verifyTrustedRun } from "../scripts/verify-ca01-v170-trust.mjs";
 
 const sha256 = value => createHash("sha256").update(value).digest("hex");
 const revisions = {
@@ -28,6 +28,9 @@ const frozenMissing = [
   [2809, "init preserves bootstrap when indexing fails and exits non-zero"],
   [3523, "init --no-index preserves an existing graph and lexical index"],
 ].map(([column, name]) => ({ file: "test/phase11k-closure.test.ts", line: 1, column, nesting: 0, name }));
+const owner = { id: 123, login: "release-owner" };
+const ownerUser = { ...owner, type: "User" };
+const environmentId = 456;
 
 function summary(overrides = {}) {
   return { tests: 1485, pass: 1436, fail: 49, cancelled: 0, skipped: 0, todo: 0, ...overrides };
@@ -102,9 +105,17 @@ async function fixture(t) {
       schemaVersion: 1, artifactName: artifact,
       target: { ...cell }, runId: "1001", runAttempt: "1", workflowRevision: "a".repeat(40), workflowTree: "b".repeat(40),
       ref: "refs/heads/master", refProtected: true,
-      environment: { name: "ca01-v170-native-qualification", requiredReviewers: ["release-reviewers"], approved: true, rulesSha256: "4".repeat(64) },
+      approval: { mode: "solo-owner-qualification", classification: "owner-approved", ownerId: owner.id, reviewerId: owner.id },
+      environment: { name: "ca01-v170-native-qualification", id: environmentId, mode: "solo-owner-qualification", requiredReviewers: [`User:${owner.id}`], preventSelfReview: false, approved: true, rulesSha256: "4".repeat(64) },
       revisions, contractSha256: "5".repeat(64), processes: processResults, files: fileHashes,
     };
+    const ownerApproval = {
+      schemaVersion: 1, mode: "solo-owner-qualification", classification: "owner-approved", runId: "1001",
+      environment: { id: environmentId, name: "ca01-v170-native-qualification" }, owner, reviewer: owner,
+    };
+    const ownerApprovalBytes = Buffer.from(JSON.stringify(ownerApproval, null, 2) + "\n");
+    await writeFile(path.join(dir, "owner-approval.json"), ownerApprovalBytes);
+    receipt.files["owner-approval.json"] = sha256(ownerApprovalBytes);
     await writeFile(path.join(dir, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
   }
   return { root, cells, frozenMissing };
@@ -113,8 +124,9 @@ async function fixture(t) {
 const expected = Object.freeze({
   runId: "1001", runAttempt: "1", workflowRevision: "a".repeat(40), workflowTree: "b".repeat(40),
   ref: "refs/heads/master", refProtected: true, environmentName: "ca01-v170-native-qualification",
-  environmentRulesSha256: "4".repeat(64), contractSha256: "5".repeat(64), revisions,
-  contract: { execution: { loaderSha256: "2".repeat(64), tsxVersion: "4.23.13" },
+  environmentRulesSha256: "4".repeat(64), environmentId, approvalMode: "solo-owner-qualification", ownerId: owner.id,
+  ownerLogin: owner.login, contractSha256: "5".repeat(64), revisions,
+  contract: { approval: { mode: "solo-owner-qualification", classification: "owner-approved" }, execution: { loaderSha256: "2".repeat(64), tsxVersion: "4.23.13" },
     dependencies: { pnpmVersion: "11.22.0", lockfileSha256: "3".repeat(64) } },
   preflightResult: "success", matrixResult: "success",
   controllerTestsResult: "success",
@@ -133,6 +145,8 @@ test("aggregates exactly eight native receipts and preserves only the four froze
   assert.equal(result.receipts, 8);
   assert.equal(result.trustVerified, true);
   assert.equal(result.qualificationPass, false);
+  assert.equal(result.approvalClassification, "owner-approved");
+  assert.deepEqual(result.separateAttestationGates, { G2: "BLOCKED", G3: "BLOCKED", D16: "BLOCKED" });
   assert.equal(result.cells.length, 8);
   assert.ok(result.cells.every(cell => cell.commonDifferentialPass));
   assert.deepEqual(result.frozenMissingIdentities, f.frozenMissing);
@@ -172,6 +186,27 @@ test("digest, workflow, runtime, and approval mismatches are rejected", async t 
   receipt.environment.requiredReviewers = [];
   await writeFile(receiptPath, JSON.stringify(receipt, null, 2) + "\n");
   assert.throws(() => aggregateReceipts(f.root, expected), /reviewer/i);
+});
+
+test("owner approval classification and reviewer evidence cannot be relabeled or substituted", async t => {
+  const f = await fixture(t);
+  const dir = path.join(f.root, "ca01-native-darwin-arm64-node22.23.3");
+  const receiptPath = path.join(dir, "receipt.json");
+  const receipt = JSON.parse(await import("node:fs/promises").then(fs => fs.readFile(receiptPath, "utf8")));
+  receipt.approval.classification = "independently-reviewed";
+  await writeFile(receiptPath, JSON.stringify(receipt, null, 2) + "\n");
+  assert.throws(() => aggregateReceipts(f.root, expected), /owner approval receipt mismatch/i);
+
+  receipt.approval.classification = "owner-approved";
+  await writeFile(receiptPath, JSON.stringify(receipt, null, 2) + "\n");
+  const approvalPath = path.join(dir, "owner-approval.json");
+  const approval = JSON.parse(await import("node:fs/promises").then(fs => fs.readFile(approvalPath, "utf8")));
+  approval.reviewer.id = 999;
+  const approvalBytes = Buffer.from(JSON.stringify(approval, null, 2) + "\n");
+  await writeFile(approvalPath, approvalBytes);
+  receipt.files["owner-approval.json"] = sha256(approvalBytes);
+  await writeFile(receiptPath, JSON.stringify(receipt, null, 2) + "\n");
+  assert.throws(() => aggregateReceipts(f.root, expected), /owner approval evidence mismatch/i);
 });
 
 test("unexpected frozen added, changed, skipped, todo, or missing identities block", async t => {
@@ -270,20 +305,53 @@ test("abnormal process termination remains blocking even with updated evidence h
 });
 
 test("approval environment must exist and have unique required reviewers", () => {
-  const payload = { name: "ca01-v170-native-qualification", protection_rules: [{ type: "required_reviewers", prevent_self_review: true,
-    reviewers: [{ type: "User", reviewer: { id: 123, login: "release-owner" } }] }] };
+  const payload = { id: environmentId, name: "ca01-v170-native-qualification", protection_rules: [{ type: "required_reviewers", prevent_self_review: true,
+    reviewers: [{ type: "User", reviewer: { id: 123, login: owner.login } }] }] };
   const verified = verifyApprovalEnvironment(payload);
   assert.deepEqual(verified.reviewers, ["User:123"]);
+  assert.equal(verified.mode, "independent-review");
   assert.match(verified.rulesSha256, /^[a-f0-9]{64}$/);
   assert.notEqual(verifyApprovalEnvironment({ ...payload, protection_rules: [...payload.protection_rules, { type: "wait_timer", wait_timer: 30 }] }).rulesSha256,
     verified.rulesSha256, "all environment protection rules are bound into the approval metadata");
-  assert.throws(() => verifyApprovalEnvironment({ name: payload.name, protection_rules: [] }), /required reviewer/i);
-  assert.throws(() => verifyApprovalEnvironment({ name: payload.name, protection_rules: [{ type: "required_reviewers", reviewers: [] }] }), /required reviewer/i);
-  assert.throws(() => verifyApprovalEnvironment({ name: payload.name, protection_rules: [{ type: "required_reviewers", prevent_self_review: false,
+  assert.throws(() => verifyApprovalEnvironment({ id: environmentId, name: payload.name, protection_rules: [] }), /required reviewer/i);
+  assert.throws(() => verifyApprovalEnvironment({ id: environmentId, name: payload.name, protection_rules: [{ type: "required_reviewers", reviewers: [] }] }), /required reviewer/i);
+  assert.throws(() => verifyApprovalEnvironment({ id: environmentId, name: payload.name, protection_rules: [{ type: "required_reviewers", prevent_self_review: false,
     reviewers: [{ type: "User", reviewer: { id: 123 } }] }] }), /self-review/i);
-  assert.throws(() => verifyApprovalEnvironment({ name: payload.name, protection_rules: [{ type: "required_reviewers", reviewers: [
+  assert.throws(() => verifyApprovalEnvironment({ id: environmentId, name: payload.name, protection_rules: [{ type: "required_reviewers", reviewers: [
     { type: "User", reviewer: { id: 123 } }, { type: "User", reviewer: { id: 123 } },
   ] }] }), /duplicate/i);
+});
+
+test("solo-owner mode requires the repository owner as the only reviewer and permits self-review", () => {
+  const payload = { id: environmentId, name: "ca01-v170-native-qualification", protection_rules: [{ type: "required_reviewers",
+    prevent_self_review: false, reviewers: [{ type: "User", reviewer: owner }] }] };
+  const verified = verifyApprovalEnvironment(payload, { mode: "solo-owner-qualification", ownerId: owner.id, ownerLogin: owner.login });
+  assert.deepEqual(verified.reviewers, [`User:${owner.id}`]);
+  assert.equal(verified.mode, "solo-owner-qualification");
+  assert.equal(verified.environmentId, environmentId);
+  const independentPayload = { ...payload, protection_rules: [{ ...payload.protection_rules[0], prevent_self_review: true }] };
+  assert.notEqual(verified.rulesSha256, verifyApprovalEnvironment(independentPayload).rulesSha256);
+  assert.throws(() => verifyApprovalEnvironment({ ...payload, protection_rules: [{ ...payload.protection_rules[0], reviewers: [{ type: "Team", reviewer: { id: owner.id } }] }] }, { mode: "solo-owner-qualification", ownerId: owner.id, ownerLogin: owner.login }), /only reviewer/i);
+  assert.throws(() => verifyApprovalEnvironment({ ...payload, protection_rules: [{ ...payload.protection_rules[0], reviewers: [{ type: "User", reviewer: { id: 999, login: "other" } }] }] }, { mode: "solo-owner-qualification", ownerId: owner.id, ownerLogin: owner.login }), /only reviewer/i);
+  assert.throws(() => verifyApprovalEnvironment(payload, { mode: "unknown", ownerId: owner.id, ownerLogin: owner.login }), /unsupported/i);
+});
+
+test("approval history must show one approved record for the exact environment and repository owner", () => {
+  const approval = { state: "approved", user: ownerUser, environments: [{ id: environmentId, name: "ca01-v170-native-qualification" }] };
+  const verified = verifyOwnerApproval([approval], { runId: "1001", environmentId, environmentName: "ca01-v170-native-qualification", ownerId: owner.id, ownerLogin: owner.login });
+  assert.equal(verified.classification, "owner-approved");
+  assert.equal(verified.mode, "solo-owner-qualification");
+  assert.throws(() => verifyOwnerApproval([{ ...approval, user: { id: 999, login: "other" } }], { runId: "1001", environmentId, environmentName: "ca01-v170-native-qualification", ownerId: owner.id, ownerLogin: owner.login }), /repository owner/i);
+  assert.throws(() => verifyOwnerApproval([{ ...approval, state: "rejected" }], { runId: "1001", environmentId, environmentName: "ca01-v170-native-qualification", ownerId: owner.id, ownerLogin: owner.login }), /repository owner/i);
+  assert.throws(() => verifyOwnerApproval([approval, approval], { runId: "1001", environmentId, environmentName: "ca01-v170-native-qualification", ownerId: owner.id, ownerLogin: owner.login }), /one approval record/i);
+  assert.throws(() => verifyOwnerApproval([{ ...approval, environments: [...approval.environments, ...approval.environments] }], { runId: "1001", environmentId, environmentName: "ca01-v170-native-qualification", ownerId: owner.id, ownerLogin: owner.login }), /one approval record/i);
+  assert.throws(() => verifyOwnerApproval([{ ...approval, environments: [{ id: 999, name: "other" }] }], { runId: "1001", environmentId, environmentName: "ca01-v170-native-qualification", ownerId: owner.id, ownerLogin: owner.login }), /one approval record/i);
+});
+
+test("solo-owner identity must come from a user-owned repository", () => {
+  assert.deepEqual(verifyRepositoryOwner({ owner: ownerUser }, owner.login), owner);
+  assert.throws(() => verifyRepositoryOwner({ owner: { ...ownerUser, type: "Organization" } }, owner.login), /repository owner/i);
+  assert.throws(() => verifyRepositoryOwner({ owner: ownerUser }, "different-owner"), /repository owner/i);
 });
 
 test("qualification trust requires the exact protected master controller revision", () => {
@@ -309,12 +377,19 @@ test("receipt writer binds every evidence file to protected-run metadata", async
   const contractBytes = await readFile("scripts/ca01-v170-common-harness.json");
   const contractSha = sha256(contractBytes);
   const contract = JSON.parse(contractBytes);
+  const approvalHistoryRoot = await mkdtemp(path.join(os.tmpdir(), "ca01-v170-approval-history-"));
+  t.after(() => rm(approvalHistoryRoot, { recursive: true, force: true }));
+  const approvalHistoryPath = path.join(approvalHistoryRoot, "approval-history.json");
+  await writeFile(approvalHistoryPath, JSON.stringify([{ state: "approved", user: ownerUser, environments: [{ id: environmentId, name: "ca01-v170-native-qualification" }] }]));
   const reviewers = ["User:123"];
   const run = spawnSync(process.execPath, ["scripts/write-ca01-v170-receipt.mjs", root], { encoding: "utf8", env: {
     ...process.env, GITHUB_REF: "refs/heads/master", GITHUB_SHA: head, GITHUB_RUN_ID: "1001", GITHUB_RUN_ATTEMPT: "1",
     CA01_REF_PROTECTED: "true", CA01_CONTRACT_SHA256: contractSha, CA01_PLATFORM: process.platform,
     CA01_ARCH: process.arch, CA01_ENVIRONMENT_APPROVED: "true", CA01_ENVIRONMENT_RULES_SHA256: "4".repeat(64),
     CA01_ENVIRONMENT_REVIEWERS_JSON: JSON.stringify(reviewers),
+    CA01_ENVIRONMENT_ID: String(environmentId), CA01_APPROVAL_MODE: contract.approval.mode,
+    CA01_REPOSITORY_OWNER_ID: String(owner.id), CA01_REPOSITORY_OWNER_LOGIN: owner.login,
+    CA01_APPROVAL_HISTORY_PATH: approvalHistoryPath,
   } });
   if (!contract.runtime.nodes.includes(process.versions.node)) {
     assert.notEqual(run.status, 0);
@@ -327,6 +402,10 @@ test("receipt writer binds every evidence file to protected-run metadata", async
   assert.equal(receipt.workflowTree, tree);
   assert.equal(receipt.refProtected, true);
   assert.equal(receipt.environment.approved, true);
+  assert.equal(receipt.approval.classification, "owner-approved");
+  assert.equal(receipt.approval.mode, "solo-owner-qualification");
+  assert.equal(receipt.approval.reviewerId, owner.id);
+  assert.equal(JSON.parse(await readFile(path.join(root, "owner-approval.json"), "utf8")).classification, "owner-approved");
   assert.deepEqual(Object.keys(receipt.files).sort(), [...evidenceFiles].sort());
   assert.equal(receipt.artifactName, `ca01-native-${process.platform}-${process.arch}-node${process.versions.node}`);
 });

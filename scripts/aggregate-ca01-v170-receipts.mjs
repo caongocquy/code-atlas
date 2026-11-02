@@ -10,6 +10,7 @@ const targets = [
   { platform: "linux", arch: "x64" }, { platform: "win32", arch: "x64" },
 ];
 export const evidenceFiles = [
+  "owner-approval.json",
   "baseline.jsonl", "baseline.process.json", "baseline.stderr",
   "candidate.jsonl", "candidate.process.json", "candidate.stderr",
   "frozen.jsonl", "frozen.process.json", "frozen.stderr",
@@ -113,7 +114,7 @@ function validateCell(dir, artifactName, expected) {
   if (required.some(name => !actualFiles.includes(name))) fail(`Incomplete ${artifactName} evidence inventory`);
   const receipt = readJson(receiptPath);
   exactKeys(receipt, ["schemaVersion", "artifactName", "target", "runId", "runAttempt", "workflowRevision", "workflowTree",
-    "ref", "refProtected", "environment", "revisions", "contractSha256", "processes", "files"], `${artifactName} receipt`);
+    "ref", "refProtected", "approval", "environment", "revisions", "contractSha256", "processes", "files"], `${artifactName} receipt`);
   if (receipt.schemaVersion !== 1 || receipt.artifactName !== artifactName) fail(`Invalid ${artifactName} receipt identity`);
   const target = { ...receipt.target };
   if (target.node !== expected.node || artifactName !== `ca01-native-${target.platform}-${target.arch}-node${target.node}`) fail(`Artifact name/tuple mismatch: ${artifactName}`);
@@ -121,11 +122,26 @@ function validateCell(dir, artifactName, expected) {
   if (receipt.workflowRevision !== expected.workflowRevision || receipt.workflowTree !== expected.workflowTree) fail(`Workflow revision mismatch: ${artifactName}`);
   if (receipt.ref !== "refs/heads/master" || receipt.ref !== expected.ref || receipt.refProtected !== true || expected.refProtected !== true) fail(`Unprotected or unexpected qualification ref: ${artifactName}`);
   if (receipt.contractSha256 !== expected.contractSha256) fail(`Contract digest mismatch: ${artifactName}`);
-  exactKeys(receipt.environment, ["name", "requiredReviewers", "approved", "rulesSha256"], `${artifactName} environment`);
+  exactKeys(receipt.approval, ["mode", "classification", "ownerId", "reviewerId"], `${artifactName} owner approval`);
+  exactKeys(receipt.environment, ["name", "id", "mode", "requiredReviewers", "preventSelfReview", "approved", "rulesSha256"], `${artifactName} environment`);
   if (receipt.environment.name !== expected.environmentName || receipt.environment.approved !== true
-    || !Array.isArray(receipt.environment.requiredReviewers) || receipt.environment.requiredReviewers.length === 0
-    || receipt.environment.requiredReviewers.some(value => typeof value !== "string" || !value.trim())
+    || receipt.environment.id !== expected.environmentId || receipt.environment.mode !== expected.approvalMode
+    || receipt.environment.preventSelfReview !== false
+    || !Array.isArray(receipt.environment.requiredReviewers) || receipt.environment.requiredReviewers.length !== 1
+    || receipt.environment.requiredReviewers[0] !== `User:${expected.ownerId}`
     || receipt.environment.rulesSha256 !== expected.environmentRulesSha256) fail(`Required reviewer environment is not verified: ${artifactName}`);
+  const ownerApproval = readJson(path.join(dir, "owner-approval.json"));
+  exactKeys(ownerApproval, ["schemaVersion", "mode", "classification", "runId", "environment", "owner", "reviewer"], `${artifactName} owner approval evidence`);
+  exactKeys(ownerApproval.environment, ["id", "name"], `${artifactName} approval environment`);
+  exactKeys(ownerApproval.owner, ["id", "login"], `${artifactName} approval owner`);
+  exactKeys(ownerApproval.reviewer, ["id", "login"], `${artifactName} approval reviewer`);
+  if (ownerApproval.schemaVersion !== 1 || ownerApproval.mode !== "solo-owner-qualification"
+    || ownerApproval.classification !== "owner-approved" || ownerApproval.runId !== String(expected.runId)
+    || ownerApproval.environment.id !== expected.environmentId || ownerApproval.environment.name !== expected.environmentName
+    || ownerApproval.owner.id !== expected.ownerId || ownerApproval.reviewer.id !== expected.ownerId
+    || ownerApproval.owner.login !== expected.ownerLogin || ownerApproval.reviewer.login !== expected.ownerLogin) fail(`Owner approval evidence mismatch: ${artifactName}`);
+  if (receipt.approval.mode !== ownerApproval.mode || receipt.approval.classification !== "owner-approved"
+    || receipt.approval.ownerId !== expected.ownerId || receipt.approval.reviewerId !== expected.ownerId) fail(`Owner approval receipt mismatch: ${artifactName}`);
   equalJson(receipt.revisions, expected.revisions, `${artifactName} source revisions`);
   exactKeys(receipt.target, ["platform", "arch", "node"], `${artifactName} tuple`);
   if (!receipt.files || typeof receipt.files !== "object" || Array.isArray(receipt.files)) fail(`Invalid ${artifactName} file hashes`);
@@ -182,6 +198,11 @@ function validateCell(dir, artifactName, expected) {
 export function aggregateReceipts(root, expected) {
   if (!expected || expected.ref !== "refs/heads/master" || expected.refProtected !== true
     || expected.environmentName !== "ca01-v170-native-qualification"
+    || expected.approvalMode !== "solo-owner-qualification" || !expected.ownerLogin
+    || expected.ownerId !== Number(expected.ownerId)
+    || !Number.isSafeInteger(expected.ownerId) || expected.ownerId <= 0 || !Number.isSafeInteger(expected.environmentId) || expected.environmentId <= 0
+    || expected.contract?.approval?.mode !== "solo-owner-qualification"
+    || expected.contract?.approval?.classification !== "owner-approved"
     || !/^[a-f0-9]{40}$/.test(expected.workflowRevision ?? "") || !/^[a-f0-9]{40}$/.test(expected.workflowTree ?? "")
     || !/^[a-f0-9]{64}$/.test(expected.contractSha256 ?? "") || !/^[a-f0-9]{64}$/.test(expected.environmentRulesSha256 ?? "")
     || !expected.runId || !expected.runAttempt || !expected.contract || !expected.revisions
@@ -207,6 +228,8 @@ export function aggregateReceipts(root, expected) {
     commonDifferentialPass: true,
     frozenStrictOutcome: "EXPECTED_FAIL_WITH_FOUR_MISSING_IDENTITIES",
     qualificationPass: false,
+    approvalClassification: "owner-approved",
+    separateAttestationGates: { G2: "BLOCKED", G3: "BLOCKED", D16: "BLOCKED" },
     cells,
     frozenMissingIdentities: frozenMissing,
   };
@@ -226,6 +249,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     workflowRevision: process.env.GITHUB_SHA, workflowTree: process.env.CA01_WORKFLOW_TREE,
     ref: process.env.GITHUB_REF, refProtected: process.env.CA01_REF_PROTECTED === "true",
     environmentName: "ca01-v170-native-qualification", environmentRulesSha256: process.env.CA01_ENVIRONMENT_RULES_SHA256,
+    environmentId: Number(process.env.CA01_ENVIRONMENT_ID), approvalMode: contract.approval?.mode,
+    ownerId: Number(process.env.CA01_REPOSITORY_OWNER_ID), ownerLogin: process.env.CA01_REPOSITORY_OWNER_LOGIN,
     contractSha256, contract, preflightResult: process.env.CA01_PREFLIGHT_RESULT, matrixResult: process.env.CA01_MATRIX_RESULT,
     controllerTestsResult: process.env.CA01_CONTROLLER_TESTS_RESULT,
     approvalGateResult: process.env.CA01_APPROVAL_GATE_RESULT,

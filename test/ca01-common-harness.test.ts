@@ -113,6 +113,11 @@ test("v1.7.0 workflow pins the eight native cells and preserves the frozen gate"
   assert.match(text, /github\.ref_protected/);
   assert.match(text, /environments\/ca01-v170-native-qualification/);
   assert.match(text, /environment_reviewers_json/);
+  assert.match(text, /solo-owner-qualification/);
+  assert.match(text, /actions\/runs\/\$GITHUB_RUN_ID\/approvals/);
+  assert.match(readFileSync("scripts/verify-ca01-v170-trust.mjs", "utf8"), /classification: "owner-approved"/);
+  assert.deepEqual(JSON.parse(readFileSync("scripts/ca01-v170-common-harness.json", "utf8")).approval,
+    { mode: "solo-owner-qualification", classification: "owner-approved" });
   assert.match(text, /aggregate-ca01-v170-receipts\.mjs/);
   assert.match(text, /write-ca01-v170-receipt\.mjs/);
   assert.match(text, /pattern: ca01-native-\*/);

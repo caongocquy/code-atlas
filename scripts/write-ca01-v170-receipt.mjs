@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
 import { evidenceFiles } from "./aggregate-ca01-v170-receipts.mjs";
-import { verifyTrustedRun } from "./verify-ca01-v170-trust.mjs";
+import { verifyOwnerApproval, verifyTrustedRun } from "./verify-ca01-v170-trust.mjs";
 
 const [evidenceRoot] = process.argv.slice(2);
 if (!evidenceRoot) throw new Error("Usage: write-ca01-v170-receipt.mjs <evidence-directory>");
@@ -27,6 +27,9 @@ const contractBytes = readFileSync(contractPath);
 const contractSha256 = sha256(contractBytes);
 if (contractSha256 !== process.env.CA01_CONTRACT_SHA256) throw new Error("Controller contract digest mismatch");
 const contract = JSON.parse(contractBytes);
+if (contract.approval?.mode !== "solo-owner-qualification" || contract.approval?.classification !== "owner-approved") {
+  throw new Error("Controller contract does not declare solo-owner qualification");
+}
 const controllerRoot = process.cwd();
 const workflowTree = execFileSync("git", ["-C", controllerRoot, "rev-parse", "HEAD^{tree}"], { encoding: "utf8" }).trim();
 const workflowSha = execFileSync("git", ["-C", controllerRoot, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
@@ -40,6 +43,18 @@ const reviewers = JSON.parse(process.env.CA01_ENVIRONMENT_REVIEWERS_JSON ?? "nul
 if (!Array.isArray(reviewers) || reviewers.length === 0 || reviewers.some(value => typeof value !== "string" || !value)) {
   throw new Error("Required environment reviewers are missing");
 }
+const ownerId = Number(process.env.CA01_REPOSITORY_OWNER_ID);
+const environmentId = Number(process.env.CA01_ENVIRONMENT_ID);
+const ownerLogin = process.env.CA01_REPOSITORY_OWNER_LOGIN;
+if (process.env.CA01_APPROVAL_MODE !== contract.approval.mode || !Number.isSafeInteger(ownerId) || ownerId <= 0
+  || !Number.isSafeInteger(environmentId) || environmentId <= 0 || !ownerLogin || !process.env.CA01_APPROVAL_HISTORY_PATH) {
+  throw new Error("Solo-owner approval binding is missing or inconsistent");
+}
+const approvalHistoryBytes = readFileSync(process.env.CA01_APPROVAL_HISTORY_PATH, "utf8");
+const ownerApproval = verifyOwnerApproval(JSON.parse(approvalHistoryBytes), {
+  runId: process.env.GITHUB_RUN_ID, environmentId, environmentName: "ca01-v170-native-qualification", ownerId, ownerLogin,
+});
+writeFileSync(path.join(evidenceRoot, "owner-approval.json"), `${JSON.stringify(ownerApproval, null, 2)}\n`);
 const tuple = { platform: process.env.CA01_PLATFORM, arch: process.env.CA01_ARCH, node: process.versions.node };
 if (!contract.runtime.nodes.includes(tuple.node)
   || !contract.runtime.targets.some(target => target.platform === tuple.platform && target.arch === tuple.arch)) {
@@ -61,9 +76,18 @@ const receipt = {
   workflowTree,
   ref: process.env.GITHUB_REF,
   refProtected: process.env.CA01_REF_PROTECTED === "true",
+  approval: {
+    mode: ownerApproval.mode,
+    classification: ownerApproval.classification,
+    ownerId: ownerApproval.owner.id,
+    reviewerId: ownerApproval.reviewer.id,
+  },
   environment: {
     name: "ca01-v170-native-qualification",
+    id: environmentId,
+    mode: contract.approval.mode,
     requiredReviewers: reviewers,
+    preventSelfReview: false,
     approved: process.env.CA01_ENVIRONMENT_APPROVED === "true",
     rulesSha256: process.env.CA01_ENVIRONMENT_RULES_SHA256,
   },
