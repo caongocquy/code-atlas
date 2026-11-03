@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 import { aggregateReceipts, evidenceFiles } from "../scripts/aggregate-ca01-v170-receipts.mjs";
 import { verifyApprovalEnvironment, verifyOwnerApproval, verifyRepositoryOwner, verifyTrustedRun } from "../scripts/verify-ca01-v170-trust.mjs";
@@ -22,6 +23,7 @@ const targets = [
   { platform: "darwin", arch: "arm64" }, { platform: "darwin", arch: "x64" },
   { platform: "linux", arch: "x64" }, { platform: "win32", arch: "x64" },
 ];
+const fixtureLoaderUrl = pathToFileURL(path.join(os.tmpdir(), "runner", "node_modules", "tsx", "esm", "index.mjs")).href;
 const frozenMissing = [
   [1060, "init indexes graph and lexical capabilities by default"],
   [1959, "init --no-index skips graph and lexical indexing"],
@@ -66,9 +68,7 @@ async function fixture(t) {
         exitCode: 1, signal: null, error: null, node: `v${cell.node}`, platform: cell.platform, arch: cell.arch,
         revision: revisions[side === "baseline" ? "base" : side].commit,
         tree: revisions[side === "baseline" ? "base" : side].tree,
-        loaderUrl: cell.platform === "win32"
-          ? "file:///C:/runner/node_modules/tsx/esm/index.mjs"
-          : "file:///runner/node_modules/tsx/esm/index.mjs",
+        loaderUrl: fixtureLoaderUrl,
         loaderSha256: "2".repeat(64), tsxVersion: "4.23.13", pnpmVersion: "11.22.0",
         lockfileSha256: "3".repeat(64), eventsSha256: sha256(events), stderrSha256: sha256(stderr),
       };
