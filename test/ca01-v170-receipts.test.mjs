@@ -365,6 +365,16 @@ test("qualification trust requires the exact protected master controller revisio
   assert.throws(() => verifyTrustedRun({ ...trusted, environmentName: "" }), /environment/i);
 });
 
+test("controller contract keeps its pinned LF bytes across platform checkouts", async () => {
+  const bytes = await readFile("scripts/ca01-v170-common-harness.json");
+  const expected = "d35f63583d7d7cb0ee094c6c87903d326c19162d4b746172796ca135b96b1e64";
+  assert.equal(sha256(bytes), expected);
+  assert.equal(bytes.includes(Buffer.from("\r\n")), false);
+  assert.match(await readFile(".gitattributes", "utf8"), /^scripts\/ca01-v170-common-harness\.json text eol=lf$/m);
+  const windowsCheckoutBytes = Buffer.from(bytes.toString("utf8").replace(/\n/g, "\r\n"));
+  assert.equal(sha256(windowsCheckoutBytes), "4e81b2884957e087b4bcc3e8f764dbc5dc6c12757e12c42aecc0f7a68a2bfaf7");
+});
+
 test("receipt writer binds every evidence file to protected-run metadata", async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "ca01-v170-writer-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -372,17 +382,21 @@ test("receipt writer binds every evidence file to protected-run metadata", async
   for (const side of ["baseline", "candidate", "frozen"]) {
     await writeFile(path.join(root, `${side}.process.json`), "{}\n");
   }
-  const head = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-  const tree = execFileSync("git", ["rev-parse", "HEAD^{tree}"], { encoding: "utf8" }).trim();
-  const contractBytes = await readFile("scripts/ca01-v170-common-harness.json");
+  const controllerRoot = path.resolve(".");
+  const head = execFileSync("git", ["-C", controllerRoot, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  const tree = execFileSync("git", ["-C", controllerRoot, "rev-parse", "HEAD^{tree}"], { encoding: "utf8" }).trim();
+  const contractBytes = await readFile(path.join(controllerRoot, "scripts/ca01-v170-common-harness.json"));
   const contractSha = sha256(contractBytes);
   const contract = JSON.parse(contractBytes);
   const approvalHistoryRoot = await mkdtemp(path.join(os.tmpdir(), "ca01-v170-approval-history-"));
   t.after(() => rm(approvalHistoryRoot, { recursive: true, force: true }));
   const approvalHistoryPath = path.join(approvalHistoryRoot, "approval-history.json");
   await writeFile(approvalHistoryPath, JSON.stringify([{ state: "approved", user: ownerUser, environments: [{ id: environmentId, name: "ca01-v170-native-qualification" }] }]));
+  const externalWorkingDirectory = await mkdtemp(path.join(os.tmpdir(), "ca01-v170-external-cwd-"));
+  t.after(() => rm(externalWorkingDirectory, { recursive: true, force: true }));
   const reviewers = ["User:123"];
-  const run = spawnSync(process.execPath, ["scripts/write-ca01-v170-receipt.mjs", root], { encoding: "utf8", env: {
+  const run = spawnSync(process.execPath, [path.join(controllerRoot, "scripts/write-ca01-v170-receipt.mjs"), root], {
+    cwd: externalWorkingDirectory, encoding: "utf8", env: {
     ...process.env, GITHUB_REF: "refs/heads/master", GITHUB_SHA: head, GITHUB_RUN_ID: "1001", GITHUB_RUN_ATTEMPT: "1",
     CA01_REF_PROTECTED: "true", CA01_CONTRACT_SHA256: contractSha, CA01_PLATFORM: process.platform,
     CA01_ARCH: process.arch, CA01_ENVIRONMENT_APPROVED: "true", CA01_ENVIRONMENT_RULES_SHA256: "4".repeat(64),
@@ -414,6 +428,13 @@ test("native workflow passes trust through named step outputs and fails closed o
   const workflow = await readFile(".github/workflows/v170-native-qualification.yml", "utf8");
   assert.doesNotMatch(workflow, /^\s+GITHUB_OUTPUT\s*:/m);
   assert.doesNotMatch(workflow, /trust-output/);
+  assert.match(workflow, /native-parser-prebuilds:[\s\S]*node-version: 22\.23\.3[\s\S]*prepare --build-missing[\s\S]*parser-prebuild-\$\{\{ matrix\.target\.tuple \}\}/);
+  assert.match(workflow, /prepare --prebuild-input "\$RUNNER_TEMP\/ca01-parser-prebuild"/);
+  assert.doesNotMatch(workflow, /native-differential:[\s\S]*?prepare --build-missing/);
+  assert.match(workflow, /runner: \[ubuntu-22\.04, windows-2022\]/);
+  for (const tuple of ["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"]) {
+    assert.ok(workflow.includes(`name: parser-prebuild-${tuple}`), `missing pinned ${tuple} parser artifact`);
+  }
   for (const output of ["environment_rules_sha256", "environment_reviewers_json", "environment_id", "approval_mode",
     "repository_owner_id", "repository_owner_login", "workflow_tree"]) {
     assert.ok((workflow.match(new RegExp("steps\\.trust\\.outputs\\." + output, "g")) ?? []).length >= 2,
