@@ -135,9 +135,9 @@ jobs:
           fetch-depth: 0
           path: .harness
       - name: Confirm approval gate used the verified environment configuration
+        id: trust
         env:
           GH_TOKEN: ${{ github.token }}
-          GITHUB_OUTPUT: ${{ runner.temp }}/trust-output
         shell: bash
         run: |
           set -euo pipefail
@@ -156,10 +156,33 @@ jobs:
             "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY" \
             > "$RUNNER_TEMP/ca01-repository.json"
           node .harness/scripts/verify-ca01-v170-trust.mjs "$RUNNER_TEMP/ca01-environment.json" "$GITHUB_WORKSPACE/.harness" "$RUNNER_TEMP/ca01-repository.json"
-          grep -F "environment_rules_sha256=${{ needs.preflight.outputs.environment_rules_sha256 }}" "$RUNNER_TEMP/trust-output"
-          grep -F "repository_owner_id=${{ needs.preflight.outputs.repository_owner_id }}" "$RUNNER_TEMP/trust-output"
-          grep -F "repository_owner_login=${{ needs.preflight.outputs.repository_owner_login }}" "$RUNNER_TEMP/trust-output"
-          grep -F "approval_mode=solo-owner-qualification" "$RUNNER_TEMP/trust-output"
+      - name: Require verified approval outputs to match preflight
+        env:
+          EXPECTED_RULES_SHA256: ${{ needs.preflight.outputs.environment_rules_sha256 }}
+          VERIFIED_RULES_SHA256: ${{ steps.trust.outputs.environment_rules_sha256 }}
+          EXPECTED_REVIEWERS_JSON: ${{ needs.preflight.outputs.environment_reviewers_json }}
+          VERIFIED_REVIEWERS_JSON: ${{ steps.trust.outputs.environment_reviewers_json }}
+          EXPECTED_ENVIRONMENT_ID: ${{ needs.preflight.outputs.environment_id }}
+          VERIFIED_ENVIRONMENT_ID: ${{ steps.trust.outputs.environment_id }}
+          EXPECTED_APPROVAL_MODE: ${{ needs.preflight.outputs.approval_mode }}
+          VERIFIED_APPROVAL_MODE: ${{ steps.trust.outputs.approval_mode }}
+          EXPECTED_OWNER_ID: ${{ needs.preflight.outputs.repository_owner_id }}
+          VERIFIED_OWNER_ID: ${{ steps.trust.outputs.repository_owner_id }}
+          EXPECTED_OWNER_LOGIN: ${{ needs.preflight.outputs.repository_owner_login }}
+          VERIFIED_OWNER_LOGIN: ${{ steps.trust.outputs.repository_owner_login }}
+          EXPECTED_WORKFLOW_TREE: ${{ needs.preflight.outputs.workflow_tree }}
+          VERIFIED_WORKFLOW_TREE: ${{ steps.trust.outputs.workflow_tree }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$VERIFIED_RULES_SHA256" = "$EXPECTED_RULES_SHA256"
+          test "$VERIFIED_REVIEWERS_JSON" = "$EXPECTED_REVIEWERS_JSON"
+          test "$VERIFIED_ENVIRONMENT_ID" = "$EXPECTED_ENVIRONMENT_ID"
+          test "$VERIFIED_APPROVAL_MODE" = "$EXPECTED_APPROVAL_MODE"
+          test "$VERIFIED_APPROVAL_MODE" = solo-owner-qualification
+          test "$VERIFIED_OWNER_ID" = "$EXPECTED_OWNER_ID"
+          test "$VERIFIED_OWNER_LOGIN" = "$EXPECTED_OWNER_LOGIN"
+          test "$VERIFIED_WORKFLOW_TREE" = "$EXPECTED_WORKFLOW_TREE"
 
   native-differential:
     name: Common-harness ${{ matrix.target.platform }}-${{ matrix.target.arch }} Node ${{ matrix.node }}
@@ -402,7 +425,6 @@ jobs:
         id: trust
         env:
           GH_TOKEN: ${{ github.token }}
-          GITHUB_OUTPUT: ${{ runner.temp }}/trust-output
         shell: bash
         run: |
           set -euo pipefail
@@ -422,11 +444,6 @@ jobs:
             "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY" \
             > "$RUNNER_TEMP/ca01-repository.json"
           node .harness/scripts/verify-ca01-v170-trust.mjs "$RUNNER_TEMP/ca01-environment.json" "$GITHUB_WORKSPACE/.harness" "$RUNNER_TEMP/ca01-repository.json"
-          grep -F "environment_rules_sha256=${{ needs.preflight.outputs.environment_rules_sha256 }}" "$RUNNER_TEMP/trust-output"
-          grep -F "repository_owner_id=${{ needs.preflight.outputs.repository_owner_id }}" "$RUNNER_TEMP/trust-output"
-          grep -F "repository_owner_login=${{ needs.preflight.outputs.repository_owner_login }}" "$RUNNER_TEMP/trust-output"
-          grep -F "environment_id=${{ needs.preflight.outputs.environment_id }}" "$RUNNER_TEMP/trust-output"
-          grep -F "approval_mode=solo-owner-qualification" "$RUNNER_TEMP/trust-output"
       - name: Fail closed unless all eight exact native receipts agree
         env:
           CA01_PREFLIGHT_RESULT: ${{ needs.preflight.result }}
@@ -435,12 +452,28 @@ jobs:
           CA01_MATRIX_RESULT: ${{ needs.native-differential.result }}
           CA01_WORKFLOW_TREE: ${{ needs.preflight.outputs.workflow_tree }}
           CA01_ENVIRONMENT_RULES_SHA256: ${{ needs.preflight.outputs.environment_rules_sha256 }}
+          CA01_ENVIRONMENT_REVIEWERS_JSON: ${{ needs.preflight.outputs.environment_reviewers_json }}
           CA01_ENVIRONMENT_ID: ${{ needs.preflight.outputs.environment_id }}
           CA01_APPROVAL_MODE: ${{ needs.preflight.outputs.approval_mode }}
           CA01_REPOSITORY_OWNER_ID: ${{ needs.preflight.outputs.repository_owner_id }}
           CA01_REPOSITORY_OWNER_LOGIN: ${{ needs.preflight.outputs.repository_owner_login }}
+          CA01_LIVE_WORKFLOW_TREE: ${{ steps.trust.outputs.workflow_tree }}
+          CA01_LIVE_ENVIRONMENT_RULES_SHA256: ${{ steps.trust.outputs.environment_rules_sha256 }}
+          CA01_LIVE_ENVIRONMENT_REVIEWERS_JSON: ${{ steps.trust.outputs.environment_reviewers_json }}
+          CA01_LIVE_ENVIRONMENT_ID: ${{ steps.trust.outputs.environment_id }}
+          CA01_LIVE_APPROVAL_MODE: ${{ steps.trust.outputs.approval_mode }}
+          CA01_LIVE_REPOSITORY_OWNER_ID: ${{ steps.trust.outputs.repository_owner_id }}
+          CA01_LIVE_REPOSITORY_OWNER_LOGIN: ${{ steps.trust.outputs.repository_owner_login }}
         shell: bash
         run: |
           set -euo pipefail
+          test "$CA01_LIVE_WORKFLOW_TREE" = "$CA01_WORKFLOW_TREE"
+          test "$CA01_LIVE_ENVIRONMENT_RULES_SHA256" = "$CA01_ENVIRONMENT_RULES_SHA256"
+          test "$CA01_LIVE_ENVIRONMENT_REVIEWERS_JSON" = "$CA01_ENVIRONMENT_REVIEWERS_JSON"
+          test "$CA01_LIVE_ENVIRONMENT_ID" = "$CA01_ENVIRONMENT_ID"
+          test "$CA01_LIVE_APPROVAL_MODE" = "$CA01_APPROVAL_MODE"
+          test "$CA01_LIVE_APPROVAL_MODE" = solo-owner-qualification
+          test "$CA01_LIVE_REPOSITORY_OWNER_ID" = "$CA01_REPOSITORY_OWNER_ID"
+          test "$CA01_LIVE_REPOSITORY_OWNER_LOGIN" = "$CA01_REPOSITORY_OWNER_LOGIN"
           node .harness/scripts/aggregate-ca01-v170-receipts.mjs receipts > "$RUNNER_TEMP/aggregate-result.json"
           cat "$RUNNER_TEMP/aggregate-result.json" >> "$GITHUB_STEP_SUMMARY"
