@@ -66,7 +66,9 @@ async function fixture(t) {
         exitCode: 1, signal: null, error: null, node: `v${cell.node}`, platform: cell.platform, arch: cell.arch,
         revision: revisions[side === "baseline" ? "base" : side].commit,
         tree: revisions[side === "baseline" ? "base" : side].tree,
-        loaderUrl: "file:///runner/node_modules/tsx/esm/index.mjs",
+        loaderUrl: cell.platform === "win32"
+          ? "file:///C:/runner/node_modules/tsx/esm/index.mjs"
+          : "file:///runner/node_modules/tsx/esm/index.mjs",
         loaderSha256: "2".repeat(64), tsxVersion: "4.23.13", pnpmVersion: "11.22.0",
         lockfileSha256: "3".repeat(64), eventsSha256: sha256(events), stderrSha256: sha256(stderr),
       };
