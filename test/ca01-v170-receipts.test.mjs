@@ -374,6 +374,7 @@ test("controller contract keeps its pinned LF bytes across platform checkouts", 
   assert.equal(bytes.includes(Buffer.from("\r\n")), false);
   assert.match(await readFile(".gitattributes", "utf8"), /^scripts\/ca01-v170-common-harness\.json text eol=lf$/m);
   assert.match(await readFile(".gitattributes", "utf8"), /^\.github\/workflows\/tree-sitter-installation\.yml text eol=lf$/m);
+  assert.match(await readFile(".gitattributes", "utf8"), /^scripts\/ca01-v170-compare-ca01-tests\.mjs text eol=lf$/m);
   const windowsCheckoutBytes = Buffer.from(bytes.toString("utf8").replace(/\n/g, "\r\n"));
   assert.equal(sha256(windowsCheckoutBytes), "4e81b2884957e087b4bcc3e8f764dbc5dc6c12757e12c42aecc0f7a68a2bfaf7");
 });

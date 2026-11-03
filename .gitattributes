@@ -1,2 +1,3 @@
 scripts/ca01-v170-common-harness.json text eol=lf
 .github/workflows/tree-sitter-installation.yml text eol=lf
+scripts/ca01-v170-compare-ca01-tests.mjs text eol=lf
