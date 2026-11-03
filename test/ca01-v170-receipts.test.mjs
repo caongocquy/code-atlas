@@ -409,3 +409,22 @@ test("receipt writer binds every evidence file to protected-run metadata", async
   assert.deepEqual(Object.keys(receipt.files).sort(), [...evidenceFiles].sort());
   assert.equal(receipt.artifactName, `ca01-native-${process.platform}-${process.arch}-node${process.versions.node}`);
 });
+
+test("native workflow passes trust through named step outputs and fails closed on mismatch", async () => {
+  const workflow = await readFile(".github/workflows/v170-native-qualification.yml", "utf8");
+  assert.doesNotMatch(workflow, /^\s+GITHUB_OUTPUT\s*:/m);
+  assert.doesNotMatch(workflow, /trust-output/);
+  for (const output of ["environment_rules_sha256", "environment_reviewers_json", "environment_id", "approval_mode",
+    "repository_owner_id", "repository_owner_login", "workflow_tree"]) {
+    assert.ok((workflow.match(new RegExp("steps\\.trust\\.outputs\\." + output, "g")) ?? []).length >= 2,
+      `expected ${output} to bind verifier outputs to both consumers`);
+  }
+  for (const equality of [
+    'test "$VERIFIED_RULES_SHA256" = "$EXPECTED_RULES_SHA256"',
+    'test "$VERIFIED_APPROVAL_MODE" = solo-owner-qualification',
+    'test "$VERIFIED_WORKFLOW_TREE" = "$EXPECTED_WORKFLOW_TREE"',
+    'test "$CA01_LIVE_ENVIRONMENT_RULES_SHA256" = "$CA01_ENVIRONMENT_RULES_SHA256"',
+    'test "$CA01_LIVE_ENVIRONMENT_REVIEWERS_JSON" = "$CA01_ENVIRONMENT_REVIEWERS_JSON"',
+    'test "$CA01_LIVE_REPOSITORY_OWNER_ID" = "$CA01_REPOSITORY_OWNER_ID"',
+  ]) assert.ok(workflow.includes(equality), `missing fail-closed comparison: ${equality}`);
+});
