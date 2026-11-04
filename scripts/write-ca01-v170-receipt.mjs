@@ -2,12 +2,15 @@ import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import process from "node:process";
 import { evidenceFiles } from "./aggregate-ca01-v170-receipts.mjs";
 import { verifyOwnerApproval, verifyTrustedRun } from "./verify-ca01-v170-trust.mjs";
 
-const [evidenceRoot] = process.argv.slice(2);
-if (!evidenceRoot) throw new Error("Usage: write-ca01-v170-receipt.mjs <evidence-directory>");
+const [evidenceRootArgument] = process.argv.slice(2);
+if (!evidenceRootArgument) throw new Error("Usage: write-ca01-v170-receipt.mjs <evidence-directory>");
+const evidenceRoot = path.resolve(evidenceRootArgument);
+const controllerRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
 function listFiles(root, relative = "") {
   const files = [];
@@ -22,7 +25,7 @@ function listFiles(root, relative = "") {
   }
   return files.sort();
 }
-const contractPath = path.resolve("scripts/ca01-v170-common-harness.json");
+const contractPath = path.join(controllerRoot, "scripts/ca01-v170-common-harness.json");
 const contractBytes = readFileSync(contractPath);
 const contractSha256 = sha256(contractBytes);
 if (contractSha256 !== process.env.CA01_CONTRACT_SHA256) throw new Error("Controller contract digest mismatch");
@@ -30,7 +33,6 @@ const contract = JSON.parse(contractBytes);
 if (contract.approval?.mode !== "solo-owner-qualification" || contract.approval?.classification !== "owner-approved") {
   throw new Error("Controller contract does not declare solo-owner qualification");
 }
-const controllerRoot = process.cwd();
 const workflowTree = execFileSync("git", ["-C", controllerRoot, "rev-parse", "HEAD^{tree}"], { encoding: "utf8" }).trim();
 const workflowSha = execFileSync("git", ["-C", controllerRoot, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 verifyTrustedRun({ ref: process.env.GITHUB_REF, refProtected: process.env.CA01_REF_PROTECTED === "true",

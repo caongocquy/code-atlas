@@ -7,6 +7,7 @@ on:
       - 'scripts/*ca01*'
       - 'test/ca01-common-harness.test.ts'
       - 'test/ca01-v170-receipts.test.mjs'
+      - '.gitattributes'
   workflow_dispatch:
 
 permissions:
@@ -21,11 +22,12 @@ env:
 
 jobs:
   controller-tests:
-    name: Controller tests on Node ${{ matrix.node }}
-    runs-on: ubuntu-22.04
+    name: Controller tests on ${{ matrix.runner }} Node ${{ matrix.node }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
+        runner: [ubuntu-22.04, windows-2022]
         node: ['22.23.3', '24.21.0']
     permissions:
       contents: read
@@ -38,6 +40,7 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - name: Install the locked test toolchain
+        shell: bash
         run: |
           corepack enable
           corepack prepare pnpm@11.22.0 --activate
@@ -184,10 +187,58 @@ jobs:
           test "$VERIFIED_OWNER_LOGIN" = "$EXPECTED_OWNER_LOGIN"
           test "$VERIFIED_WORKFLOW_TREE" = "$EXPECTED_WORKFLOW_TREE"
 
-  native-differential:
-    name: Common-harness ${{ matrix.target.platform }}-${{ matrix.target.arch }} Node ${{ matrix.node }}
+  native-parser-prebuilds:
     needs: [preflight, controller-tests, approval-gate]
     if: github.event_name == 'workflow_dispatch' && needs.preflight.result == 'success' && needs.controller-tests.result == 'success' && needs.approval-gate.result == 'success'
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - runner: macos-15
+            tuple: darwin-arm64
+          - runner: macos-15-intel
+            tuple: darwin-x64
+          - runner: ubuntu-22.04
+            tuple: linux-x64
+          - runner: windows-2022
+            tuple: win32-x64
+    runs-on: ${{ matrix.target.runner }}
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 0e49b3e1e50887b1e0fc800d26e8551ca6a22a38
+          path: .candidate
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.23.3
+      - name: Install pinned build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@11.22.0 --activate
+          cd .candidate
+          pnpm install --frozen-lockfile
+          pnpm build
+      - name: Build pinned native parser artifacts with Node 22
+        shell: bash
+        run: node .candidate/scripts/parser-distribution.mjs prepare --build-missing
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: parser-prebuild-${{ matrix.target.tuple }}
+          path: .candidate/.parser-build/${{ matrix.target.tuple }}/
+          include-hidden-files: true
+          if-no-files-found: error
+          compression-level: 0
+
+  native-differential:
+    name: Common-harness ${{ matrix.target.platform }}-${{ matrix.target.arch }} Node ${{ matrix.node }}
+    needs: [preflight, controller-tests, approval-gate, native-parser-prebuilds]
+    if: github.event_name == 'workflow_dispatch' && needs.preflight.result == 'success' && needs.controller-tests.result == 'success' && needs.approval-gate.result == 'success' && needs.native-parser-prebuilds.result == 'success'
     strategy:
       fail-fast: false
       matrix:
@@ -234,6 +285,22 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: ${{ matrix.node }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: parser-prebuild-darwin-arm64
+          path: ${{ runner.temp }}/ca01-parser-prebuild/darwin-arm64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: parser-prebuild-darwin-x64
+          path: ${{ runner.temp }}/ca01-parser-prebuild/darwin-x64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: parser-prebuild-linux-x64
+          path: ${{ runner.temp }}/ca01-parser-prebuild/linux-x64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: parser-prebuild-win32-x64
+          path: ${{ runner.temp }}/ca01-parser-prebuild/win32-x64
       - name: Verify workflow, revisions, runtime and dependency contract
         shell: bash
         env:
@@ -268,7 +335,7 @@ jobs:
           NODE_PATH: ''
         run: |
           set -euo pipefail
-          (cd .candidate && node scripts/parser-distribution.mjs prepare --build-missing)
+          (cd .candidate && node scripts/parser-distribution.mjs prepare --prebuild-input "$RUNNER_TEMP/ca01-parser-prebuild")
           mkdir -p .approved-base/vendor .frozen/vendor
           cp -R .candidate/vendor/parsers .approved-base/vendor/parsers
           cp -R .candidate/vendor/parsers .frozen/vendor/parsers
