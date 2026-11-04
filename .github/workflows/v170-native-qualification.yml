@@ -188,7 +188,8 @@ jobs:
           test "$VERIFIED_WORKFLOW_TREE" = "$EXPECTED_WORKFLOW_TREE"
 
   native-parser-prebuilds:
-    if: github.event_name == 'workflow_dispatch'
+    needs: [preflight, controller-tests, approval-gate]
+    if: github.event_name == 'workflow_dispatch' && needs.preflight.result == 'success' && needs.controller-tests.result == 'success' && needs.approval-gate.result == 'success'
     strategy:
       fail-fast: false
       matrix:

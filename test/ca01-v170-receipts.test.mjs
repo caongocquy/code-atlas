@@ -432,6 +432,7 @@ test("native workflow passes trust through named step outputs and fails closed o
   const workflow = await readFile(".github/workflows/v170-native-qualification.yml", "utf8");
   assert.doesNotMatch(workflow, /^\s+GITHUB_OUTPUT\s*:/m);
   assert.doesNotMatch(workflow, /trust-output/);
+  assert.match(workflow, /native-parser-prebuilds:\s*\n\s+needs: \[preflight, controller-tests, approval-gate\]\s*\n\s+if: github\.event_name == 'workflow_dispatch' && needs\.preflight\.result == 'success' && needs\.controller-tests\.result == 'success' && needs\.approval-gate\.result == 'success'/);
   assert.match(workflow, /native-parser-prebuilds:[\s\S]*node-version: 22\.23\.3[\s\S]*prepare --build-missing[\s\S]*parser-prebuild-\$\{\{ matrix\.target\.tuple \}\}/);
   assert.match(workflow, /prepare --prebuild-input "\$RUNNER_TEMP\/ca01-parser-prebuild"/);
   assert.doesNotMatch(workflow, /native-differential:[\s\S]*?prepare --build-missing/);
