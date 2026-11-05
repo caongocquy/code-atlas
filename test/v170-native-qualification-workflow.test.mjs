@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { URL } from "node:url";
+import { restoreCa01ExactBlobs } from "../scripts/restore-ca01-exact-blobs.mjs";
+import { readPinnedPnpmVersion } from "../scripts/ca01-pnpm.mjs";
 
 const workflow = readFileSync(new URL("../.github/workflows/v170-native-qualification.yml", import.meta.url), "utf8").replaceAll("\r\n", "\n");
 const nativeDifferential = workflow.split("\n  native-differential:\n")[1]?.split(/\n\x20{2}[a-z0-9_-]+:\n/)[0] ?? "";
@@ -19,43 +21,83 @@ test("legacy parity compares the candidate with the pinned frozen target", () =>
 });
 
 test("Windows byte restoration runs in native-differential before digest verification", () => {
-  const restore = nativeDifferential.indexOf("- name: Preserve exact Git blob bytes in native-differential");
+  const restore = nativeDifferential.indexOf("- name: Restore exact Git blob bytes and preserve checkout evidence");
   assert.notEqual(restore, -1);
   assert.ok(restore > nativeDifferential.indexOf("path: .frozen"));
   assert.ok(restore < nativeDifferential.indexOf("- name: Verify workflow, revisions, runtime and dependency contract"));
-  assert.ok(!preflight.includes("Preserve exact Git blob bytes in native-differential"));
-  assert.match(nativeDifferential, /core\.autocrlf false/);
-  assert.match(nativeDifferential, /core\.eol lf/);
-  assert.match(nativeDifferential, /git -C "\$root" checkout-index --force --all/);
-  assert.doesNotMatch(nativeDifferential, /git -C "\$root" reset --hard HEAD/);
+  assert.ok(!preflight.includes("Restore exact Git blob bytes"));
+  assert.match(nativeDifferential, /restore-ca01-exact-blobs\.mjs/);
+  assert.match(nativeDifferential, /checkout-materialization\.json/);
   assert.match(nativeDifferential, /for root in \.harness \.approved-base \.candidate \.frozen/);
 });
 
-test("forced checkout-index rematerialization restores raw Git blob bytes", async () => {
+test("raw Git blob restoration repairs forced checkout-index line-ending conversion", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "ca01-checkout-bytes-"));
   const git = (...args) => execFileSync("git", args, { cwd: root, stdio: "ignore" });
   const file = path.join(root, "package.json");
-  const blob = Buffer.from('{\n  "name": "digest-fixture"\n}\n');
+  const blob = Buffer.from('{"name":"digest-fixture"}\n');
   try {
     git("init", "--quiet");
     git("config", "user.name", "CA-01 regression");
     git("config", "user.email", "ca01@example.invalid");
+    await writeFile(path.join(root, ".gitattributes"), "package.json text eol=crlf\n");
     await writeFile(file, blob);
-    git("add", "package.json");
+    git("add", ".gitattributes", "package.json");
     git("commit", "--quiet", "-m", "fixture");
-
     git("config", "core.autocrlf", "true");
+    git("config", "core.eol", "crlf");
     await unlink(file);
     git("checkout-index", "--force", "--all");
     assert.notDeepEqual(await readFile(file), blob);
-
-    git("config", "core.autocrlf", "false");
-    git("config", "core.eol", "lf");
-    git("checkout-index", "--force", "--all");
+    assert.match((await readFile(file)).toString("utf8"), /\r\n/);
+    const report = path.join(root, "checkout-materialization.json");
+    const result = restoreCa01ExactBlobs([root], report);
     assert.deepEqual(await readFile(file), blob);
+    assert.match(result.files[0].attributes, /eol: crlf/);
+    assert.equal(result.files[0].afterRawBlobRestore.gitBlob, result.files[0].expectedGitBlob);
+    assert.equal(JSON.parse(await readFile(report, "utf8")).files[0].expectedGitBlob, result.files[0].expectedGitBlob);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("pnpm runner uses the resolved executable and enforces the package manifest version", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "ca01 pinned pnpm "));
+  const executable = path.join(root, process.platform === "win32" ? "pnpm.cmd" : "pnpm");
+  const env = { ...process.env, PATH: root + path.delimiter + (process.env.PATH ?? "") };
+  const script = version => process.platform === "win32"
+    ? "@echo off\r\necho " + version + "\r\n"
+    : "#!/bin/sh\nprintf '%s\\n' '" + version + "'\n";
+  try {
+    await writeFile(executable, script("11.22.0"));
+    if (process.platform !== "win32") await import("node:fs/promises").then(({ chmod }) => chmod(executable, 0o755));
+    const result = readPinnedPnpmVersion("pnpm@11.22.0", env);
+    assert.equal(result.version, "11.22.0");
+    assert.equal(result.executable, realpathSync(executable));
+    await writeFile(executable, script("11.21.0"));
+    assert.throws(() => readPinnedPnpmVersion("pnpm@11.22.0", env), /pnpm version mismatch/);
+    assert.throws(() => readPinnedPnpmVersion("pnpm@latest", env), /exact packageManager version/);
+    await writeFile(executable, process.platform === "win32" ? "@echo off\r\nexit /b 7\r\n" : "#!/bin/sh\nexit 7\n");
+    if (process.platform !== "win32") await import("node:fs/promises").then(({ chmod }) => chmod(executable, 0o755));
+    assert.throws(() => readPinnedPnpmVersion("pnpm@11.22.0", env), /failed with status 7/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("frozen strict failure requires the reviewed controller comparator and real evidence", () => {
+  assert.match(nativeDifferential, /\.harness\/scripts\/ca01-v170-compare-ca01-tests\.mjs/);
+  assert.doesNotMatch(nativeDifferential, /\.frozen\/scripts\/compare-ca01-tests\.mjs/);
+  assert.match(nativeDifferential, /test -s "\$RUNNER_TEMP\/ca01-evidence\/frozen-strict-comparison\.json"/);
+  assert.match(nativeDifferential, /test "\$status" -eq 1/);
+  assert.match(nativeDifferential, /MODULE_NOT_FOUND/);
+  assert.match(nativeDifferential, /p\.addedFailures\.length\|\|p\.changedFailures\.length/);
+  const verifier = readFileSync(new URL("../scripts/verify-ca01-v170-inputs.mjs", import.meta.url), "utf8");
+  assert.match(verifier, /ca01-v170-compare-ca01-tests\.mjs/);
+  const contract = JSON.parse(readFileSync(new URL("../scripts/ca01-v170-common-harness.json", import.meta.url), "utf8"));
+  const digest = createHash("sha256").update(readFileSync(new URL("../scripts/ca01-v170-compare-ca01-tests.mjs", import.meta.url))).digest("hex");
+  assert.equal(digest, contract.dependencies.strictComparatorSha256);
+  assert.match(nativeDifferential, /--test-concurrency=1/);
 });
 
 test("focused contract output explicitly uses Node's TAP reporter", () => {
