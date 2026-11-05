@@ -28,40 +28,60 @@ export function restoreCa01ExactBlobs(roots, evidencePath) {
     writeFileSync(target, JSON.stringify(report, null, 2) + "\n");
   };
   try {
+    // These inputs are byte-pinned by the qualification contract.
+    const pinnedPaths = ["package.json", "pnpm-lock.yaml", "scripts/parser-sources.json"];
     for (const argument of roots) {
       const root = path.resolve(argument);
-      const relativePath = "package.json";
-      const entry = { root, path: relativePath };
-      report.files.push(entry);
-      const initial = readFileSync(path.join(root, relativePath));
-      entry.before = { ...fileState(root, initial), base64: initial.toString("base64") };
-      entry.attributes = git(root, ["check-attr", "--all", "--", relativePath], { encoding: "utf8" }).trim();
-      entry.checkoutConfigBefore = {
-        autocrlf: optionalConfig(root, "core.autocrlf"),
-        eol: optionalConfig(root, "core.eol"),
-        attributesFile: optionalConfig(root, "core.attributesfile"),
-      };
+      const entries = pinnedPaths.map(relativePath => {
+        const entry = { root, path: relativePath };
+        report.files.push(entry);
+        const initial = readFileSync(path.join(root, relativePath));
+        entry.before = {
+          ...fileState(root, initial),
+          ...(relativePath === "package.json" ? { base64: initial.toString("base64") } : {}),
+        };
+        entry.attributes = git(root, ["check-attr", "--all", "--", relativePath], { encoding: "utf8" }).trim();
+        entry.checkoutConfigBefore = {
+          autocrlf: optionalConfig(root, "core.autocrlf"),
+          eol: optionalConfig(root, "core.eol"),
+          attributesFile: optionalConfig(root, "core.attributesfile"),
+        };
+        return entry;
+      });
 
       git(root, ["config", "core.autocrlf", "false"]);
       git(root, ["config", "core.eol", "lf"]);
-      entry.checkoutConfigAfter = {
-        autocrlf: optionalConfig(root, "core.autocrlf"),
-        eol: optionalConfig(root, "core.eol"),
-        attributesFile: optionalConfig(root, "core.attributesfile"),
-      };
       git(root, ["checkout-index", "--force", "--all"]);
-      const afterCheckoutIndex = readFileSync(path.join(root, relativePath));
-      entry.afterForcedCheckoutIndex = { ...fileState(root, afterCheckoutIndex), base64: afterCheckoutIndex.toString("base64") };
 
-      const blob = git(root, ["rev-parse", `HEAD:${relativePath}`], { encoding: "utf8" }).trim();
-      const bytes = git(root, ["cat-file", "blob", blob]);
-      if (gitBlobSha(bytes) !== blob) throw new Error(`Git blob read mismatch for ${root}/${relativePath}`);
-      writeFileSync(path.join(root, relativePath), bytes);
-      const restored = readFileSync(path.join(root, relativePath));
-      entry.expectedGitBlob = blob;
-      entry.afterRawBlobRestore = { ...fileState(root, restored), base64: restored.toString("base64") };
-      if (entry.afterRawBlobRestore.gitBlob !== blob || !restored.equals(bytes)) {
-        throw new Error(`Exact Git blob restoration failed for ${root}/${relativePath}`);
+      // Restore after the last checkout-index operation, so a later checkout
+      // cannot reintroduce CRLF for files with explicit eol attributes.
+      for (const entry of entries) {
+        const relativePath = entry.path;
+        const file = path.join(root, relativePath);
+        entry.checkoutConfigAfter = {
+          autocrlf: optionalConfig(root, "core.autocrlf"),
+          eol: optionalConfig(root, "core.eol"),
+          attributesFile: optionalConfig(root, "core.attributesfile"),
+        };
+        const afterCheckoutIndex = readFileSync(file);
+        entry.afterForcedCheckoutIndex = {
+          ...fileState(root, afterCheckoutIndex),
+          ...(relativePath === "package.json" ? { base64: afterCheckoutIndex.toString("base64") } : {}),
+        };
+
+        const blob = git(root, ["rev-parse", `HEAD:${relativePath}`], { encoding: "utf8" }).trim();
+        const bytes = git(root, ["cat-file", "blob", blob]);
+        if (gitBlobSha(bytes) !== blob) throw new Error(`Git blob read mismatch for ${root}/${relativePath}`);
+        writeFileSync(file, bytes);
+        const restored = readFileSync(file);
+        entry.expectedGitBlob = blob;
+        entry.afterRawBlobRestore = {
+          ...fileState(root, restored),
+          ...(relativePath === "package.json" ? { base64: restored.toString("base64") } : {}),
+        };
+        if (entry.afterRawBlobRestore.gitBlob !== blob || !restored.equals(bytes)) {
+          throw new Error(`Exact Git blob restoration failed for ${root}/${relativePath}`);
+        }
       }
     }
     save();
