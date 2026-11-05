@@ -174,7 +174,7 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
         syntax.linkOwner(node, callable.localId);
         if (node.type === "class_declaration" || node.type === "method_definition") {
           const siblings = node.parent?.namedChildren ?? [];
-          for (let index = siblings.indexOf(node) - 1; index >= 0 && siblings[index]?.type === "decorator"; index -= 1) {
+          for (let index = siblings.findIndex((sibling) => sibling.id === node.id) - 1; index >= 0 && siblings[index]?.type === "decorator"; index -= 1) {
             syntax.linkOwner(siblings[index]!, callable.localId);
           }
         }

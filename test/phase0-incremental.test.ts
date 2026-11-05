@@ -59,9 +59,12 @@ test("incremental sync handles unchanged, one changed importer impact, deletion,
 
     try {
       const allFiles = new Set(
-        (await scanRepo(repoPath)).map((file) => path.relative(repoPath, file)),
+        (await scanRepo(repoPath)).map((file) => path.relative(repoPath, file).split(path.sep).join("/")),
       );
       const initial = await buildCodeGraph(repoPath);
+      assert.equal(initial.nodes.some(node => node.file.includes("\\")), false);
+      assert.equal(initial.edges.filter(edge => edge.type === "imports").length, 1);
+      assert.equal(initial.edges.filter(edge => edge.type === "calls").length, 1);
       store.replaceGraph(repoId, initial, await hashes(repoPath, allFiles));
 
       assert.deepEqual(
@@ -91,6 +94,12 @@ test("incremental sync handles unchanged, one changed importer impact, deletion,
       const expected = await buildCodeGraph(repoPath);
       assert.equal(canonicalGraph(synced), canonicalGraph(expected));
       assert.equal(synced.edges.filter((edge) => edge.type === "calls").length, 1);
+      assert.equal(synced.nodes.some(node => node.name === "oldTarget"), false);
+      assert.equal(new Set(synced.nodes.map(node => node.id)).size, synced.nodes.length);
+      assert.equal(synced.nodes.filter(node => node.type === "file").length, 2);
+      const repeated = await buildFileGraphs(repoPath, repoId, [...currentFiles], currentFiles, synced);
+      store.applyFileUpdates(repoId, await Promise.all(repeated.map(async update => ({ ...update, fileHash: createFileHash(await readFile(path.join(repoPath, update.file), "utf8")) }))), []);
+      assert.equal(canonicalGraph(store.loadGraph(repoId)), canonicalGraph(expected));
 
       await unlink(path.join(repoPath, "src", "target.ts"));
       const afterDelete = await buildFileGraphs(
