@@ -2,19 +2,20 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
 
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
 const git = (root, args, options = {}) => execFileSync("git", ["-C", root, ...args], options);
-function gitBlobSha(bytes) {
-  return git(".", ["hash-object", "--no-filters", "--stdin"], { input: bytes, encoding: "utf8" }).trim();
+function gitBlobSha(root, bytes) {
+  return git(root, ["hash-object", "--no-filters", "--stdin"], { input: bytes, encoding: "utf8" }).trim();
 }
 function optionalConfig(root, name) {
   try { return git(root, ["config", "--show-origin", "--get", name], { encoding: "utf8" }).trim(); }
   catch { return null; }
 }
 function fileState(root, bytes) {
-  return { bytes: bytes.length, sha256: sha256(bytes), gitBlob: gitBlobSha.call(null, bytes) };
+  return { bytes: bytes.length, sha256: sha256(bytes), gitBlob: gitBlobSha(root, bytes) };
 }
 
 export function restoreCa01ExactBlobs(roots, evidencePath) {
@@ -47,7 +48,7 @@ export function restoreCa01ExactBlobs(roots, evidencePath) {
 
       const blob = git(root, ["rev-parse", `HEAD:${relativePath}`], { encoding: "utf8" }).trim();
       const bytes = git(root, ["cat-file", "blob", blob]);
-      if (gitBlobSha(bytes) !== blob) throw new Error(`Git blob read mismatch for ${root}/${relativePath}`);
+      if (gitBlobSha(root, bytes) !== blob) throw new Error(`Git blob read mismatch for ${root}/${relativePath}`);
       writeFileSync(path.join(root, relativePath), bytes);
       const restored = readFileSync(path.join(root, relativePath));
       entry.expectedGitBlob = blob;
@@ -65,7 +66,7 @@ export function restoreCa01ExactBlobs(roots, evidencePath) {
   }
 }
 
-if (process.argv[1] && import.meta.url === new URL(`file://${path.resolve(process.argv[1]).replaceAll("\\\\", "/")}`).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const [reportPath, ...roots] = process.argv.slice(2);
   if (!reportPath || roots.length === 0) throw new Error("Usage: restore-ca01-exact-blobs.mjs <evidence-report.json> <checkout-root>...");
   restoreCa01ExactBlobs(roots, reportPath);
