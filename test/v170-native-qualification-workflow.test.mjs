@@ -98,7 +98,8 @@ test("frozen strict failure requires the reviewed controller comparator and real
   const contract = JSON.parse(readFileSync(new URL("../scripts/ca01-v170-common-harness.json", import.meta.url), "utf8"));
   const digest = createHash("sha256").update(readFileSync(new URL("../scripts/ca01-v170-compare-ca01-tests.mjs", import.meta.url))).digest("hex");
   assert.equal(digest, contract.dependencies.strictComparatorSha256);
-  assert.match(nativeDifferential, /--test-concurrency=1/);
+  const suiteRunner = readFileSync(new URL("../scripts/run-ca01-qualified-suite.mjs", import.meta.url), "utf8");
+  assert.match(suiteRunner, /--test-concurrency=1/);
   assert.match(nativeDifferential, /const expected=\[1060,1959,2809,3523\]/);
   assert.match(nativeDifferential, /JSON.stringify\(p.missingTests\)!==JSON.stringify\(expected\)/);
 });
