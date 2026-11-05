@@ -31,9 +31,12 @@ export function readPinnedPnpmVersion(packageManager, env = process.env, platfor
   const match = /^pnpm@(\d+\.\d+\.\d+)$/.exec(packageManager ?? "");
   if (!match) throw new Error("Package manifest must pin pnpm with an exact packageManager version");
   const executable = findExecutable(env, platform);
-  const command = platform === "win32" ? (env.ComSpec || "cmd.exe") : executable;
-  const args = platform === "win32" ? ["/d", "/c", `call "${executable}" --version`] : ["--version"];
-  const result = spawnSync(command, args, { encoding: "utf8", env, windowsHide: true });
+  const result = spawnSync(executable, ["--version"], {
+    encoding: "utf8",
+    env,
+    shell: platform === "win32",
+    windowsHide: true
+  });
   requireProcess(result, executable);
   const version = result.stdout.trim();
   if (version !== match[1]) throw new Error(`pnpm version mismatch: expected ${match[1]}, received ${version || "no version output"}`);
