@@ -7,15 +7,15 @@ import { execFileSync } from "node:child_process";
 
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
 const git = (root, args, options = {}) => execFileSync("git", ["-C", root, ...args], options);
-function gitBlobSha(root, bytes) {
-  return git(root, ["hash-object", "--no-filters", "--stdin"], { input: bytes, encoding: "utf8" }).trim();
+function gitBlobSha(bytes) {
+  return createHash("sha1").update(`blob ${bytes.length}\\0`).update(bytes).digest("hex");
 }
 function optionalConfig(root, name) {
   try { return git(root, ["config", "--show-origin", "--get", name], { encoding: "utf8" }).trim(); }
   catch { return null; }
 }
 function fileState(root, bytes) {
-  return { bytes: bytes.length, sha256: sha256(bytes), gitBlob: gitBlobSha(root, bytes) };
+  return { bytes: bytes.length, sha256: sha256(bytes), gitBlob: gitBlobSha(bytes) };
 }
 
 export function restoreCa01ExactBlobs(roots, evidencePath) {
@@ -55,7 +55,7 @@ export function restoreCa01ExactBlobs(roots, evidencePath) {
 
       const blob = git(root, ["rev-parse", `HEAD:${relativePath}`], { encoding: "utf8" }).trim();
       const bytes = git(root, ["cat-file", "blob", blob]);
-      if (gitBlobSha(root, bytes) !== blob) throw new Error(`Git blob read mismatch for ${root}/${relativePath}`);
+      if (gitBlobSha(bytes) !== blob) throw new Error(`Git blob read mismatch for ${root}/${relativePath}`);
       writeFileSync(path.join(root, relativePath), bytes);
       const restored = readFileSync(path.join(root, relativePath));
       entry.expectedGitBlob = blob;
