@@ -42,7 +42,7 @@ async function fixture(t) {
       { platform: "linux", arch: "x64" }, { platform: "win32", arch: "x64" },
     ] },
     parser: { package: "@babel/core", version: "8.0.1" },
-    dependencies: { pnpmVersion: "11.22.0", pnpmExecutable: process.execPath, lockfileSha256 },
+    dependencies: { pnpmVersion: "11.22.0", lockfileSha256 },
     execution: { tsxVersion: "4.23.13", loaderSha256 },
     source: {
       path: file,
@@ -54,7 +54,7 @@ async function fixture(t) {
     requiredRelocationCount: 1,
     relocations: [{ from: { ...oldIdentity }, to: { ...newIdentity } }],
   };
-  const baselineProcess = { exitCode: 0, signal: null, error: null, node: "v22.23.3", platform: "darwin", arch: "arm64", revision: baseCommit, tree: contract.base.tree, loaderUrl, loaderSha256, tsxVersion: "4.23.13", pnpmVersion: "11.22.0", lockfileSha256 };
+  const baselineProcess = { exitCode: 0, signal: null, error: null, node: "v22.23.3", platform: "darwin", arch: "arm64", revision: baseCommit, tree: contract.base.tree, loaderUrl, loaderSha256, tsxVersion: "4.23.13", pnpmVersion: "11.22.0", pnpmExecutable: process.execPath, lockfileSha256 };
   const candidateProcess = { ...baselineProcess, revision: candidateCommit, tree: contract.candidate.tree };
   const record = identity => ({ type: "test:pass", identity, skip: false, todo: false, error: { $type: "undefined" } });
   const summary = { type: "test:diagnostic", message: "tests 1" };
