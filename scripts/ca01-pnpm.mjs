@@ -5,7 +5,8 @@ import { spawnSync } from "node:child_process";
 function requireProcess(result, command) {
   if (result.error) throw new Error(`Unable to execute ${command}: ${result.error.message}`, { cause: result.error });
   if (result.signal || result.status !== 0) {
-    throw new Error(`${command} failed with status ${result.status ?? "none"} and signal ${result.signal ?? "none"}`);
+    const output = [result.stderr, result.stdout].filter(Boolean).join("\\n").trim();
+    throw new Error(`${command} failed with status ${result.status ?? "none"} and signal ${result.signal ?? "none"}${output ? `: ${output}` : ""}`);
   }
 }
 
@@ -31,11 +32,14 @@ export function readPinnedPnpmVersion(packageManager, env = process.env, platfor
   const match = /^pnpm@(\d+\.\d+\.\d+)$/.exec(packageManager ?? "");
   if (!match) throw new Error("Package manifest must pin pnpm with an exact packageManager version");
   const executable = findExecutable(env, platform);
-  const result = spawnSync(executable, ["--version"], {
+  const windows = platform === "win32";
+  const command = windows ? (env.ComSpec || "cmd.exe") : executable;
+  const args = windows ? ["/d", "/c", `call "${executable}" --version`] : ["--version"];
+  const result = spawnSync(command, args, {
     encoding: "utf8",
     env,
-    shell: platform === "win32",
-    windowsHide: true
+    windowsHide: true,
+    windowsVerbatimArguments: windows
   });
   requireProcess(result, executable);
   const version = result.stdout.trim();
