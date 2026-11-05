@@ -48,7 +48,7 @@ for (const name of ["NODE_OPTIONS", "NODE_PATH", "NODE_V8_COVERAGE", "TSX_TSCONF
 childEnv.CODE_ATLAS_EVAL_OFFLINE = "1";
 let result;
 try {
-  result = spawnSync(process.execPath, ["--import", loaderUrl, "--test", "--test-concurrency=2",
+  result = spawnSync(process.execPath, ["--import", loaderUrl, "--test", "--test-concurrency=1",
     `--test-reporter=${reporterUrl}`, ...files], { cwd: sourceRoot, env: childEnv, stdio: ["ignore", stdout, stderr] });
 } finally {
   closeSync(stdout); closeSync(stderr);
