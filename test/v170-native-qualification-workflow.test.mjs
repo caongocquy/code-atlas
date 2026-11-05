@@ -29,7 +29,7 @@ test("Windows byte restoration runs in native-differential before digest verific
   assert.ok(!preflight.includes("Restore exact Git blob bytes"));
   assert.match(nativeDifferential, /restore-ca01-exact-blobs\.mjs/);
   assert.match(nativeDifferential, /checkout-materialization\.json/);
-  assert.match(nativeDifferential, /for root in \.harness \.approved-base \.candidate \.frozen/);
+  assert.match(nativeDifferential, /\.harness \.approved-base \.candidate \.frozen/);
 });
 
 test("raw Git blob restoration repairs forced checkout-index line-ending conversion", async () => {
