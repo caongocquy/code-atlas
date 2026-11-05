@@ -32,7 +32,7 @@ export function readPinnedPnpmVersion(packageManager, env = process.env, platfor
   if (!match) throw new Error("Package manifest must pin pnpm with an exact packageManager version");
   const executable = findExecutable(env, platform);
   const command = platform === "win32" ? (env.ComSpec || "cmd.exe") : executable;
-  const args = platform === "win32" ? ["/d", "/c", `"${executable}" --version`] : ["--version"];
+  const args = platform === "win32" ? ["/d", "/c", `call "${executable}" --version`] : ["--version"];
   const result = spawnSync(command, args, { encoding: "utf8", env, windowsHide: true });
   requireProcess(result, executable);
   const version = result.stdout.trim();
