@@ -108,6 +108,19 @@ test("frozen strict failure requires the reviewed controller comparator and real
   assert.match(nativeDifferential, /JSON.stringify\(p.missingTests\)!==JSON.stringify\(expected\)/);
 });
 
+test("common and frozen comparators receive Node's actual OS temp root", () => {
+  const commonStep = nativeDifferential.split("- name: Compare approved base with the explicit four source-verified relocations")[1]
+    ?.split("- name: Preserve untouched frozen comparison")[0] ?? "";
+  const frozenStep = nativeDifferential.split("- name: Preserve untouched frozen comparison")[1]
+    ?.split("- name: Write hash-bound native cell receipt")[0] ?? "";
+  assert.match(commonStep, /os_temp_root=.*node -p 'require\("node:os"\)\.tmpdir\(\)'/);
+  assert.match(commonStep, /"\$GITHUB_WORKSPACE\/\.approved-base"\s+"\$GITHUB_WORKSPACE\/\.candidate"\s+"\$os_temp_root"\s+"\$CA01_CONTRACT_SHA256"/);
+  assert.doesNotMatch(commonStep, /"\$GITHUB_WORKSPACE\/\.candidate"\s+"\$RUNNER_TEMP"/);
+  assert.match(frozenStep, /os_temp_root=.*node -p 'require\("node:os"\)\.tmpdir\(\)'/);
+  assert.match(frozenStep, /"\$GITHUB_WORKSPACE\/\.frozen"\s+"\$GITHUB_WORKSPACE\/\.candidate"\s+"\$os_temp_root"/);
+  assert.doesNotMatch(frozenStep, /"\$GITHUB_WORKSPACE\/\.candidate"\s+"\$RUNNER_TEMP"/);
+});
+
 test("focused contract output explicitly uses Node's TAP reporter", () => {
   assert.match(workflow, /node --import "\$loader_url" --test --test-reporter=tap test\/ca01-mcp-response\.test\.ts/);
 });

@@ -55,6 +55,8 @@ test("incremental sync handles unchanged, one changed importer impact, deletion,
   await withRepo(async (repoPath) => {
     const repoId = getRepoId(repoPath);
     const dbPath = path.join(repoPath, "atlas.db");
+    const targetFile = path.join("src", "target.ts");
+    const importerFile = path.join("src", "importer.ts");
     const store = new AtlasStore(dbPath);
 
     try {
@@ -74,11 +76,11 @@ test("incremental sync handles unchanged, one changed importer impact, deletion,
         path.join(repoPath, "src", "importer.ts"),
         'import { newTarget } from "./target.js";\nexport function run() { newTarget(); }\n',
       );
-      const currentFiles = new Set(["src/target.ts", "src/importer.ts"]);
+      const currentFiles = new Set([targetFile, importerFile]);
       const updates = await buildFileGraphs(
         repoPath,
         repoId,
-        ["src/target.ts", "src/importer.ts"],
+        [targetFile, importerFile],
         currentFiles,
         initial,
       );
@@ -96,8 +98,8 @@ test("incremental sync handles unchanged, one changed importer impact, deletion,
       const afterDelete = await buildFileGraphs(
         repoPath,
         repoId,
-        ["src/importer.ts"],
-        new Set(["src/importer.ts"]),
+        [importerFile],
+        new Set([importerFile]),
         synced,
       );
       store.applyFileUpdates(
@@ -106,11 +108,11 @@ test("incremental sync handles unchanged, one changed importer impact, deletion,
           ...update,
           fileHash: createFileHash(await readFile(path.join(repoPath, update.file), "utf8")),
         }))),
-        ["src/target.ts"],
+        [targetFile],
       );
 
       const deleted = store.loadGraph(repoId);
-      assert.equal(deleted.nodes.some((node) => node.file === "src/target.ts"), false);
+      assert.equal(deleted.nodes.some((node) => node.file === targetFile), false);
       assert.equal(deleted.edges.some((edge) => edge.type === "calls"), false);
       assert.equal(canonicalGraph(deleted), canonicalGraph(await buildCodeGraph(repoPath)));
     } finally {

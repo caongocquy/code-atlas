@@ -10,6 +10,7 @@ import test from "node:test";
 
 import { compareCommonHarness } from "../scripts/ca01-common-harness.mjs";
 import { compareReports } from "../scripts/compare-ca01-tests.mjs";
+import { compareReports as compareV170Reports } from "../scripts/ca01-v170-compare-ca01-tests.mjs";
 
 const baseCommit = "7520618fa68e378e6c480e8f6e2ce9c6ed73a476";
 const candidateCommit = "0e49b3e1e50887b1e0fc800d26e8551ca6a22a38";
@@ -90,6 +91,63 @@ test("test-runner deserialization failures remain explicit strict missing identi
   assert.equal(result.differentialPass, false);
   assert.deepEqual(result.missingTests, [transportIdentity]);
   assert.match(JSON.stringify(result.missingTests), /pre17e-bootstrap/);
+});
+
+test("Windows temp-path normalization preserves changed failure codes and assertion values", () => {
+  const identity = {
+    file: "test/affected-tests.test.ts",
+    line: 1,
+    column: 5491,
+    nesting: 0,
+    name: "affected-tests CLI returns structured JSON without decoration",
+  };
+  const tempRoot = "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp";
+  const baselineRoot = "D:\\a\\repo\\.approved-base";
+  const candidateRoot = "D:\\a\\repo\\.candidate";
+  const failure = (root, suffix) => ({
+    name: "Error",
+    code: "ERR_TEST_FAILURE",
+    message: `Command failed: ${root}\\node_modules\\tsx\\dist\\esm\\index.mjs ${tempRoot}\\code-atlas-affected-tests-${suffix}`,
+    stack: `Error [ERR_TEST_FAILURE]: Command failed: ${root}\\node_modules\\tsx\\dist\\esm\\index.mjs ${tempRoot}\\code-atlas-affected-tests-${suffix}\n    at runCli (${root}\\test\\affected-tests.test.ts:1:1)`,
+    actual: { status: 1, output: `${tempRoot}\\code-atlas-affected-tests-${suffix}` },
+    expected: { status: 1 },
+    cause: {
+      name: "Error",
+      code: "ERR_UNSUPPORTED_ESM_URL_SCHEME",
+      message: "Only file, data, and node URLs are supported. Received protocol 'd:'",
+    },
+  });
+  const records = error => [
+    { type: "test:fail", identity, skip: false, todo: false, error },
+    ...["tests 1", "pass 0", "fail 1", "cancelled 0", "skipped 0", "todo 0"]
+      .map(message => ({ type: "test:diagnostic", message })),
+  ];
+  const compare = (baseError, candidateError) => compareV170Reports(records(baseError), records(candidateError), {
+    baseline: { root: baselineRoot, tempRoot },
+    candidate: { root: candidateRoot, tempRoot },
+  });
+
+  const baseline = failure(baselineRoot, "ABC123");
+  const candidate = failure(candidateRoot, "ZYX987");
+  const baselineBefore = structuredClone(baseline);
+  const candidateBefore = structuredClone(candidate);
+  const equivalent = compare(baseline, candidate);
+  assert.equal(equivalent.differentialPass, true);
+  assert.deepEqual(equivalent.equivalentFailures, [identity]);
+  assert.deepEqual(baseline, baselineBefore);
+  assert.deepEqual(candidate, candidateBefore);
+
+  const changedCode = structuredClone(candidate);
+  changedCode.cause.code = "ERR_INVALID_ARG_TYPE";
+  const codeResult = compare(baseline, changedCode);
+  assert.equal(codeResult.differentialPass, false);
+  assert.equal(codeResult.changedFailures.length, 1);
+
+  const changedValue = structuredClone(candidate);
+  changedValue.actual.status = 2;
+  const valueResult = compare(baseline, changedValue);
+  assert.equal(valueResult.differentialPass, false);
+  assert.equal(valueResult.changedFailures.length, 1);
 });
 
 test("v1.7.0 contract maps the exact captured closure-test identities", () => {
