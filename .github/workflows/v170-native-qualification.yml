@@ -562,4 +562,3 @@ jobs:
           test "$CA01_LIVE_REPOSITORY_OWNER_LOGIN" = "$CA01_REPOSITORY_OWNER_LOGIN"
           node .harness/scripts/aggregate-ca01-v170-receipts.mjs receipts > "$RUNNER_TEMP/aggregate-result.json"
           cat "$RUNNER_TEMP/aggregate-result.json" >> "$GITHUB_STEP_SUMMARY"
-
