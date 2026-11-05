@@ -79,12 +79,11 @@ test("test-runner deserialization failures remain explicit strict missing identi
   const transportFailure = { type: "test:fail", identity: transportIdentity, skip: false, todo: false,
     error: { code: "ERR_TEST_FAILURE", message: "Unable to deserialize cloned data due to invalid or unsupported version.",
       stack: "Error [ERR_TEST_FAILURE]: Unable to deserialize cloned data due to invalid or unsupported version.\\n    at FileTest.parseMessage (node:internal/test_runner/runner:290:27)" } };
-  f.baseline = [
-    f.baseline[0],
-    transportFailure,
-    ...["tests 2", "pass 1", "fail 1", "cancelled 0", "skipped 0", "todo 0"]
-      .map(message => ({ type: "test:diagnostic", message })),
-  ];
+  const summaries = messages => messages.map(message => ({ type: "test:diagnostic", message }));
+  f.baseline = [f.baseline[0], transportFailure,
+    ...summaries(["tests 2", "pass 1", "fail 1", "cancelled 0", "skipped 0", "todo 0"])];
+  f.candidate = [f.baseline[0],
+    ...summaries(["tests 1", "pass 1", "fail 0", "cancelled 0", "skipped 0", "todo 0"])];
   const result = compareReports(f.baseline, f.candidate, {
     baseline: { root: f.baseRoot, tempRoot: os.tmpdir() }, candidate: { root: f.candidateRoot, tempRoot: os.tmpdir() },
   });
