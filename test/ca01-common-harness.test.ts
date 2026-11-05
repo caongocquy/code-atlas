@@ -42,7 +42,7 @@ async function fixture(t) {
       { platform: "linux", arch: "x64" }, { platform: "win32", arch: "x64" },
     ] },
     parser: { package: "@babel/core", version: "8.0.1" },
-    dependencies: { pnpmVersion: "11.22.0", lockfileSha256 },
+    dependencies: { pnpmVersion: "11.22.0", pnpmExecutable: process.execPath, lockfileSha256 },
     execution: { tsxVersion: "4.23.13", loaderSha256 },
     source: {
       path: file,
@@ -71,6 +71,22 @@ test("explicit source-verified relocation is bijective and keeps raw identities 
   assert.deepEqual(result.relocations.map(item => [item.from, item.to]), [[{ ...oldIdentity }, { ...newIdentity }]]);
   assert.equal(result.baseline.tests, 1);
   assert.equal(result.candidate.tests, 1);
+});
+
+test("test-runner deserialization failures remain explicit strict missing identities", async t => {
+  const f = await fixture(t);
+  const transportIdentity = { file: "test/pre17e-bootstrap.test.ts", line: 1, column: 1, nesting: 0, name: "/checkout/.frozen/test/pre17e-bootstrap.test.ts" };
+  f.baseline.splice(1, 0, { type: "test:fail", identity: transportIdentity, skip: false, todo: false,
+    error: { code: "ERR_TEST_FAILURE", message: "Unable to deserialize cloned data due to invalid or unsupported version.",
+      stack: "Error [ERR_TEST_FAILURE]: Unable to deserialize cloned data due to invalid or unsupported version.\\n    at FileTest.parseMessage (node:internal/test_runner/runner:290:27)" } });
+  f.baseline.find(event => event.message === "tests 1").message = "tests 2";
+  f.baseline.find(event => event.message === "fail 0").message = "fail 1";
+  const result = compareReports(f.baseline, f.candidate, {
+    baseline: { root: f.baseRoot, tempRoot: os.tmpdir() }, candidate: { root: f.candidateRoot, tempRoot: os.tmpdir() },
+  });
+  assert.equal(result.differentialPass, false);
+  assert.deepEqual(result.missingTests, [transportIdentity]);
+  assert.match(JSON.stringify(result.missingTests), /pre17e-bootstrap/);
 });
 
 test("v1.7.0 contract maps the exact captured closure-test identities", () => {
