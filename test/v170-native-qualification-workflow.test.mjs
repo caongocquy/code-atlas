@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { Buffer } from "node:buffer";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -74,8 +74,10 @@ test("pnpm runner uses the resolved executable and enforces the package manifest
     if (process.platform !== "win32") await import("node:fs/promises").then(({ chmod }) => chmod(executable, 0o755));
     const result = readPinnedPnpmVersion("pnpm@11.22.0", env);
     assert.equal(result.version, "11.22.0");
-    const normalized = value => path.resolve(value).toLowerCase();
-    assert.equal(normalized(result.executable), normalized(executable));
+    const expectedExecutable = process.platform === "win32"
+      ? execFileSync("where.exe", ["pnpm.cmd"], { encoding: "utf8", env }).split(/\\r?\\n/).map(value => value.trim()).find(Boolean)
+      : realpathSync(executable);
+    assert.equal(result.executable, expectedExecutable);
     await writeFile(executable, script("11.21.0"));
     assert.throws(() => readPinnedPnpmVersion("pnpm@11.22.0", env), /pnpm version mismatch/);
     assert.throws(() => readPinnedPnpmVersion("pnpm@latest", env), /exact packageManager version/);
