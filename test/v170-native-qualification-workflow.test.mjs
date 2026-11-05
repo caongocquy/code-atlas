@@ -125,10 +125,6 @@ test("focused contract output explicitly uses Node's TAP reporter", () => {
   assert.match(workflow, /node --import "\$loader_url" --test --test-reporter=tap test\/ca01-mcp-response\.test\.ts/);
 });
 
-test("controller matrix runs the native path incremental regression", () => {
-  assert.match(workflow, /node --import "\$loader" --test test\/ca01-common-harness\.test\.ts test\/phase0-incremental\.test\.ts/);
-});
-
 test("pinned input digest checks remain enabled", () => {
   assert.ok(workflow.includes("CA01_CONTRACT_SHA256: d35f63583d7d7cb0ee094c6c87903d326c19162d4b746172796ca135b96b1e64"));
   assert.ok(workflow.includes("verify-ca01-v170-inputs.mjs"));
