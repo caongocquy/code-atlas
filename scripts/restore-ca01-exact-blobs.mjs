@@ -44,8 +44,14 @@ export function restoreCa01ExactBlobs(roots, evidencePath) {
 
       git(root, ["config", "core.autocrlf", "false"]);
       git(root, ["config", "core.eol", "lf"]);
+      entry.checkoutConfigAfter = {
+        autocrlf: optionalConfig(root, "core.autocrlf"),
+        eol: optionalConfig(root, "core.eol"),
+        attributesFile: optionalConfig(root, "core.attributesfile"),
+      };
       git(root, ["checkout-index", "--force", "--all"]);
-      entry.afterForcedCheckoutIndex = fileState(root, readFileSync(path.join(root, relativePath)));
+      const afterCheckoutIndex = readFileSync(path.join(root, relativePath));
+      entry.afterForcedCheckoutIndex = { ...fileState(root, afterCheckoutIndex), base64: afterCheckoutIndex.toString("base64") };
 
       const blob = git(root, ["rev-parse", `HEAD:${relativePath}`], { encoding: "utf8" }).trim();
       const bytes = git(root, ["cat-file", "blob", blob]);
