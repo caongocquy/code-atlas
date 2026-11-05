@@ -7,7 +7,7 @@ on:
       - 'scripts/*ca01*'
       - 'test/ca01-common-harness.test.ts'
       - 'test/ca01-v170-receipts.test.mjs'
-      - 'test/ca01-v170-workflow.test.mjs'
+      - 'test/v170-native-qualification-workflow.test.mjs'
       - '.gitattributes'
   workflow_dispatch:
 
@@ -51,7 +51,7 @@ jobs:
         run: |
           set -euo pipefail
           loader=$(node -e 'const {createRequire}=require("node:module");const {pathToFileURL}=require("node:url");console.log(pathToFileURL(createRequire(process.cwd()+"/package.json").resolve("tsx/esm")).href)')
-          node --test test/ca01-v170-workflow.test.mjs
+          node --test test/v170-native-qualification-workflow.test.mjs
           node --test test/ca01-v170-receipts.test.mjs
           node --import "$loader" --test test/ca01-common-harness.test.ts
 
