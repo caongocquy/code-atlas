@@ -53,7 +53,7 @@ jobs:
           loader=$(node -e 'const {createRequire}=require("node:module");const {pathToFileURL}=require("node:url");console.log(pathToFileURL(createRequire(process.cwd()+"/package.json").resolve("tsx/esm")).href)')
           node --test test/v170-native-qualification-workflow.test.mjs
           node --test test/ca01-v170-receipts.test.mjs
-          node --import "$loader" --test test/ca01-common-harness.test.ts
+          node --import "$loader" --test test/ca01-common-harness.test.ts test/phase0-incremental.test.ts
 
   preflight:
     if: github.event_name == 'workflow_dispatch'
