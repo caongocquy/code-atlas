@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { URL } from "node:url";
 
 const workflow = readFileSync(new URL("../.github/workflows/v170-native-qualification.yml", import.meta.url), "utf8");
 
