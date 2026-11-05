@@ -75,7 +75,7 @@ test("pnpm runner uses the resolved executable and enforces the package manifest
     const result = readPinnedPnpmVersion("pnpm@11.22.0", env);
     assert.equal(result.version, "11.22.0");
     const expectedExecutable = process.platform === "win32"
-      ? execFileSync("where.exe", ["pnpm.cmd"], { encoding: "utf8", env }).split(/\\r?\\n/).map(value => value.trim()).find(Boolean)
+      ? execFileSync("where.exe", ["pnpm.cmd"], { encoding: "utf8", env }).split(/\r?\n/).map(value => value.trim()).find(Boolean)
       : realpathSync(executable);
     assert.equal(result.executable, expectedExecutable);
     await writeFile(executable, script("11.21.0"));
