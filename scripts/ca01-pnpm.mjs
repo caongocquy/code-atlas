@@ -1,4 +1,4 @@
-import { realpathSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
@@ -16,7 +16,7 @@ function findExecutable(env, platform) {
     requireProcess(where, "where.exe pnpm.cmd");
     const executable = where.stdout.split(/\r?\n/).map(value => value.trim()).find(Boolean);
     if (!executable) throw new Error("pnpm.cmd was not found on PATH");
-    return realpathSync(executable);
+    return executable;
   }
   for (const directory of (env.PATH ?? "").split(path.delimiter)) {
     if (!directory) continue;
