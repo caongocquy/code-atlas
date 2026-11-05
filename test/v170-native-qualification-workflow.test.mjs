@@ -7,6 +7,7 @@ import { mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import process from "node:process";
 import { URL } from "node:url";
 import { restoreCa01ExactBlobs } from "../scripts/restore-ca01-exact-blobs.mjs";
 import { readPinnedPnpmVersion } from "../scripts/ca01-pnpm.mjs";
