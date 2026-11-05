@@ -6,6 +6,7 @@ import process from "node:process";
 import { execFileSync, spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { ca01ReporterSpecifier, suiteProcessFailed } from "./ca01-test-reporter.mjs";
+import { readPinnedPnpmVersion } from "./ca01-pnpm.mjs";
 
 const [sourceRoot, outputPrefix, loaderRoot] = process.argv.slice(2);
 if (![sourceRoot, outputPrefix, loaderRoot].every(Boolean)) {
@@ -32,7 +33,9 @@ const tsx = packageRoot(requireFromLoader, "tsx");
 const tsxManifest = JSON.parse(readFileSync(tsx.manifest, "utf8"));
 const loaderSha256 = sha256(readFileSync(loaderEntry));
 const lockfileSha256 = sha256(readFileSync(path.join(loaderRoot, "pnpm-lock.yaml")));
-const pnpmVersion = execFileSync("pnpm", ["--version"], { encoding: "utf8" }).trim();
+const sourceManifest = JSON.parse(readFileSync(path.join(sourceRoot, "package.json"), "utf8"));
+const pnpm = readPinnedPnpmVersion(sourceManifest.packageManager);
+const pnpmVersion = pnpm.version;
 const reporterUrl = ca01ReporterSpecifier(import.meta.url);
 const files = readdirSync(path.join(sourceRoot, "test"))
   .filter(name => name.endsWith(".test.ts")).sort().map(name => path.join(sourceRoot, "test", name));
@@ -45,7 +48,7 @@ for (const name of ["NODE_OPTIONS", "NODE_PATH", "NODE_V8_COVERAGE", "TSX_TSCONF
 childEnv.CODE_ATLAS_EVAL_OFFLINE = "1";
 let result;
 try {
-  result = spawnSync(process.execPath, ["--import", loaderUrl, "--test", "--test-concurrency=2",
+  result = spawnSync(process.execPath, ["--import", loaderUrl, "--test", "--test-concurrency=1",
     `--test-reporter=${reporterUrl}`, ...files], { cwd: sourceRoot, env: childEnv, stdio: ["ignore", stdout, stderr] });
 } finally {
   closeSync(stdout); closeSync(stderr);
@@ -55,7 +58,7 @@ const events = readFileSync(`${outputPrefix}.jsonl`);
 const processResult = {
   exitCode: result.status, signal: result.signal, error: result.error ? String(result.error) : null,
   node: process.version, platform: process.platform, arch: process.arch,
-  pnpmVersion, lockfileSha256,
+  pnpmVersion, pnpmExecutable: pnpm.executable, lockfileSha256,
   revision: execFileSync("git", ["-C", sourceRoot, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
   tree: execFileSync("git", ["-C", sourceRoot, "rev-parse", "HEAD^{tree}"], { encoding: "utf8" }).trim(),
   loaderUrl, loaderSha256, tsxVersion: tsxManifest.version, reporterUrl, files: files.map(file => path.relative(sourceRoot, file).replaceAll("\\", "/")),

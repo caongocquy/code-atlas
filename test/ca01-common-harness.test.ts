@@ -54,7 +54,7 @@ async function fixture(t) {
     requiredRelocationCount: 1,
     relocations: [{ from: { ...oldIdentity }, to: { ...newIdentity } }],
   };
-  const baselineProcess = { exitCode: 0, signal: null, error: null, node: "v22.23.3", platform: "darwin", arch: "arm64", revision: baseCommit, tree: contract.base.tree, loaderUrl, loaderSha256, tsxVersion: "4.23.13", pnpmVersion: "11.22.0", lockfileSha256 };
+  const baselineProcess = { exitCode: 0, signal: null, error: null, node: "v22.23.3", platform: "darwin", arch: "arm64", revision: baseCommit, tree: contract.base.tree, loaderUrl, loaderSha256, tsxVersion: "4.23.13", pnpmVersion: "11.22.0", pnpmExecutable: process.execPath, lockfileSha256 };
   const candidateProcess = { ...baselineProcess, revision: candidateCommit, tree: contract.candidate.tree };
   const record = identity => ({ type: "test:pass", identity, skip: false, todo: false, error: { $type: "undefined" } });
   const summary = { type: "test:diagnostic", message: "tests 1" };
@@ -71,6 +71,25 @@ test("explicit source-verified relocation is bijective and keeps raw identities 
   assert.deepEqual(result.relocations.map(item => [item.from, item.to]), [[{ ...oldIdentity }, { ...newIdentity }]]);
   assert.equal(result.baseline.tests, 1);
   assert.equal(result.candidate.tests, 1);
+});
+
+test("test-runner deserialization failures remain explicit strict missing identities", async t => {
+  const f = await fixture(t);
+  const transportIdentity = { file: "test/pre17e-bootstrap.test.ts", line: 1, column: 1, nesting: 0, name: "/checkout/.frozen/test/pre17e-bootstrap.test.ts" };
+  const transportFailure = { type: "test:fail", identity: transportIdentity, skip: false, todo: false,
+    error: { code: "ERR_TEST_FAILURE", message: "Unable to deserialize cloned data due to invalid or unsupported version.",
+      stack: "Error [ERR_TEST_FAILURE]: Unable to deserialize cloned data due to invalid or unsupported version.\\n    at FileTest.parseMessage (node:internal/test_runner/runner:290:27)" } };
+  const summaries = messages => messages.map(message => ({ type: "test:diagnostic", message }));
+  f.baseline = [f.baseline[0], transportFailure,
+    ...summaries(["tests 2", "pass 1", "fail 1", "cancelled 0", "skipped 0", "todo 0"])];
+  f.candidate = [f.baseline[0],
+    ...summaries(["tests 1", "pass 1", "fail 0", "cancelled 0", "skipped 0", "todo 0"])];
+  const result = compareReports(f.baseline, f.candidate, {
+    baseline: { root: f.baseRoot, tempRoot: os.tmpdir() }, candidate: { root: f.candidateRoot, tempRoot: os.tmpdir() },
+  });
+  assert.equal(result.differentialPass, false);
+  assert.deepEqual(result.missingTests, [transportIdentity]);
+  assert.match(JSON.stringify(result.missingTests), /pre17e-bootstrap/);
 });
 
 test("v1.7.0 contract maps the exact captured closure-test identities", () => {
@@ -121,7 +140,8 @@ test("v1.7.0 workflow pins the eight native cells and preserves the frozen gate"
   assert.match(text, /aggregate-ca01-v170-receipts\.mjs/);
   assert.match(text, /write-ca01-v170-receipt\.mjs/);
   assert.match(text, /pattern: ca01-native-\*/);
-  assert.match(text, /\.frozen\/scripts\/compare-ca01-tests\.mjs/);
+  assert.match(text, /\.harness\/scripts\/ca01-v170-compare-ca01-tests\.mjs/);
+  assert.doesNotMatch(text, /\.frozen\/scripts\/compare-ca01-tests\.mjs/);
   assert.doesNotMatch(text, /parser-payload|uses: \.\/\.github\/workflows\/tree-sitter-installation\.yml/);
   assert.ok(workflow.jobs["aggregate-native-receipts"].needs.includes("native-differential"));
   assert.ok(workflow.jobs["controller-tests"]);

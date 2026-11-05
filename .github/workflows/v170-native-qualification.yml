@@ -284,19 +284,18 @@ jobs:
           ref: d2570bd789095d82442ff332beb36a5ddd998194
           fetch-depth: 0
           path: .frozen
-      - name: Preserve exact Git blob bytes in native-differential
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Restore exact Git blob bytes and preserve checkout evidence
         if: runner.os == 'Windows'
         shell: bash
         run: |
           set -euo pipefail
-          for root in .harness .approved-base .candidate .frozen; do
-            git -C "$root" config core.autocrlf false
-            git -C "$root" config core.eol lf
-            git -C "$root" checkout-index --force --all
-          done
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: ${{ matrix.node }}
+          mkdir -p "$RUNNER_TEMP/ca01-evidence"
+          node .harness/scripts/restore-ca01-exact-blobs.mjs \
+            "$RUNNER_TEMP/ca01-evidence/checkout-materialization.json" \
+            .harness .approved-base .candidate .frozen
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: parser-prebuild-darwin-arm64
@@ -431,15 +430,22 @@ jobs:
         run: |
           set -euo pipefail
           status=0
-          node .frozen/scripts/compare-ca01-tests.mjs \
+          rm -f "$RUNNER_TEMP/ca01-evidence/frozen-strict-comparison.json" "$RUNNER_TEMP/ca01-evidence/frozen-strict.stdout" "$RUNNER_TEMP/ca01-evidence/frozen-strict.stderr" "$RUNNER_TEMP/ca01-evidence/frozen-strict.exit"
+          node .harness/scripts/ca01-v170-compare-ca01-tests.mjs \
             "$RUNNER_TEMP/ca01-evidence/frozen" "$RUNNER_TEMP/ca01-evidence/candidate" \
             "$RUNNER_TEMP/ca01-evidence/frozen-strict-comparison.json" \
             "$GITHUB_WORKSPACE/.frozen" "$GITHUB_WORKSPACE/.candidate" "$RUNNER_TEMP" \
             > "$RUNNER_TEMP/ca01-evidence/frozen-strict.stdout" 2> "$RUNNER_TEMP/ca01-evidence/frozen-strict.stderr" || status=$?
           echo "$status" > "$RUNNER_TEMP/ca01-evidence/frozen-strict.exit"
           test "$status" -eq 1
-          node --input-type=module -e 'import fs from "node:fs";const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));if(p.differentialPass!==false)throw new Error("Frozen strict failure was not preserved");console.log(JSON.stringify({strictGreen:p.strictGreen,differentialPass:p.differentialPass,missing:p.missingTests.length,added:p.addedFailures.length,changed:p.changedFailures.length,skips:p.newSkips.length,todos:p.newTodos.length}))' "$RUNNER_TEMP/ca01-evidence/frozen-strict-comparison.json" >> "$GITHUB_STEP_SUMMARY"
-          node --input-type=module -e 'import fs from "node:fs";const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));const expected=[1060,1959,2809,3523].map((column,index)=>({file:"test/phase11k-closure.test.ts",line:1,column,nesting:0,name:["init indexes graph and lexical capabilities by default","init --no-index skips graph and lexical indexing","init preserves bootstrap when indexing fails and exits non-zero","init --no-index preserves an existing graph and lexical index"][index]}));if(JSON.stringify(p.missingTests)!==JSON.stringify(expected)||p.strictGreen.baseline!==false||p.strictGreen.candidate!==false||p.differentialPass!==false)throw new Error("Untouched frozen strict evidence differs from the four retained identity failures");if(p.newSkips.length||p.newTodos.length||p.baseline.cancelled||p.candidate.cancelled)throw new Error("Frozen strict report changed skip/todo/cancellation evidence")' "$RUNNER_TEMP/ca01-evidence/frozen-strict-comparison.json"
+          test -s "$RUNNER_TEMP/ca01-evidence/frozen-strict.stdout"
+          test -s "$RUNNER_TEMP/ca01-evidence/frozen-strict-comparison.json"
+          if grep -E 'MODULE_NOT_FOUND|ERR_MODULE_NOT_FOUND|Cannot find module' "$RUNNER_TEMP/ca01-evidence/frozen-strict.stderr"; then
+            echo "Comparator execution failure cannot qualify as the historical strict failure" >&2
+            exit 1
+          fi
+          node --input-type=module -e 'import fs from "node:fs";const dir=process.argv[1];const status=fs.readFileSync(dir+"/frozen-strict.exit","utf8").trim();const p=JSON.parse(fs.readFileSync(dir+"/frozen-strict-comparison.json","utf8"));if(status!=="1")throw new Error("Strict comparator exit status must be exactly 1");if(p.differentialPass!==false)throw new Error("Frozen strict failure was not preserved");console.log(JSON.stringify({strictGreen:p.strictGreen,differentialPass:p.differentialPass,missing:p.missingTests.length,added:p.addedFailures.length,changed:p.changedFailures.length,skips:p.newSkips.length,todos:p.newTodos.length}))' "$RUNNER_TEMP/ca01-evidence" >> "$GITHUB_STEP_SUMMARY"
+          node --input-type=module -e 'import fs from "node:fs";const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));const expected=[1060,1959,2809,3523].map((column,index)=>({file:"test/phase11k-closure.test.ts",line:1,column,nesting:0,name:["init indexes graph and lexical capabilities by default","init --no-index skips graph and lexical indexing","init preserves bootstrap when indexing fails and exits non-zero","init --no-index preserves an existing graph and lexical index"][index]}));if(JSON.stringify(p.missingTests)!==JSON.stringify(expected)||p.strictGreen.baseline!==false||p.strictGreen.candidate!==false||p.differentialPass!==false)throw new Error("Untouched frozen strict evidence differs from the four retained identity failures");if(p.addedFailures.length||p.changedFailures.length||p.newSkips.length||p.changedSkips.length||p.newTodos.length||p.baseline.cancelled||p.candidate.cancelled)throw new Error("Frozen strict report contains unexpected differences")' "$RUNNER_TEMP/ca01-evidence/frozen-strict-comparison.json"
       - name: Write hash-bound native cell receipt
         if: ${{ always() && !cancelled() }}
         shell: bash
@@ -556,4 +562,3 @@ jobs:
           test "$CA01_LIVE_REPOSITORY_OWNER_LOGIN" = "$CA01_REPOSITORY_OWNER_LOGIN"
           node .harness/scripts/aggregate-ca01-v170-receipts.mjs receipts > "$RUNNER_TEMP/aggregate-result.json"
           cat "$RUNNER_TEMP/aggregate-result.json" >> "$GITHUB_STEP_SUMMARY"
-
