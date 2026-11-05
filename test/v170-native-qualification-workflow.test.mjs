@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { Buffer } from "node:buffer";
 import { readFileSync, realpathSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -98,6 +99,8 @@ test("frozen strict failure requires the reviewed controller comparator and real
   const digest = createHash("sha256").update(readFileSync(new URL("../scripts/ca01-v170-compare-ca01-tests.mjs", import.meta.url))).digest("hex");
   assert.equal(digest, contract.dependencies.strictComparatorSha256);
   assert.match(nativeDifferential, /--test-concurrency=1/);
+  assert.match(nativeDifferential, /const expected=\[1060,1959,2809,3523\]/);
+  assert.match(nativeDifferential, /JSON.stringify\(p.missingTests\)!==JSON.stringify\(expected\)/);
 });
 
 test("focused contract output explicitly uses Node's TAP reporter", () => {
