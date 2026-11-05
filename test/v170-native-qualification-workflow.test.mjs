@@ -74,8 +74,8 @@ test("pnpm runner uses the resolved executable and enforces the package manifest
     if (process.platform !== "win32") await import("node:fs/promises").then(({ chmod }) => chmod(executable, 0o755));
     const result = readPinnedPnpmVersion("pnpm@11.22.0", env);
     assert.equal(result.version, "11.22.0");
-    const resolved = process.platform === "win32" ? value => value.toLowerCase() : value => value;
-    assert.equal(resolved(result.executable), resolved(realpathSync(executable)));
+    const normalized = value => path.resolve(value).toLowerCase();
+    assert.equal(normalized(result.executable), normalized(executable));
     await writeFile(executable, script("11.21.0"));
     assert.throws(() => readPinnedPnpmVersion("pnpm@11.22.0", env), /pnpm version mismatch/);
     assert.throws(() => readPinnedPnpmVersion("pnpm@latest", env), /exact packageManager version/);
