@@ -19,11 +19,11 @@ test("legacy parity compares the candidate with the pinned frozen target", () =>
 });
 
 test("Windows byte restoration runs in native-differential before digest verification", () => {
-  const restore = nativeDifferential.indexOf("- name: Preserve exact Git blob bytes on Windows checkouts");
+  const restore = nativeDifferential.indexOf("- name: Preserve exact Git blob bytes in native-differential");
   assert.notEqual(restore, -1);
   assert.ok(restore > nativeDifferential.indexOf("path: .frozen"));
   assert.ok(restore < nativeDifferential.indexOf("- name: Verify workflow, revisions, runtime and dependency contract"));
-  assert.ok(!preflight.includes("Preserve exact Git blob bytes on Windows checkouts"));
+  assert.ok(!preflight.includes("Preserve exact Git blob bytes in native-differential"));
   assert.match(nativeDifferential, /core\.autocrlf false/);
   assert.match(nativeDifferential, /core\.eol lf/);
   assert.match(nativeDifferential, /git -C "\$root" checkout-index --force --all/);
