@@ -8,7 +8,7 @@ import { execFileSync } from "node:child_process";
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
 const git = (root, args, options = {}) => execFileSync("git", ["-C", root, ...args], options);
 function gitBlobSha(bytes) {
-  return createHash("sha1").update(`blob ${bytes.length}\\0`).update(bytes).digest("hex");
+  return createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
 }
 function optionalConfig(root, name) {
   try { return git(root, ["config", "--show-origin", "--get", name], { encoding: "utf8" }).trim(); }
