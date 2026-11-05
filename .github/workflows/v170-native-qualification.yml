@@ -413,11 +413,12 @@ jobs:
           CA01_COMPARISON_OUTPUT: ${{ runner.temp }}/ca01-evidence/common-harness-comparison.json
         run: |
           set -uo pipefail
+          os_temp_root="$(node -p 'require("node:os").tmpdir()')"
           status=0
           node .harness/scripts/ca01-common-harness.mjs \
             .harness/scripts/ca01-v170-common-harness.json \
             "$RUNNER_TEMP/ca01-evidence/baseline" "$RUNNER_TEMP/ca01-evidence/candidate" \
-            "$GITHUB_WORKSPACE/.approved-base" "$GITHUB_WORKSPACE/.candidate" "$RUNNER_TEMP" "$CA01_CONTRACT_SHA256" \
+            "$GITHUB_WORKSPACE/.approved-base" "$GITHUB_WORKSPACE/.candidate" "$os_temp_root" "$CA01_CONTRACT_SHA256" \
             > "$RUNNER_TEMP/ca01-evidence/common-harness.stdout" 2> "$RUNNER_TEMP/ca01-evidence/common-harness.stderr" || status=$?
           echo "$status" > "$RUNNER_TEMP/ca01-evidence/common-harness.exit"
           test "$status" -eq 0
@@ -429,12 +430,13 @@ jobs:
           NODE_PATH: ''
         run: |
           set -euo pipefail
+          os_temp_root="$(node -p 'require("node:os").tmpdir()')"
           status=0
           rm -f "$RUNNER_TEMP/ca01-evidence/frozen-strict-comparison.json" "$RUNNER_TEMP/ca01-evidence/frozen-strict.stdout" "$RUNNER_TEMP/ca01-evidence/frozen-strict.stderr" "$RUNNER_TEMP/ca01-evidence/frozen-strict.exit"
           node .harness/scripts/ca01-v170-compare-ca01-tests.mjs \
             "$RUNNER_TEMP/ca01-evidence/frozen" "$RUNNER_TEMP/ca01-evidence/candidate" \
             "$RUNNER_TEMP/ca01-evidence/frozen-strict-comparison.json" \
-            "$GITHUB_WORKSPACE/.frozen" "$GITHUB_WORKSPACE/.candidate" "$RUNNER_TEMP" \
+            "$GITHUB_WORKSPACE/.frozen" "$GITHUB_WORKSPACE/.candidate" "$os_temp_root" \
             > "$RUNNER_TEMP/ca01-evidence/frozen-strict.stdout" 2> "$RUNNER_TEMP/ca01-evidence/frozen-strict.stderr" || status=$?
           echo "$status" > "$RUNNER_TEMP/ca01-evidence/frozen-strict.exit"
           test "$status" -eq 1
