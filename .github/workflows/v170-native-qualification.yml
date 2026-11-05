@@ -90,16 +90,6 @@ jobs:
           ref: d2570bd789095d82442ff332beb36a5ddd998194
           fetch-depth: 0
           path: .frozen
-      - name: Preserve exact Git blob bytes on Windows checkouts
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          set -euo pipefail
-          for root in .harness .approved-base .candidate .frozen; do
-            git -C "$root" config core.autocrlf false
-            git -C "$root" config core.eol lf
-            git -C "$root" reset --hard HEAD
-          done
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.23.3
@@ -294,6 +284,16 @@ jobs:
           ref: d2570bd789095d82442ff332beb36a5ddd998194
           fetch-depth: 0
           path: .frozen
+      - name: Preserve exact Git blob bytes on Windows checkouts
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for root in .harness .approved-base .candidate .frozen; do
+            git -C "$root" config core.autocrlf false
+            git -C "$root" config core.eol lf
+            git -C "$root" checkout-index --force --all
+          done
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: ${{ matrix.node }}
