@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { Buffer } from "node:buffer";
 import { readFileSync, realpathSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -30,37 +30,67 @@ test("Windows byte restoration runs in native-differential before digest verific
   assert.ok(!preflight.includes("Restore exact Git blob bytes"));
   assert.match(nativeDifferential, /restore-ca01-exact-blobs\.mjs/);
   assert.match(nativeDifferential, /checkout-materialization\.json/);
+  const restoreSource = readFileSync(new URL("../scripts/restore-ca01-exact-blobs.mjs", import.meta.url), "utf8");
+  for (const input of ["package.json", "pnpm-lock.yaml", "scripts/parser-sources.json"]) {
+    assert.ok(restoreSource.includes(JSON.stringify(input)));
+  }
   assert.match(nativeDifferential, /\.harness \.approved-base \.candidate \.frozen/);
 });
 
-test("raw Git blob restoration repairs forced checkout-index line-ending conversion", async () => {
+test("raw Git blob restoration repairs CRLF in every byte-pinned input", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "ca01-checkout-bytes-"));
   const git = (...args) => execFileSync("git", args, { cwd: root, stdio: "ignore" });
-  const file = path.join(root, "package.json");
-  const blob = Buffer.from('{"name":"digest-fixture"}\n');
+  const files = new Map([
+    ["package.json", Buffer.from('{"name":"digest-fixture"}\n')],
+    ["pnpm-lock.yaml", Buffer.from("---\nlockfileVersion: '9.0'\nimporters: {}\n")],
+    ["scripts/parser-sources.json", Buffer.from('{"parsers":[]}\n')],
+  ]);
   try {
     git("init", "--quiet");
     git("config", "user.name", "CA-01 regression");
     git("config", "user.email", "ca01@example.invalid");
-    await writeFile(path.join(root, ".gitattributes"), "package.json text eol=crlf\n");
-    await writeFile(file, blob);
-    git("add", ".gitattributes", "package.json");
+    await mkdir(path.join(root, "scripts"));
+    await writeFile(path.join(root, ".gitattributes"),
+      [...files.keys()].map(file => `${file} text eol=crlf\n`).join(""));
+    for (const [file, bytes] of files) await writeFile(path.join(root, file), bytes);
+    git("add", "--all");
     git("commit", "--quiet", "-m", "fixture");
+
     git("config", "core.autocrlf", "true");
     git("config", "core.eol", "crlf");
-    await unlink(file);
+    for (const file of files.keys()) await unlink(path.join(root, file));
     git("checkout-index", "--force", "--all");
-    assert.notDeepEqual(await readFile(file), blob);
-    assert.match((await readFile(file)).toString("utf8"), /\r\n/);
-    const report = path.join(root, "checkout-materialization.json");
-    const result = restoreCa01ExactBlobs([root], report);
-    assert.deepEqual(await readFile(file), blob);
-    assert.match(result.files[0].attributes, /eol: crlf/);
-    assert.equal(result.files[0].afterRawBlobRestore.gitBlob, result.files[0].expectedGitBlob);
-    assert.equal(JSON.parse(await readFile(report, "utf8")).files[0].expectedGitBlob, result.files[0].expectedGitBlob);
+    for (const [file, expected] of files) {
+      const workingBytes = await readFile(path.join(root, file));
+      assert.notDeepEqual(workingBytes, expected);
+      assert.match(workingBytes.toString("utf8"), /\r\n/);
+    }
+
+    const reportPath = path.join(root, "checkout-materialization.json");
+    const result = restoreCa01ExactBlobs([root], reportPath);
+    assert.deepEqual(result.files.map(entry => entry.path), [...files.keys()]);
+    for (const [file, expected] of files) {
+      const entry = result.files.find(item => item.path === file);
+      assert.deepEqual(await readFile(path.join(root, file)), expected);
+      assert.match(entry.attributes, /eol: crlf/);
+      assert.equal(entry.afterRawBlobRestore.gitBlob, entry.expectedGitBlob);
+      assert.notEqual(entry.before.sha256, entry.afterRawBlobRestore.sha256);
+    }
+    const recorded = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.deepEqual(recorded.files.map(entry => entry.path), [...files.keys()]);
+    assert.ok(recorded.files.every(entry => entry.afterRawBlobRestore.gitBlob === entry.expectedGitBlob));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("Windows Node 24 observed digest is the pinned lockfile converted from LF to CRLF", () => {
+  const lockfile = execFileSync("git", ["show", "HEAD:pnpm-lock.yaml"], { cwd: process.cwd() });
+  const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
+  const lf = lockfile.toString("utf8");
+  assert.equal(sha256(lockfile), "e86976bc8b04aac60d1645b24d076b627e43cd15b3bf605e4bac09b490c4505b");
+  assert.equal(sha256(Buffer.from(lf.replace(/\r?\n/g, "\r\n"))),
+    "2d1447168e317affa013a31a30fe5731b5d3231aed36c572d7f36011461602ec");
 });
 
 test("pnpm runner uses the resolved executable and enforces the package manifest version", async () => {
