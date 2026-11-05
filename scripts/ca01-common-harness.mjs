@@ -76,6 +76,8 @@ export function compareCommonHarness({ contract, baseline, candidate, baselinePr
   if (!allowedRuntime(contract, candidateProcess)) throw new Error("Unsupported runtime");
   if (baselineProcess.pnpmVersion !== contract.dependencies.pnpmVersion
     || candidateProcess.pnpmVersion !== contract.dependencies.pnpmVersion
+    || typeof baselineProcess.pnpmExecutable !== "string" || !baselineProcess.pnpmExecutable
+    || baselineProcess.pnpmExecutable !== candidateProcess.pnpmExecutable
     || baselineProcess.lockfileSha256 !== contract.dependencies.lockfileSha256
     || candidateProcess.lockfileSha256 !== contract.dependencies.lockfileSha256
     || baselineProcess.tsxVersion !== contract.execution.tsxVersion
