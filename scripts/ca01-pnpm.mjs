@@ -1,6 +1,7 @@
 import { realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import process from "node:process";
 
 function requireProcess(result, command) {
   if (result.error) throw new Error(`Unable to execute ${command}: ${result.error.message}`, { cause: result.error });
