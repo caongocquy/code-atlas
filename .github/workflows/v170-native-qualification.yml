@@ -430,6 +430,7 @@ jobs:
         run: |
           set -euo pipefail
           status=0
+          rm -f "$RUNNER_TEMP/ca01-evidence/frozen-strict-comparison.json" "$RUNNER_TEMP/ca01-evidence/frozen-strict.stdout" "$RUNNER_TEMP/ca01-evidence/frozen-strict.stderr" "$RUNNER_TEMP/ca01-evidence/frozen-strict.exit"
           node .harness/scripts/ca01-v170-compare-ca01-tests.mjs \
             "$RUNNER_TEMP/ca01-evidence/frozen" "$RUNNER_TEMP/ca01-evidence/candidate" \
             "$RUNNER_TEMP/ca01-evidence/frozen-strict-comparison.json" \
