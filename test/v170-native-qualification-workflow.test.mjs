@@ -8,7 +8,7 @@ import path from "node:path";
 import test from "node:test";
 import { URL } from "node:url";
 
-const workflow = readFileSync(new URL("../.github/workflows/v170-native-qualification.yml", import.meta.url), "utf8");
+const workflow = readFileSync(new URL("../.github/workflows/v170-native-qualification.yml", import.meta.url), "utf8").replaceAll("\r\n", "\n");
 const nativeDifferential = workflow.split("\n  native-differential:\n")[1]?.split(/\n\x20{2}[a-z0-9_-]+:\n/)[0] ?? "";
 const preflight = workflow.split("\n  preflight:\n")[1]?.split(/\n\x20{2}[a-z0-9_-]+:\n/)[0] ?? "";
 
