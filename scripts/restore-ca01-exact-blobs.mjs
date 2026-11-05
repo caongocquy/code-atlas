@@ -34,11 +34,12 @@ export function restoreCa01ExactBlobs(roots, evidencePath) {
       const entry = { root, path: relativePath };
       report.files.push(entry);
       const initial = readFileSync(path.join(root, relativePath));
-      entry.before = fileState(root, initial);
+      entry.before = { ...fileState(root, initial), base64: initial.toString("base64") };
       entry.attributes = git(root, ["check-attr", "--all", "--", relativePath], { encoding: "utf8" }).trim();
       entry.checkoutConfigBefore = {
         autocrlf: optionalConfig(root, "core.autocrlf"),
         eol: optionalConfig(root, "core.eol"),
+        attributesFile: optionalConfig(root, "core.attributesfile"),
       };
 
       git(root, ["config", "core.autocrlf", "false"]);
@@ -52,7 +53,7 @@ export function restoreCa01ExactBlobs(roots, evidencePath) {
       writeFileSync(path.join(root, relativePath), bytes);
       const restored = readFileSync(path.join(root, relativePath));
       entry.expectedGitBlob = blob;
-      entry.afterRawBlobRestore = fileState(root, restored);
+      entry.afterRawBlobRestore = { ...fileState(root, restored), base64: restored.toString("base64") };
       if (entry.afterRawBlobRestore.gitBlob !== blob || !restored.equals(bytes)) {
         throw new Error(`Exact Git blob restoration failed for ${root}/${relativePath}`);
       }
