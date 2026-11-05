@@ -76,11 +76,15 @@ test("explicit source-verified relocation is bijective and keeps raw identities 
 test("test-runner deserialization failures remain explicit strict missing identities", async t => {
   const f = await fixture(t);
   const transportIdentity = { file: "test/pre17e-bootstrap.test.ts", line: 1, column: 1, nesting: 0, name: "/checkout/.frozen/test/pre17e-bootstrap.test.ts" };
-  f.baseline.splice(1, 0, { type: "test:fail", identity: transportIdentity, skip: false, todo: false,
+  const transportFailure = { type: "test:fail", identity: transportIdentity, skip: false, todo: false,
     error: { code: "ERR_TEST_FAILURE", message: "Unable to deserialize cloned data due to invalid or unsupported version.",
-      stack: "Error [ERR_TEST_FAILURE]: Unable to deserialize cloned data due to invalid or unsupported version.\\n    at FileTest.parseMessage (node:internal/test_runner/runner:290:27)" } });
-  f.baseline.find(event => event.message === "tests 1").message = "tests 2";
-  f.baseline.find(event => event.message === "fail 0").message = "fail 1";
+      stack: "Error [ERR_TEST_FAILURE]: Unable to deserialize cloned data due to invalid or unsupported version.\\n    at FileTest.parseMessage (node:internal/test_runner/runner:290:27)" } };
+  f.baseline = [
+    f.baseline[0],
+    transportFailure,
+    ...["tests 2", "pass 1", "fail 1", "cancelled 0", "skipped 0", "todo 0"]
+      .map(message => ({ type: "test:diagnostic", message })),
+  ];
   const result = compareReports(f.baseline, f.candidate, {
     baseline: { root: f.baseRoot, tempRoot: os.tmpdir() }, candidate: { root: f.candidateRoot, tempRoot: os.tmpdir() },
   });
@@ -137,7 +141,8 @@ test("v1.7.0 workflow pins the eight native cells and preserves the frozen gate"
   assert.match(text, /aggregate-ca01-v170-receipts\.mjs/);
   assert.match(text, /write-ca01-v170-receipt\.mjs/);
   assert.match(text, /pattern: ca01-native-\*/);
-  assert.match(text, /\.frozen\/scripts\/compare-ca01-tests\.mjs/);
+  assert.match(text, /\.harness\/scripts\/ca01-v170-compare-ca01-tests\.mjs/);
+  assert.doesNotMatch(text, /\.frozen\/scripts\/compare-ca01-tests\.mjs/);
   assert.doesNotMatch(text, /parser-payload|uses: \.\/\.github\/workflows\/tree-sitter-installation\.yml/);
   assert.ok(workflow.jobs["aggregate-native-receipts"].needs.includes("native-differential"));
   assert.ok(workflow.jobs["controller-tests"]);
