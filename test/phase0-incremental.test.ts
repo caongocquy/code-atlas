@@ -137,7 +137,7 @@ test("incremental graph resolves imports from Windows-style relative paths", asy
     );
 
     const posixFiles = ["src/target.ts", "src/importer.ts"];
-    const windowsFiles = ["src\\\\target.ts", "src\\\\importer.ts"];
+    const windowsFiles = [path.win32.join("src", "target.ts"), path.win32.join("src", "importer.ts")];
     const posix = await buildFileGraphs(repoPath, repoId, posixFiles, new Set(posixFiles), initial);
     const windows = await buildFileGraphs(repoPath, repoId, windowsFiles, new Set(windowsFiles), initial);
 
