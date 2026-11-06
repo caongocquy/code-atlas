@@ -27,7 +27,7 @@ const fixtureLoaderUrl = pathToFileURL(path.join(os.tmpdir(), "runner", "node_mo
 const fixtureReporterUrl = pathToFileURL(path.join(os.tmpdir(), "runner", "scripts", "ca01-test-reporter.mjs")).href;
 const fixturePnpmExecutable = cell => cell.platform === "win32"
   ? "C:\\hostedtoolcache\\windows\\node\\pnpm.CMD"
-  : "/opt/hostedtoolcache/node/current/bin/pnpm";
+  : "/opt/hostedtoolcache/node/current/lib/node_modules/corepack/dist/pnpm.js";
 const frozenMissing = [
   [1060, "init indexes graph and lexical capabilities by default"],
   [1959, "init --no-index skips graph and lexical indexing"],
