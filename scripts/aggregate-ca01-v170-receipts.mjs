@@ -103,7 +103,7 @@ function validateProcess(process, side, target, revisions, contract) {
   const nativePath = isWindows ? path.win32 : path.posix;
   if (typeof executable !== "string" || !executable || executable.trim() !== executable
     || /[\0\r\n]/.test(executable) || !nativePath.isAbsolute(executable)
-    || !(isWindows ? /^pnpm\.cmd$/i : /^pnpm$/).test(nativePath.basename(executable))) {
+    || !(isWindows ? /^pnpm\.cmd$/i : /^pnpm(?:\.(?:js|cjs))?$/).test(nativePath.basename(executable))) {
     fail(`${side} pnpm executable path is invalid`);
   }
   if (typeof process.reporterUrl !== "string" || !process.reporterUrl.startsWith("file:///")
