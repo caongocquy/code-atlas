@@ -129,7 +129,7 @@ async function buildFileGraphsInternal(
 
   // Repository-relative graph keys are POSIX paths, including on Windows.
   // Normalize native caller paths before node IDs, imports and file updates.
-  const toGraphPath = (file: string): string => file.replaceAll("\\", "/");
+  const toGraphPath = (file: string): string => file ? path.posix.normalize(file.replaceAll("\\", "/")) : file;
   const filePaths = files.map(toGraphPath);
   const repositoryFiles = new Set([...allRepoFiles].map(toGraphPath));
   const factsByFile = unitsByFile
