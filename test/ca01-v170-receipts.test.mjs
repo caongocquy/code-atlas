@@ -172,7 +172,7 @@ test("receipt process metadata rejects missing, invalid or inconsistent runner e
     ["empty pnpm executable", "baseline", report => { report.pnpmExecutable = ""; }, /pnpm executable path is invalid/i],
     ["relative pnpm executable", "baseline", report => { report.pnpmExecutable = "bin/pnpm"; }, /pnpm executable path is invalid/i],
     ["wrong executable basename", "baseline", report => { report.pnpmExecutable = "/opt/bin/npm"; }, /pnpm executable path is invalid/i],
-    ["pnpm executable with newline", "baseline", report => { report.pnpmExecutable += "\\n"; }, /pnpm executable path is invalid/i],
+    ["pnpm executable with newline", "baseline", report => { report.pnpmExecutable += "\n"; }, /pnpm executable path is invalid/i],
     ["candidate executable drift", "candidate", report => { report.pnpmExecutable = "/opt/other/bin/pnpm"; }, /pnpmExecutable differs/i],
     ["invalid reporter URL", "baseline", report => { report.reporterUrl = invalidReporter; }, /reporter URL is invalid/i],
     ["frozen reporter URL drift", "frozen", report => { report.reporterUrl = alternateReporter; }, /reporterUrl differs/i],
@@ -191,12 +191,12 @@ test("receipt process metadata rejects missing, invalid or inconsistent runner e
       try {
         const report = JSON.parse(previousProcess);
         mutate(report);
-        const bytes = Buffer.from(JSON.stringify(report, null, 2) + "\\n");
+        const bytes = Buffer.from(JSON.stringify(report, null, 2) + "\n");
         await writeFile(processPath, bytes);
         const receipt = JSON.parse(previousReceipt);
         receipt.processes[side] = report;
         receipt.files[`${side}.process.json`] = sha256(bytes);
-        await writeFile(receiptPath, JSON.stringify(receipt, null, 2) + "\\n");
+        await writeFile(receiptPath, JSON.stringify(receipt, null, 2) + "\n");
         assert.throws(() => aggregateReceipts(f.root, expected), expectedError);
       } finally {
         await writeFile(processPath, previousProcess);
