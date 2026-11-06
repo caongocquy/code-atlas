@@ -102,19 +102,19 @@ function validateProcess(process, side, target, revisions, contract) {
   const isWindows = target.platform === "win32";
   const nativePath = isWindows ? path.win32 : path.posix;
   if (typeof executable !== "string" || !executable || executable.trim() !== executable
-    || /[\\0\\r\\n]/.test(executable) || !nativePath.isAbsolute(executable)
-    || !(isWindows ? /^pnpm\\.cmd$/i : /^pnpm$/).test(nativePath.basename(executable))) {
+    || /[\0\r\n]/.test(executable) || !nativePath.isAbsolute(executable)
+    || !(isWindows ? /^pnpm\.cmd$/i : /^pnpm$/).test(nativePath.basename(executable))) {
     fail(`${side} pnpm executable path is invalid`);
   }
   if (typeof process.reporterUrl !== "string" || !process.reporterUrl.startsWith("file:///")
-    || !/\\/ca01-test-reporter\\.mjs$/.test(process.reporterUrl)) fail(`${side} reporter URL is invalid`);
+    || !/\/ca01-test-reporter\.mjs$/.test(process.reporterUrl)) fail(`${side} reporter URL is invalid`);
   try {
     if (pathToFileURL(fileURLToPath(process.reporterUrl)).href !== process.reporterUrl) {
       fail(`${side} reporter URL is not canonical`);
     }
   } catch { fail(`${side} reporter URL is invalid`); }
   if (!Array.isArray(process.files) || process.files.length === 0
-    || process.files.some(file => typeof file !== "string" || !/^test\\/[A-Za-z0-9._-]+\\.test\\.ts$/.test(file))
+    || process.files.some(file => typeof file !== "string" || !/^test\/[A-Za-z0-9._-]+\.test\.ts$/.test(file))
     || JSON.stringify(process.files) !== JSON.stringify([...new Set(process.files)].sort())) {
     fail(`${side} test file inventory is invalid`);
   }
