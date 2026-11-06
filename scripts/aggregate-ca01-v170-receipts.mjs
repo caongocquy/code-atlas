@@ -87,7 +87,8 @@ function rawSummary(file) {
 
 function validateProcess(process, side, target, revisions, contract) {
   exactKeys(process, ["exitCode", "signal", "error", "node", "platform", "arch", "revision", "tree",
-    "loaderUrl", "loaderSha256", "tsxVersion", "pnpmVersion", "lockfileSha256", "eventsSha256", "stderrSha256"], `${side} process`);
+    "loaderUrl", "loaderSha256", "tsxVersion", "pnpmVersion", "pnpmExecutable", "lockfileSha256",
+    "reporterUrl", "files", "eventsSha256", "stderrSha256"], `${side} process`);
   if (process.node !== `v${target.node}` || process.platform !== target.platform || process.arch !== target.arch) fail(`${side} runtime tuple mismatch`);
   const revision = revisions[side === "baseline" ? "base" : side];
   if (!revision || process.revision !== revision.commit || process.tree !== revision.tree) fail(`${side} revision mismatch`);
@@ -96,6 +97,27 @@ function validateProcess(process, side, target, revisions, contract) {
     || process.loaderSha256 !== contract.execution.loaderSha256 || !/^[a-f0-9]{64}$/.test(process.loaderSha256)) fail(`${side} loader binding mismatch`);
   if (process.tsxVersion !== contract.execution.tsxVersion || process.pnpmVersion !== contract.dependencies.pnpmVersion
     || process.lockfileSha256 !== contract.dependencies.lockfileSha256) fail(`${side} toolchain binding mismatch`);
+  // The executable path is evidence from its native runner, not this aggregation host.
+  const executable = process.pnpmExecutable;
+  const isWindows = target.platform === "win32";
+  const nativePath = isWindows ? path.win32 : path.posix;
+  if (typeof executable !== "string" || !executable || executable.trim() !== executable
+    || /[\0\r\n]/.test(executable) || !nativePath.isAbsolute(executable)
+    || !(isWindows ? /^pnpm\.cmd$/i : /^pnpm(?:\.(?:js|cjs))?$/).test(nativePath.basename(executable))) {
+    fail(`${side} pnpm executable path is invalid`);
+  }
+  if (typeof process.reporterUrl !== "string" || !process.reporterUrl.startsWith("file:///")
+    || !/\/ca01-test-reporter\.mjs$/.test(process.reporterUrl)) fail(`${side} reporter URL is invalid`);
+  try {
+    if (pathToFileURL(fileURLToPath(process.reporterUrl)).href !== process.reporterUrl) {
+      fail(`${side} reporter URL is not canonical`);
+    }
+  } catch { fail(`${side} reporter URL is invalid`); }
+  if (!Array.isArray(process.files) || process.files.length === 0
+    || process.files.some(file => typeof file !== "string" || !/^test\/[A-Za-z0-9._-]+\.test\.ts$/.test(file))
+    || JSON.stringify(process.files) !== JSON.stringify([...new Set(process.files)].sort())) {
+    fail(`${side} test file inventory is invalid`);
+  }
   for (const key of ["eventsSha256", "stderrSha256"]) if (!/^[a-f0-9]{64}$/.test(process[key] ?? "")) fail(`${side} missing ${key}`);
 }
 
@@ -167,6 +189,11 @@ function validateCell(dir, artifactName, expected) {
     if ((process.exitCode === 0) !== (summary.fail === 0)) fail(`${side} process exit and suite counters disagree`);
     return [side, summary];
   }));
+
+  for (const field of ["pnpmExecutable", "reporterUrl"]) {
+    const values = ["baseline", "candidate", "frozen"].map(side => receipt.processes[side][field]);
+    if (new Set(values).size !== 1) fail(`Native ${field} differs across baseline/candidate/frozen: ${artifactName}`);
+  }
 
   const common = readJson(path.join(dir, "common-harness-comparison.json"));
   const strict = readJson(path.join(dir, "frozen-strict-comparison.json"));

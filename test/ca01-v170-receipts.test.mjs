@@ -24,6 +24,10 @@ const targets = [
   { platform: "linux", arch: "x64" }, { platform: "win32", arch: "x64" },
 ];
 const fixtureLoaderUrl = pathToFileURL(path.join(os.tmpdir(), "runner", "node_modules", "tsx", "esm", "index.mjs")).href;
+const fixtureReporterUrl = pathToFileURL(path.join(os.tmpdir(), "runner", "scripts", "ca01-test-reporter.mjs")).href;
+const fixturePnpmExecutable = cell => cell.platform === "win32"
+  ? "C:\\hostedtoolcache\\windows\\node\\pnpm.CMD"
+  : "/opt/hostedtoolcache/node/current/lib/node_modules/corepack/dist/pnpm.js";
 const frozenMissing = [
   [1060, "init indexes graph and lexical capabilities by default"],
   [1959, "init --no-index skips graph and lexical indexing"],
@@ -70,6 +74,8 @@ async function fixture(t) {
         tree: revisions[side === "baseline" ? "base" : side].tree,
         loaderUrl: fixtureLoaderUrl,
         loaderSha256: "2".repeat(64), tsxVersion: "4.23.13", pnpmVersion: "11.22.0",
+        pnpmExecutable: fixturePnpmExecutable(cell), reporterUrl: fixtureReporterUrl,
+        files: ["test/affected-tests.test.ts", "test/phase11k-closure.test.ts"],
         lockfileSha256: "3".repeat(64), eventsSha256: sha256(events), stderrSha256: sha256(stderr),
       };
       for (const [name, bytes] of [[`${side}.jsonl`, events], [`${side}.stderr`, stderr]]) {
@@ -153,6 +159,51 @@ test("aggregates exactly eight native receipts and preserves only the four froze
   assert.ok(result.cells.every(cell => cell.commonDifferentialPass));
   assert.deepEqual(result.frozenMissingIdentities, f.frozenMissing);
   assert.equal(result.frozenStrictOutcome, "EXPECTED_FAIL_WITH_FOUR_MISSING_IDENTITIES");
+});
+
+test("receipt process metadata rejects missing, invalid or inconsistent runner evidence", async t => {
+  const f = await fixture(t);
+  const dir = path.join(f.root, "ca01-native-darwin-arm64-node22.23.3");
+  const invalidReporter = "https://example.invalid/ca01-test-reporter.mjs";
+  const alternateReporter = pathToFileURL(path.join(os.tmpdir(), "alternate", "ca01-test-reporter.mjs")).href;
+  const cases = [
+    ["missing pnpmExecutable", "baseline", report => { delete report.pnpmExecutable; }, /baseline process shape/i],
+    ["extra process key", "baseline", report => { report.unreviewed = true; }, /baseline process shape/i],
+    ["empty pnpm executable", "baseline", report => { report.pnpmExecutable = ""; }, /pnpm executable path is invalid/i],
+    ["relative pnpm executable", "baseline", report => { report.pnpmExecutable = "bin/pnpm"; }, /pnpm executable path is invalid/i],
+    ["wrong executable basename", "baseline", report => { report.pnpmExecutable = "/opt/bin/npm"; }, /pnpm executable path is invalid/i],
+    ["pnpm executable with newline", "baseline", report => { report.pnpmExecutable += "\n"; }, /pnpm executable path is invalid/i],
+    ["candidate executable drift", "candidate", report => { report.pnpmExecutable = "/opt/other/bin/pnpm"; }, /pnpmExecutable differs/i],
+    ["invalid reporter URL", "baseline", report => { report.reporterUrl = invalidReporter; }, /reporter URL is invalid/i],
+    ["frozen reporter URL drift", "frozen", report => { report.reporterUrl = alternateReporter; }, /reporterUrl differs/i],
+    ["missing file inventory", "baseline", report => { delete report.files; }, /baseline process shape/i],
+    ["empty file inventory", "baseline", report => { report.files = []; }, /test file inventory is invalid/i],
+    ["unsafe test file", "baseline", report => { report.files = ["../outside.test.ts"]; }, /test file inventory is invalid/i],
+    ["duplicate test files", "baseline", report => { report.files.push(report.files[0]); }, /test file inventory is invalid/i],
+    ["unsorted test files", "baseline", report => { report.files.reverse(); }, /test file inventory is invalid/i],
+  ];
+  for (const [name, side, mutate, expectedError] of cases) {
+    await t.test(name, async () => {
+      const processPath = path.join(dir, `${side}.process.json`);
+      const receiptPath = path.join(dir, "receipt.json");
+      const previousProcess = await readFile(processPath);
+      const previousReceipt = await readFile(receiptPath);
+      try {
+        const report = JSON.parse(previousProcess);
+        mutate(report);
+        const bytes = Buffer.from(JSON.stringify(report, null, 2) + "\n");
+        await writeFile(processPath, bytes);
+        const receipt = JSON.parse(previousReceipt);
+        receipt.processes[side] = report;
+        receipt.files[`${side}.process.json`] = sha256(bytes);
+        await writeFile(receiptPath, JSON.stringify(receipt, null, 2) + "\n");
+        assert.throws(() => aggregateReceipts(f.root, expected), expectedError);
+      } finally {
+        await writeFile(processPath, previousProcess);
+        await writeFile(receiptPath, previousReceipt);
+      }
+    });
+  }
 });
 
 test("missing or extra native receipts fail closed", async t => {
