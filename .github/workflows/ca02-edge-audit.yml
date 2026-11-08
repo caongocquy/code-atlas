@@ -38,5 +38,7 @@ jobs:
             fi
             sleep $((attempt * 10))
           done
+      - name: Prepare native parser bindings
+        run: node scripts/parser-distribution.mjs prepare --build-missing
       - name: Measure published edge and provenance baseline
         run: node --import tsx/esm --test test/ca02-edge-audit.test.ts
