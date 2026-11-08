@@ -12,7 +12,7 @@
     },
     {
       "file": "source.ts",
-      "line": 24,
+      "line": 25,
       "caller": "invokeKnown",
       "callee": "First.work",
       "kind": "expected",
@@ -20,7 +20,7 @@
     },
     {
       "file": "source.ts",
-      "line": 28,
+      "line": 29,
       "caller": "invokeUnknown",
       "callee": null,
       "kind": "unresolved",
@@ -28,14 +28,14 @@
     },
     {
       "file": "source.ts",
-      "line": 32,
+      "line": 33,
       "caller": "invokeTwice",
       "callee": "target",
       "kind": "expected"
     },
     {
       "file": "source.ts",
-      "line": 33,
+      "line": 34,
       "caller": "invokeTwice",
       "callee": "target",
       "kind": "expected",
