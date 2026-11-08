@@ -134,7 +134,7 @@ function siteNames(input: ResolverInput, site: ResolutionSiteIdentity): readonly
 function resolveScopedBareCall(input: ResolverInput, site: ResolutionSiteIdentity): readonly ResolutionCandidate[] {
   if (!["javascript", "typescript", "tsx"].includes(input.facts.language)) return [];
   const call = input.facts.callSites.find((item) => item.localId === site.localId);
-  if (!call?.scopeId || !/^[\\p{ID_Start}$_][\\p{ID_Continue}$\\u200c\\u200d]*$/u.test(call.calleeText)) return [];
+  if (!call?.scopeId || !/^[\p{ID_Start}$_][\p{ID_Continue}$\u200c\u200d]*$/u.test(call.calleeText)) return [];
 
   const scopes = new Map(input.facts.containmentScopes.map((scope) => [scope.localId, scope]));
   const callEvidence = input.evidence.calls.filter((item) =>
