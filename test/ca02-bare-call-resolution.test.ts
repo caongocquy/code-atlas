@@ -51,7 +51,7 @@ test("CA-02 does not fabricate target identity for same-name lexical shadowing",
     "  return target();",
     "}",
     "export function caller() { return target(); }",
-  ].join("\\n");
+  ].join("\n");
   const { root, store, graph } = await indexSource(source);
   try {
     // Graph node identity currently cannot distinguish same-qualified-name symbols.
