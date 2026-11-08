@@ -131,6 +131,12 @@ test("CA-02 characterize published gold calls, uncertainty and resolution proven
         expectedUnresolved: expectedUnresolved.length,
         coverage,
         diagnosticsCount: diagnostics.length,
+        diagnosticReasons: diagnostics.map((item) => ({
+          kind: item.kind,
+          line: item.source.line,
+          file: item.source.file,
+          reason: item.kind === "ambiguous" ? item.ambiguityReason : item.reason,
+        })),
         callEdges: callEdgeSummaries,
         caveat: "Oracle-limited, source/line-aware measurement; not repository-wide recall.",
       };
