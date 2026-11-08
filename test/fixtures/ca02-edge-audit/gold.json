@@ -1,0 +1,83 @@
+{
+  "description": "CA-02 audited gold fixture specification. Not yet executed; expected edges are a proposed oracle, not measured observations.",
+  "scope": "calls",
+  "expectations": [
+    {
+      "file": "source.ts",
+      "line": 9,
+      "caller": "outer",
+      "callee": "outer.target",
+      "kind": "expected",
+      "notes": "Nearest lexical binding shadows exported target"
+    },
+    {
+      "file": "source.ts",
+      "line": 24,
+      "caller": "invokeKnown",
+      "callee": "First.work",
+      "kind": "expected",
+      "notes": "Statically typed receiver"
+    },
+    {
+      "file": "source.ts",
+      "line": 28,
+      "caller": "invokeUnknown",
+      "callee": null,
+      "kind": "unresolved",
+      "notes": "Structural assertion names a member but not a single concrete implementation"
+    },
+    {
+      "file": "source.ts",
+      "line": 32,
+      "caller": "invokeTwice",
+      "callee": "target",
+      "kind": "expected"
+    },
+    {
+      "file": "source.ts",
+      "line": 33,
+      "caller": "invokeTwice",
+      "callee": "target",
+      "kind": "expected",
+      "notes": "Distinct callsite location; graph may deduplicate edges but should preserve evidence if promised"
+    },
+    {
+      "file": "consumer.ts",
+      "line": 4,
+      "caller": "viaAlias",
+      "callee": "target",
+      "kind": "expected",
+      "notes": "Re-export alias should bind to source.ts target"
+    }
+  ],
+  "forbidden": [
+    {
+      "caller": "outer",
+      "callee": "source.ts:target",
+      "notes": "Do not resolve shadowed call to exported top-level target"
+    },
+    {
+      "caller": "invokeKnown",
+      "callee": "Second.work",
+      "notes": "Do not match by member name alone"
+    },
+    {
+      "caller": "invokeUnknown",
+      "callee": "First.work",
+      "notes": "Do not invent concrete implementation from structural assertion"
+    },
+    {
+      "caller": "invokeUnknown",
+      "callee": "Second.work",
+      "notes": "Do not invent concrete implementation from structural assertion"
+    }
+  ],
+  "measurements": {
+    "run": false,
+    "TP": null,
+    "FP": null,
+    "FN": null,
+    "precision": null,
+    "recall": null
+  }
+}
