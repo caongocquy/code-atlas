@@ -16,6 +16,18 @@ const workflow = readFileSync(new URL("../.github/workflows/v170-native-qualific
 const nativeDifferential = workflow.split("\n  native-differential:\n")[1]?.split(/\n\x20{2}[a-z0-9_-]+:\n/)[0] ?? "";
 const preflight = workflow.split("\n  preflight:\n")[1]?.split(/\n\x20{2}[a-z0-9_-]+:\n/)[0] ?? "";
 
+test("controller install retries transient downloads without weakening dependency integrity", () => {
+  const controller = workflow.split("\n  controller-tests:\n")[1]?.split("\n  preflight:\n")[0] ?? "";
+  const installStep = controller.split("- name: Install the locked test toolchain")[1]
+    ?.split("- name: Run receipt and relocation controller regressions")[0] ?? "";
+  assert.match(installStep, /corepack prepare pnpm@11\.22\.0 --activate/);
+  assert.match(installStep, /for attempt in 1 2 3; do/);
+  assert.match(installStep, /if pnpm install --frozen-lockfile; then/);
+  assert.match(installStep, /if \[\[ "\$attempt" -eq 3 \]\]; then/);
+  assert.match(installStep, /exit 1/);
+  assert.doesNotMatch(installStep, /--ignore-scripts|--no-frozen-lockfile|--force/);
+});
+
 test("legacy parity compares the candidate with the pinned frozen target", () => {
   assert.ok(workflow.includes("CA01_FROZEN_SHA: d2570bd789095d82442ff332beb36a5ddd998194"));
   assert.ok(workflow.includes('eval/mcp/legacy-parity.ts "$GITHUB_WORKSPACE/.frozen"'));
