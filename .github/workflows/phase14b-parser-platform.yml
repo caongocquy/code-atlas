@@ -11,7 +11,21 @@ jobs:
         with:
           node-version: 22.23.3
       - run: corepack enable
-      - run: pnpm install --frozen-lockfile
+      - name: Install locked dependencies with bounded retries
+        shell: bash
+        run: |
+          set -euo pipefail
+          # tree-sitter-cli installs a pinned release binary; its CDN may return 504.
+          for attempt in 1 2 3; do
+            if pnpm install --frozen-lockfile; then
+              exit 0
+            fi
+            if [[ "$attempt" -eq 3 ]]; then
+              echo 'Locked dependency install failed after 3 attempts.' >&2
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
       - run: pnpm run build
       - run: node scripts/parser-distribution.mjs prepare --build-missing
       - run: pnpm run lint
