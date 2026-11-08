@@ -379,10 +379,17 @@ export function assembleFactsGraph(
     if (!resolution) continue;
     for (const decision of resolution.decisions) {
       if (decision.status !== "resolved") continue;
-      const fact = unit.facts.symbols.find((item) => item.localId === (unit.facts.callSites.find((site) => site.localId === decision.site.localId)?.callerId
+      const call = unit.facts.callSites.find((site) => site.localId === decision.site.localId);
+      const scopedCallers = call?.scopeId
+        ? unit.facts.symbols.filter((symbol) => symbol.scopeId === call.scopeId
+          && (symbol.kind === "function" || symbol.kind === "method"))
+        : [];
+      const callerId = call?.callerId ?? (scopedCallers.length === 1 ? scopedCallers[0]!.localId : undefined);
+      const ownerId = callerId
         ?? unit.facts.inheritances.find((site) => site.localId === decision.site.localId)?.subjectId
         ?? unit.facts.implementations.find((site) => site.localId === decision.site.localId)?.subjectId
-        ?? unit.facts.references.find((site) => site.localId === decision.site.localId)?.ownerId));
+        ?? unit.facts.references.find((site) => site.localId === decision.site.localId)?.ownerId;
+      const fact = unit.facts.symbols.find((item) => item.localId === ownerId);
       if (!fact) continue;
       const sourceId = symbols.get(symbolIdentityKey(factSymbolIdentity(repoId, unit.relativePath, unit.facts.language, fact)));
       const targetId = symbols.get(symbolIdentityKey(decision.target));
