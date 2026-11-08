@@ -5,7 +5,7 @@
   "source": "GitHub source inspection only",
   "tests": {
     "executed": true,
-    "passed": 2,
+    "passed": 13,
     "failed": 0
   },
   "precision": null,
@@ -29,14 +29,14 @@
   ],
   "caveat": "Metrics from this small TS fixture only. In particular falseNegativeRate=1 is the labeled-positive miss rate; do not generalize to the full product. No production change.",
   "executed": {
-    "runId": 42490608407,
-    "runUrl": "https://github.com/caongocquy/code-atlas/actions/runs/42490608407",
-    "head": "f25d1e786e623d78eb65bdcbbb75d7d88522fc01",
+    "runId": 42490823628,
+    "runUrl": "https://github.com/caongocquy/code-atlas/actions/runs/42490823628",
+    "head": "e6170a208f91eba606c4ba8d30098d5507c069ab",
     "platform": "ubuntu-22.04",
     "node": "22.23.3",
     "testCommand": "node --import tsx/esm --test test/ca02-edge-audit.test.ts",
-    "testCount": 2,
-    "testsPassed": 2,
+    "testCount": 13,
+    "testsPassed": 13,
     "testsFailed": 0,
     "results": {
       "labeledPositiveCallsites": 5,
@@ -55,6 +55,8 @@
       },
       "publishedCallEdges": 0
     },
-    "interpretation": "Gold corpus produces no resolved call edges. This is a reproducible characterization, not a proven regression or global precision/recall estimate; unknown diagnostic is insufficient for definitive root cause."
+    "interpretation": "13/13 tests pass (11 pre-existing resolver/provenance contracts + 2 gold characterization). Gold fixture still has zero resolved call edges; the existing positive controls confirm the tested paths can resolve with synthetic known evidence. This is a source/evidence capability limitation candidate, not yet a diagnosed regression or global recall estimate.",
+    "focusedResolverContractTests": 11,
+    "goldCharacterizationTests": 2
   }
 }
