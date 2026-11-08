@@ -11,7 +11,7 @@ Scope: audit and baseline design only. No production changes, release, or modifi
 3. `src/core/graph/resolver/scip-evidence.ts` includes a source range and site-local ID for a SCIP binding.
 4. `src/core/graph/resolver/provenance.ts` exposes `withProvenance`, validates canonical source/target logical IDs and exact/strong confidence, sorts evidence, and bounds compact evidence to 8 entries.
 5. `src/core/graph/types.ts` already makes `GraphEdge.resolution?: EdgeResolutionProvenance` optional, along with legacy `resolutionMethod`, `evidenceKind`, and `resolutionSource`.
-6. `src/core/graph/build-graph.ts` `assembleFactsGraph` (lines 374–396 in pinned HEAD) iterates only resolved decisions, maps logical symbols to graph IDs, then pushes `{ from, to, type }` with no `resolution` or callsite span. For this exact assembly path, edge provenance is not directly attached. Whether another downstream step enriches it remains UNVERIFIED.
+6. `src/core/graph/build-graph.ts` `assembleFactsGraph` (lines 374–396 in pinned HEAD) emits intermediate `{ from, to, type }` edges without provenance. **This is intentional pipeline staging, not an established production provenance defect.** `src/core/indexing/index-pipeline.service.ts` `addResolutionProvenance()` (lines 238–270) decorates resolved edges before publishing (invoked around line 806). `AtlasStore` serializes and restores resolution columns (`atlas.store.ts`, around lines 821–852 and 1356–1363). An existing `test/phase14b-facts-graph-resolver.test.ts` test also asserts persisted implementation-edge confidence. Actual callsite/MCP projection parity still needs executed verification.
 7. `build-graph.ts` has other/legacy assembly paths; do not extrapolate a finding from one path to every graph mode.
 
 ## Existing regression coverage inspected
@@ -22,11 +22,15 @@ Scope: audit and baseline design only. No production changes, release, or modifi
 
 ## Risks and hypotheses — not yet established bugs
 
-- Loss of provenance in graph serialization and public MCP inspect/search.
+- Loss or truncation of callsite-specific provenance through graph deduplication, persistence and public MCP inspect/search. The ordinary publication path already has a provenance enrichment step.
 - Incorrect cross-module re-export, import-alias or scope candidate acceptance.
 - Member method/overload ambiguity and false-positive edges for bare calls.
 - Loss of unresolved/ambiguous diagnostics across incremental generation.
 - Graph edge dedup by `from:to:type` potentially collapsing independent callsite evidence; must test desired contract before changing it.
+
+## Corrected root-cause triage
+
+The initial observation that bare assembly edges lack metadata was incomplete. Full indexing enriches these edges before persistence. Do not fix `assembleFactsGraph` solely to duplicate enrichment. The next meaningful concern is repeated callsites sharing a graph-edge tuple: `addResolutionProvenance` assigns `edge.resolution` for each site, and later assignments may replace rather than aggregate evidence. This is a **source-level risk**, not yet an executed defect.
 
 ## Baseline execution status
 
