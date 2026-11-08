@@ -59,3 +59,17 @@ Gold evidence should specify source file, callsite line, expected logical target
 ## Decision / hold
 
 **Audit in progress; implementation NO-GO until a reproducible failing case and an executed baseline exist.** Do not silently elevate weak candidates, change public MCP defaults, overwrite graph identity, or grant CA-01 release/security waivers. GitNexus impact and detect_changes tools were not available in this connected environment; no production symbol was edited.
+
+## Executed baseline and narrowed root-cause analysis (2026-11-08)
+
+CI evidence: [CA-02 run #42490823628](https://github.com/caongocquy/code-atlas/actions/runs/42490823628), Node 22.23.3 / Ubuntu 22.04 with pinned parser binaries. Existing 11/11 resolver/SCIP/persisted-provenance contract tests PASS, additional gold characterization 2/2 PASS. No production changes were made. Test success means measurement completed, **not** that gold recall meets target.
+
+Gold fixture: 6 extracted callsites, 0 resolved, 6 unresolved, 0 ambiguous. Five labeled positive callsites, 0 matched; oracle-limited recall **0/5**. No forbidden matches; precision is **undefined** (no positive predictions), NOT 100%. Persistent diagnostics: 17 unknown entries across calls and other sites; no parse errors. Graph has zero published call edges. Findings reproduce in full `indexRepository` → `AtlasStore.loadGraph`. This corpus is intentionally small and must not be interpreted as global accuracy or compared with an unrun previous baseline.
+
+Source-level capability analysis:
+- `src/core/graph/resolver/strategies.ts` `resolveLexical` calls `bindingCandidate`, which currently returns an edge candidate only for a **known declared type**. Bare references to function identifiers need additional binding-to-symbol evidence; a matching name alone is unsafe.
+- `resolveImports` only looks up import facts whose localId equals the requested resolution site; imported aliases used at independent callsites need verified binding propagation. Do not resolve imports by name globally.
+- `chained-call` and `bounded-interprocedural` are currently explicit no-op strategies. Member/overload resolution may therefore remain unresolved by design.
+- Existing positive control tests show that exact SCIP evidence and externally provided strong candidates resolve successfully and implementation-edge provenance persists. This narrows the gold gap to end-to-end candidate acquisition rather than a universally broken unique-target gate.
+
+Next engineering gate: construct a minimal single-file function-call fixture with explicit scope-owner evidence, inspect parser facts, site-to-binding mapping and resolved candidate traces. Implement only a verified source/scope-bound target resolution rule with deterministic ambiguity/unknown fallback. Add reexport/alias, typed receiver and repeated-callsite checks progressively and guard against false positives. Measure incremental/clean parity and MCP compatibility before any production commit.
