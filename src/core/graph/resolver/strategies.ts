@@ -139,7 +139,7 @@ function resolveScopedBareCall(input: ResolverInput, site: ResolutionSiteIdentit
   const callEvidence = input.evidence.calls.filter((item) =>
     sameSourceUnit(item.sourceUnit, site.sourceUnit) && item.site.localId === site.localId);
   const seen = new Set<string>();
-  let current: string | undefined = call.scopeId;
+  let current: typeof call.scopeId = call.scopeId;
   while (current && !seen.has(current)) {
     seen.add(current);
     // A shadowing variable, parameter or import blocks resolution to an outer function.
