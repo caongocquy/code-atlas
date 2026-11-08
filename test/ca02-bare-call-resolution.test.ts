@@ -7,6 +7,7 @@ import test from "node:test";
 import { indexRepository } from "../src/core/indexing/index-pipeline.service.js";
 import { getRepositoryIdentity } from "../src/core/repository/repository-identity.js";
 import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
+import { extractParsedFacts } from "../src/core/facts/facts-extractor.js";
 
 async function indexSource(source: string) {
   const root = await mkdtemp(path.join(os.tmpdir(), "ca02-bare-call-"));
@@ -24,8 +25,13 @@ test("CA-02 resolves a unique bare lexical target and preserves provenance", asy
     "  return target();",
     "}",
   ].join("\n");
+  const parsed = extractParsedFacts({ source, filePath: "source.ts", language: "typescript", contentHash: "ca02-diagnostic" });
+  if (parsed.kind === "facts") {
+    console.log("CA02_SCOPE_FACTS " + JSON.stringify({ symbols: parsed.facts.symbols, scopes: parsed.facts.containmentScopes, calls: parsed.facts.callSites }));
+  }
   const { root, store, graph } = await indexSource(source);
   try {
+    console.log("CA02_DIAGNOSTICS " + JSON.stringify(store.getGraphResolutionDiagnostics(getRepositoryIdentity(root).id)));
     const nodes = new Map(graph.nodes.map((node) => [node.id, node]));
     const calls = graph.edges.filter((edge) => edge.type === "calls");
     const caller = graph.nodes.find((node) => node.type === "function" && node.name === "caller");
