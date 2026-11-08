@@ -31,8 +31,8 @@ jobs:
             if [[ "$attempt" -eq 3 ]]; then exit 1; fi
             sleep $((attempt * 10))
           done
-      - run: node scripts/parser-distribution.mjs prepare --build-missing
       - name: Typecheck
         run: pnpm exec tsc --noEmit
+      - run: node scripts/parser-distribution.mjs prepare --build-missing
       - name: Bare-call and existing resolver regressions
         run: node --import tsx/esm --test test/ca02-bare-call-resolution.test.ts test/phase14b-resolver-decisions.test.ts test/phase14b-facts-graph-resolver.test.ts test/phase14b-typescript-member-calls.test.ts
