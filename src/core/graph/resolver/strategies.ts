@@ -130,7 +130,49 @@ function siteNames(input: ResolverInput, site: ResolutionSiteIdentity): readonly
   ];
 }
 
+function resolveScopedBareCall(input: ResolverInput, site: ResolutionSiteIdentity): readonly ResolutionCandidate[] {
+  if (!["javascript", "typescript", "tsx"].includes(input.facts.language)) return [];
+  const call = input.facts.callSites.find((item) => item.localId === site.localId);
+  if (!call?.scopeId || !/^[\\p{ID_Start}$_][\\p{ID_Continue}$\\u200c\\u200d]*$/u.test(call.calleeText)) return [];
+
+  const scopes = new Map(input.facts.containmentScopes.map((scope) => [scope.localId, scope]));
+  const callEvidence = input.evidence.calls.filter((item) =>
+    sameSourceUnit(item.sourceUnit, site.sourceUnit) && item.site.localId === site.localId);
+  const seen = new Set<string>();
+  let current: string | undefined = call.scopeId;
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    // A shadowing variable, parameter or import blocks resolution to an outer function.
+    const bindings = input.facts.bindingSeeds.filter((item) => item.ownerId === current && item.name === call.calleeText);
+    if (bindings.length > 0) return [];
+
+    const declarations = input.facts.symbols.filter((symbol) => {
+      if (symbol.kind !== "function" || symbol.name !== call.calleeText || !symbol.scopeId) return false;
+      return scopes.get(symbol.scopeId)?.parentId === current;
+    });
+    if (declarations.length > 0) {
+      return mergeCandidates(declarations.map((symbol) => ({
+        target: {
+          repositoryId: site.sourceUnit.repositoryId,
+          relativePath: site.sourceUnit.relativePath,
+          language: site.sourceUnit.language,
+          kind: symbol.kind,
+          qualifiedName: symbol.declaredQualifiedName ?? symbol.name,
+          discriminator: symbol.localId,
+        },
+        strategy: "lexical-local" as const,
+        confidence: "strong" as const,
+        evidenceIds: callEvidence.map((item) => item.evidenceId).sort(),
+      })));
+    }
+    current = scopes.get(current)?.parentId;
+  }
+  return [];
+}
+
 function resolveLexical(input: ResolverInput, site: ResolutionSiteIdentity, strategy: ResolutionStrategyId): readonly ResolutionCandidate[] {
+  const scopedCalls = resolveScopedBareCall(input, site);
+  if (scopedCalls.length > 0) return scopedCalls;
   const names = siteNames(input, site);
   const bindings = input.evidence.bindings.filter((item) => sameSourceUnit(item.sourceUnit, site.sourceUnit) && (
     item.bindingId === site.localId || item.scope.localId === site.localId || names.includes(item.name)
