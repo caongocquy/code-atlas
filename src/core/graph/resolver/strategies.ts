@@ -1,3 +1,4 @@
+import type { FactLocalId } from "../../facts/facts.types.js";
 import { symbolIdentityKey, type ResolutionSiteIdentity, type SymbolIdentity } from "./identities.js";
 import type { ResolutionCandidate, ResolverInput } from "./decision.js";
 import type {
@@ -139,7 +140,7 @@ function resolveScopedBareCall(input: ResolverInput, site: ResolutionSiteIdentit
   const callEvidence = input.evidence.calls.filter((item) =>
     sameSourceUnit(item.sourceUnit, site.sourceUnit) && item.site.localId === site.localId);
   const seen = new Set<string>();
-  let current: typeof call.scopeId = call.scopeId;
+  let current: FactLocalId | undefined = call.scopeId;
   while (current && !seen.has(current)) {
     seen.add(current);
     // A shadowing variable, parameter or import blocks resolution to an outer function.
