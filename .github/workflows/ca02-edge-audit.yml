@@ -1,0 +1,42 @@
+name: CA-02 edge audit baseline
+
+on:
+  pull_request:
+    paths:
+      - 'test/ca02-edge-audit.test.ts'
+      - 'test/fixtures/ca02-edge-audit/**'
+      - '.github/workflows/ca02-edge-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gold-baseline:
+    name: Published graph gold baseline (Node 22 Linux)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.3'
+      - name: Install pinned toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@11.22.0 --activate
+          # GitHub Releases sometimes returns a transient 504 during tree-sitter-cli postinstall.
+          for attempt in 1 2 3; do
+            if pnpm install --frozen-lockfile; then
+              exit 0
+            fi
+            if [[ "$attempt" -eq 3 ]]; then
+              echo 'Pinned toolchain installation failed after three attempts.' >&2
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
+      - name: Measure published edge and provenance baseline
+        run: node --import tsx/esm --test test/ca02-edge-audit.test.ts
