@@ -43,9 +43,22 @@ jobs:
       - name: Install the locked test toolchain
         shell: bash
         run: |
+          set -euo pipefail
           corepack enable
           corepack prepare pnpm@11.22.0 --activate
-          pnpm install --frozen-lockfile
+          # tree-sitter-cli downloads a pinned GitHub release binary during postinstall.
+          # Retry transient CDN failures without relaxing the lockfile or skipping scripts.
+          for attempt in 1 2 3; do
+            if pnpm install --frozen-lockfile; then
+              exit 0
+            fi
+            if [[ "$attempt" -eq 3 ]]; then
+              echo 'Locked toolchain install failed after 3 attempts.' >&2
+              exit 1
+            fi
+            echo "Locked toolchain install failed (attempt $attempt/3); retrying." >&2
+            sleep $((attempt * 10))
+          done
       - name: Run receipt and relocation controller regressions
         shell: bash
         run: |
