@@ -40,5 +40,7 @@ jobs:
           done
       - name: Prepare native parser bindings
         run: node scripts/parser-distribution.mjs prepare --build-missing
+      - name: Verify existing resolver and persisted provenance contract
+        run: node --import tsx/esm --test test/phase14b-resolver-decisions.test.ts test/phase16b-scip-resolution.test.ts test/phase14b-facts-graph-resolver.test.ts
       - name: Measure published edge and provenance baseline
         run: node --import tsx/esm --test test/ca02-edge-audit.test.ts
