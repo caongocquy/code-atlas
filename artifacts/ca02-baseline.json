@@ -4,14 +4,14 @@
   "recordedAt": "2026-11-08",
   "source": "GitHub source inspection only",
   "tests": {
-    "executed": false,
-    "passed": null,
-    "failed": null
+    "executed": true,
+    "passed": 2,
+    "failed": 0
   },
   "precision": null,
-  "recall": null,
+  "recall": 0,
   "falsePositiveRate": null,
-  "falseNegativeRate": null,
+  "falseNegativeRate": 1,
   "latencyMs": null,
   "incrementalParity": null,
   "mcpCompatibility": null,
@@ -27,5 +27,34 @@
       "detail": "assembleFactsGraph pushes resolved graph edge without decision provenance attached; downstream enrichment unverified"
     }
   ],
-  "caveat": "No runtime or gitnexus tool available; metrics must not be interpreted as zero."
+  "caveat": "Metrics from this small TS fixture only. In particular falseNegativeRate=1 is the labeled-positive miss rate; do not generalize to the full product. No production change.",
+  "executed": {
+    "runId": 42490608407,
+    "runUrl": "https://github.com/caongocquy/code-atlas/actions/runs/42490608407",
+    "head": "f25d1e786e623d78eb65bdcbbb75d7d88522fc01",
+    "platform": "ubuntu-22.04",
+    "node": "22.23.3",
+    "testCommand": "node --import tsx/esm --test test/ca02-edge-audit.test.ts",
+    "testCount": 2,
+    "testsPassed": 2,
+    "testsFailed": 0,
+    "results": {
+      "labeledPositiveCallsites": 5,
+      "matchedPositiveCallsites": 0,
+      "falseNegativeCallsites": 5,
+      "forbiddenMatches": 0,
+      "labeledPrecision": null,
+      "labeledRecall": 0,
+      "recordedCalls": 6,
+      "resolvedCalls": 0,
+      "unresolvedCalls": 6,
+      "ambiguousCalls": 0,
+      "diagnostics": 17,
+      "diagnosticReasons": {
+        "unknown": 17
+      },
+      "publishedCallEdges": 0
+    },
+    "interpretation": "Gold corpus produces no resolved call edges. This is a reproducible characterization, not a proven regression or global precision/recall estimate; unknown diagnostic is insufficient for definitive root cause."
+  }
 }
