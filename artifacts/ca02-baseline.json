@@ -1,0 +1,31 @@
+{
+  "task": "CA-02",
+  "baselineSha": "65078cf878099dedf3ceac36fafa9675dc09468b",
+  "recordedAt": "2026-11-08",
+  "source": "GitHub source inspection only",
+  "tests": {
+    "executed": false,
+    "passed": null,
+    "failed": null
+  },
+  "precision": null,
+  "recall": null,
+  "falsePositiveRate": null,
+  "falseNegativeRate": null,
+  "latencyMs": null,
+  "incrementalParity": null,
+  "mcpCompatibility": null,
+  "findings": [
+    {
+      "id": "CA02-AUDIT-01",
+      "status": "source-confirmed",
+      "path": "src/core/graph/build-graph.ts",
+      "lines": [
+        374,
+        396
+      ],
+      "detail": "assembleFactsGraph pushes resolved graph edge without decision provenance attached; downstream enrichment unverified"
+    }
+  ],
+  "caveat": "No runtime or gitnexus tool available; metrics must not be interpreted as zero."
+}
