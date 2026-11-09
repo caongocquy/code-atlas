@@ -335,6 +335,17 @@ export function assembleFactsGraph(
   const files = new Set(canonical.map((unit) => unit.relativePath));
   const fileIds = new Map<string, string>();
   const symbols = new Map<string, string>();
+  const graphIdentityCounts = new Map<string, number>();
+  const graphIdentityKey = (relativePath: string, kind: string, qualifiedName: string) =>
+    JSON.stringify([relativePath, kind, qualifiedName]);
+  for (const unit of canonical) {
+    for (const symbol of unit.facts.symbols) {
+      const key = graphIdentityKey(unit.relativePath, symbol.kind, symbol.declaredQualifiedName ?? symbol.name);
+      graphIdentityCounts.set(key, (graphIdentityCounts.get(key) ?? 0) + 1);
+    }
+  }
+  const hasUniqueGraphIdentity = (identity: SymbolIdentity): boolean =>
+    graphIdentityCounts.get(graphIdentityKey(identity.relativePath, identity.kind, identity.qualifiedName)) === 1;
 
   for (const unit of canonical) {
     const fileId = createGraphNodeId(repoId, unit.relativePath, "file", unit.relativePath);
@@ -379,13 +390,24 @@ export function assembleFactsGraph(
     if (!resolution) continue;
     for (const decision of resolution.decisions) {
       if (decision.status !== "resolved") continue;
-      const fact = unit.facts.symbols.find((item) => item.localId === (unit.facts.callSites.find((site) => site.localId === decision.site.localId)?.callerId
+      const call = unit.facts.callSites.find((site) => site.localId === decision.site.localId);
+      const scopedCallers = call?.scopeId
+        ? unit.facts.symbols.filter((symbol) => symbol.scopeId === call.scopeId
+          && (symbol.kind === "function" || symbol.kind === "method"))
+        : [];
+      const callerId = call?.callerId ?? (scopedCallers.length === 1 ? scopedCallers[0]!.localId : undefined);
+      const ownerId = callerId
         ?? unit.facts.inheritances.find((site) => site.localId === decision.site.localId)?.subjectId
         ?? unit.facts.implementations.find((site) => site.localId === decision.site.localId)?.subjectId
-        ?? unit.facts.references.find((site) => site.localId === decision.site.localId)?.ownerId));
+        ?? unit.facts.references.find((site) => site.localId === decision.site.localId)?.ownerId;
+      const fact = unit.facts.symbols.find((item) => item.localId === ownerId);
       if (!fact) continue;
       const sourceId = symbols.get(symbolIdentityKey(factSymbolIdentity(repoId, unit.relativePath, unit.facts.language, fact)));
       const targetId = symbols.get(symbolIdentityKey(decision.target));
+      const sourceIdentity = factSymbolIdentity(repoId, unit.relativePath, unit.facts.language, fact);
+      // Graph node IDs use file/kind/qualifiedName without the fact discriminator.
+      // Reject collisions instead of materializing an edge to the wrong declaration.
+      if (!hasUniqueGraphIdentity(sourceIdentity) || !hasUniqueGraphIdentity(decision.target)) continue;
       if (!sourceId || !targetId) continue;
       const type = decision.edgeKind;
       if (!graph.edges.some((edge) => edge.from === sourceId && edge.to === targetId && edge.type === type)) graph.edges.push({ from: sourceId, to: targetId, type });
