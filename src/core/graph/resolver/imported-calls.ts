@@ -41,7 +41,7 @@ export function buildImportedCallTargets(
         }));
       } else if (symbols.length === 0) {
         const forwarded = unit.facts.imports.filter((item) => item.localName === localName
-          && item.kind === "named" && item.importedName);
+          && (item.kind === "named" || item.kind === "default") && item.importedName);
         if (forwarded.length === 1) {
           const imported = forwarded[0]!;
           const resolved = targetFile(file, imported.moduleSpecifier);
@@ -86,7 +86,7 @@ export function buildImportedCallTargets(
           && symbol.scopeId && scopes.get(symbol.scopeId)?.parentId === current);
         if (declarations.length > 0 || bindings.length > 0) {
           if (declarations.length === 0 && bindings.length === 1 && bindings[0]!.bindingKind === "import") {
-            const imports = unit.facts.imports.filter((item) => item.kind === "named"
+            const imports = unit.facts.imports.filter((item) => (item.kind === "named" || item.kind === "default")
               && item.localName === call.calleeText && item.importedName);
             if (imports.length === 1) {
               const importer = imports[0]!;
