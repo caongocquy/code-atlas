@@ -25,7 +25,7 @@
 
 - **Linux**: native parser preparation; TS typecheck; 17/17 gold and CA-02 regression tests passed; MCP Inspector 2.7.0 exercised actual stdio `initialize`, `tools/list`, tool annotations/input schemas and tool calls, 1/1 passing.
 - **Clean vs incremental parity**: exact call/target/source-line semantics after a non-semantic edit on gold corpus; and existing PR regression fixtures for re-export changes and callsite removals.
-- **Windows**: separate Windows 2022 Node22 job in PR #32; check actual workflow status before marking platform coverage.
+- **Windows**: Windows 2022 Node22 job in [CI #42843425682](https://github.com/caongocquy/code-atlas/actions/runs/42843425682) **SUCCESS** (typecheck, native parser preparation and gold/parity tests).
 - **Limitations**: MCP Inspector is a current-head conformance test, **not** a byte-for-byte public payload comparison with the baseline commit. No macOS CI; no repository-scale labeled precision/recall; no end-to-end demonstration of inferred-vs-confirmed markings across all inspect/search tools.
 
 ## Recommendation
