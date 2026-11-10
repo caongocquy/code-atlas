@@ -132,3 +132,28 @@ test("CA-02 import edges agree after clean and incremental rebuild", async () =>
     await rm(cleanRoot, { recursive: true, force: true });
   }
 });
+
+
+test("CA-02 re-export changes invalidate importer call target without stale edges", async () => {
+  const files = {
+    "first.ts": "export function getUser() {}",
+    "second.ts": "export function loadUser() {}",
+    "index.ts": 'export { getUser as fetchUser } from "./first";',
+    "Home.ts": caller("./index"),
+  };
+  const root = await repo(files);
+  const cleanRoot = await repo(files);
+  try {
+    assert.equal((await indexRepository(root, { skipGit: true })).kind, "published");
+    assert.deepEqual(calls(root).map((edge) => edge.targetFile), ["first.ts"]);
+    await writeFile(path.join(root, "index.ts"), 'export { loadUser as fetchUser } from "./second";');
+    await writeFile(path.join(cleanRoot, "index.ts"), 'export { loadUser as fetchUser } from "./second";');
+    assert.equal((await syncRepository(root, { skipGit: true })).kind, "published");
+    assert.equal((await indexRepository(cleanRoot, { skipGit: true })).kind, "published");
+    assert.deepEqual(calls(root), calls(cleanRoot));
+    assert.deepEqual(calls(root).map((edge) => [edge.to, edge.targetFile]), [["loadUser", "second.ts"]]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(cleanRoot, { recursive: true, force: true });
+  }
+});
