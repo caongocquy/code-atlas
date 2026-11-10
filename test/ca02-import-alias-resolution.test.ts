@@ -51,6 +51,20 @@ test("CA-02 resolves direct named import and barrel re-exports to exact source s
       "src/index.ts": 'export { loadUser as fetchUser } from "./middle.js";\n',
       "src/Home.ts": caller("./index.js"),
     }],
+    ["reexport of an imported binding", {
+      "src/user.ts": service,
+      "src/index.ts": 'import { getUser as loadUser } from "./user.js"; export { loadUser as fetchUser };\n',
+      "src/Home.ts": caller("./index.js"),
+    }],
+    ["default function export", {
+      "src/user.ts": "export default function getUser() { return 123; }\n",
+      "src/Home.ts": 'import fetchUser from "./user.js";\nexport function Home() { return fetchUser(); }\n',
+    }],
+    ["same-name decoy in unrelated module", {
+      "src/user.ts": service,
+      "src/unrelated.ts": service,
+      "src/Home.ts": 'import { getUser as fetchUser } from "./user.js";\nexport function Home() { return fetchUser(); }\n',
+    }],
   ] as const) {
     const root = await repo(files);
     try {
