@@ -219,6 +219,16 @@ function resolveMembers(input: ResolverInput, site: ResolutionSiteIdentity, stra
 }
 
 function resolveImports(input: ResolverInput, site: ResolutionSiteIdentity, strategy: ResolutionStrategyId): readonly ResolutionCandidate[] {
+  const importedTargets = input.context.importedCallTargets?.get(JSON.stringify([site.sourceUnit.relativePath, site.localId]));
+  if (importedTargets?.length) {
+    const call = input.evidence.calls.filter((item) => item.site.localId === site.localId
+      && sameSourceUnit(item.sourceUnit, site.sourceUnit));
+    const name = input.facts.callSites.find((item) => item.localId === site.localId)?.calleeText;
+    const imported = input.evidence.imports.filter((item) => name && item.localName === name
+      && sameSourceUnit(item.sourceUnit, site.sourceUnit));
+    const ids = [...new Set([...call, ...imported].map((item) => item.evidenceId))].sort();
+    return importedTargets.map((target) => ({ target, strategy, confidence: "strong", evidenceIds: ids }));
+  }
   const fact = input.facts.imports.find((item) => item.localId === site.localId);
   if (!fact) return [];
   const imports = input.evidence.imports.filter((item) => sameSourceUnit(item.sourceUnit, site.sourceUnit) && item.specifier === fact.moduleSpecifier);
