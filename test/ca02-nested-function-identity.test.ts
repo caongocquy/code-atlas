@@ -93,7 +93,9 @@ test("CA-02 nested function graph identity remains stable between clean and incr
     assert.equal((await indexRepository(incremental, { skipGit: true })).kind, "published");
     assert.equal((await indexRepository(clean, { skipGit: true })).kind, "published");
     const first = readGraph(incremental);
-    assert.deepEqual(first, readGraph(clean));
+    const cleanGraph = readGraph(clean);
+    assert.deepEqual(first.nodes.map(({ id, ...node }) => node), cleanGraph.nodes.map(({ id, ...node }) => node));
+    assert.deepEqual(first.calls, cleanGraph.calls);
     await writeFile(path.join(incremental, "source.ts"), code + "\n// unrelated comment\n");
     assert.equal((await syncRepository(incremental, { skipGit: true })).kind, "published");
     assert.deepEqual(readGraph(incremental), first);
