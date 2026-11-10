@@ -1,0 +1,40 @@
+name: CA-02 repeated-callsite provenance
+
+on:
+  pull_request:
+    paths:
+      - 'src/core/graph/resolver/provenance.ts'
+      - 'src/core/indexing/index-pipeline.service.ts'
+      - 'src/config/constants.ts'
+      - 'test/ca02-repeated-callsite-provenance.test.ts'
+      - '.github/workflows/ca02-repeated-callsite-provenance.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  provenance-regression:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.3'
+      - run: corepack enable
+      - name: Install pinned dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if pnpm install --frozen-lockfile; then exit 0; fi
+            if [[ "$attempt" -eq 3 ]]; then exit 1; fi
+            sleep $((attempt * 10))
+          done
+      - name: Typecheck
+        run: pnpm exec tsc --noEmit
+      - name: Prepare native parsers
+        run: node scripts/parser-distribution.mjs prepare --build-missing
+      - name: Provenance and existing graph resolution regressions
+        run: node --import tsx/esm --test test/ca02-repeated-callsite-provenance.test.ts test/ca02-nested-function-identity.test.ts test/ca02-import-alias-resolution.test.ts test/ca02-bare-call-resolution.test.ts test/phase14b-facts-graph-resolver.test.ts test/phase14b-typescript-member-calls.test.ts test/phase17d-c-config-integrity.test.ts

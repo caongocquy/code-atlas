@@ -20,7 +20,7 @@ import { semanticAdapters } from "../graph/resolver/adapter-registry.js";
 import { symbolIdentity, symbolIdentityKey, type SymbolIdentity } from "../graph/resolver/identities.js";
 import type { LanguageSemanticAdapter } from "../graph/resolver/types.js";
 import type { GraphResolutionFile, ResolutionDiagnostic, ResolutionEvidence } from "../graph/resolution.types.js";
-import { withProvenance } from "../graph/resolver/provenance.js";
+import { mergeEdgeProvenance } from "../graph/resolver/provenance.js";
 import type { CodeGraph } from "../graph/types.js";
 import type { GraphResolutionFile as FactsGraphResolutionFile } from "../graph/build-graph.js";
 import type { LexicalFileUpdate } from "../../storage/atlas/atlas.types.js";
@@ -264,7 +264,7 @@ function addResolutionProvenance(
         const line = scip?.range.startLine ?? sourceLine(unit, decision.site.localId);
         return { kind: scip ? "scip" : "resolver", sourceUnit: scip?.sourceUnit.relativePath ?? unit.relativePath, startLine: line, endLine: scip?.range.endLine ?? line, evidenceId };
       });
-      Object.assign(edge, withProvenance(edge, { strategy: decision.strategy, confidence: decision.confidence, evidence, resolutionVersion, sourceLogicalIdentity: symbolIdentityKey(sourceIdentity), targetLogicalIdentity: symbolIdentityKey(decision.target) }));
+      Object.assign(edge, mergeEdgeProvenance(edge, { strategy: decision.strategy, confidence: decision.confidence, evidence, resolutionVersion, sourceLogicalIdentity: symbolIdentityKey(sourceIdentity), targetLogicalIdentity: symbolIdentityKey(decision.target) }));
     }
   }
 }
