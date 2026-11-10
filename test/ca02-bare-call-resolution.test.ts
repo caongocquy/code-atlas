@@ -43,7 +43,7 @@ test("CA-02 resolves a unique bare lexical target and preserves provenance", asy
   }
 });
 
-test("CA-02 does not fabricate target identity for same-name lexical shadowing", async () => {
+test("CA-02 resolves same-name lexical shadowing to distinct scoped targets", async () => {
   const source = [
     "export function target() { return 1; }",
     "export function outer() {",
@@ -54,10 +54,15 @@ test("CA-02 does not fabricate target identity for same-name lexical shadowing",
   ].join("\n");
   const { root, store, graph } = await indexSource(source);
   try {
-    // Graph node identity currently cannot distinguish same-qualified-name symbols.
-    // The safe result is unknown/no edge, never a wrong-scope link.
+    // Nested function names now contain the lexical owner, so both targets must be distinct.
+    const nodes = new Map(graph.nodes.map((node) => [node.id, node]));
     const calls = graph.edges.filter((edge) => edge.type === "calls");
-    assert.equal(calls.length, 0, JSON.stringify(calls));
+    assert.deepEqual(calls.map((edge) => [
+      nodes.get(edge.from)?.qualifiedName, nodes.get(edge.to)?.qualifiedName,
+    ]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))), [
+      ["caller", "target"],
+      ["outer", "outer.target"],
+    ]);
   } finally {
     store.close();
     await rm(root, { recursive: true, force: true });
