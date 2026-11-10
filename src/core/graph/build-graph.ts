@@ -24,6 +24,7 @@ import { codeChunksFromFacts, type IndexedSourceUnit } from "../indexing/indexin
 import type { ParsedFactsBlob } from "../facts/facts.types.js";
 import { resolveSite, type ResolutionDecision } from "./resolver/resolver.js";
 import type { GenerationResolverContext } from "./resolver/generation-context.js";
+import { buildImportedCallTargets } from "./resolver/imported-calls.js";
 import { symbolIdentityKey, type ResolutionSiteIdentity, type SourceUnitIdentity, type SymbolIdentity } from "./resolver/identities.js";
 import type { SemanticEvidenceBatch, ResolverTraceEvent } from "./resolver/types.js";
 
@@ -233,6 +234,7 @@ export function resolveIndexedUnits(input: {
 }): Map<string, GraphResolutionFile> {
   const result = new Map<string, GraphResolutionFile>();
   const sourceUnitKey = (unit: SourceUnitIdentity) => JSON.stringify([unit.repositoryId, unit.relativePath, unit.language]);
+  const importedCallTargets = buildImportedCallTargets(input.allUnits, input.context.repositoryIdentity.id);
   const priorTrace = new Map<string, ResolverTraceEvent[]>();
   for (const event of input.context.diagnostics.snapshot()) {
     const key = sourceUnitKey(event.site.sourceUnit);
@@ -255,6 +257,7 @@ export function resolveIndexedUnits(input: {
     const newTrace: ResolverTraceEvent[] = [];
     const fileContext = {
       ...input.context,
+      importedCallTargets,
       diagnostics: {
         add(event: ResolverTraceEvent) {
           input.context.diagnostics.add(event);

@@ -1,4 +1,5 @@
 import type { ParsedFactsBlob } from "../../facts/facts.types.js";
+import type { SymbolIdentity } from "./identities.js";
 import type { RepositoryIdentity } from "../../repository/repository-identity.js";
 import type { BudgetLedger } from "./budgets.js";
 import type { ResolverMemo } from "./memo.js";
@@ -21,6 +22,7 @@ export type GenerationResolverContext = {
   diagnostics: ResolverTraceCollector;
   resolutionVersion: string;
   scipEvidenceBySite?: ReadonlyMap<string, readonly ScipBindingEvidence[]>;
+  importedCallTargets?: ReadonlyMap<string, readonly SymbolIdentity[]>;
 };
 
 export function createGenerationResolverContext(
