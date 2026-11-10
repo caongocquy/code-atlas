@@ -64,8 +64,28 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
     const expressionIds = new WeakMap<Parser.SyntaxNode, FactLocalId>();
     let sequence = 0;
     const next = (kind: string) => id(kind, ++sequence);
+    const qualifiedFunctionName = (name: string): string => {
+      const byId = new Map(containmentScopes.map((scope) => [scope.localId, scope]));
+      const current = scopeStack.at(-1);
+      const ancestors: string[] = [];
+      const visited = new Set<FactLocalId>();
+      let parent = current ? byId.get(current)?.parentId : undefined;
+      while (parent && !visited.has(parent)) {
+        visited.add(parent);
+        const scope = byId.get(parent);
+        if (!scope) break;
+        if (["class_declaration", "function_declaration", "method_definition"].includes(scope.kind) && scope.name) {
+          ancestors.unshift(scope.name);
+        }
+        parent = scope.parentId;
+      }
+      return [...ancestors, name].join(".");
+    };
     const symbolFor = (node: Parser.SyntaxNode, kind: ParsedSymbolFact["kind"], name: string): ParsedSymbolFact => {
-      const symbol = { localId: next("symbol"), name, kind, range: range(node), scopeId: scopeStack.at(-1), declaredQualifiedName: name };
+      // Keep public top-level identities unchanged; distinguish only nested function declarations.
+      const declaredQualifiedName = kind === "function" && node.type === "function_declaration"
+        ? qualifiedFunctionName(name) : name;
+      const symbol = { localId: next("symbol"), name, kind, range: range(node), scopeId: scopeStack.at(-1), declaredQualifiedName };
       symbols.push(symbol);
       return symbol;
     };
