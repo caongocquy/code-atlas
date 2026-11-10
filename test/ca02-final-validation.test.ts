@@ -92,7 +92,7 @@ test("CA-02 measures source/line-aware gold precision and recall without hiding 
     console.log("CA02_FINAL_GOLD " + JSON.stringify(reported));
     // Wrong-scope or forbidden edges are a correctness regression even when recall is partial.
     assert.deepEqual(forbiddenHits, []);
-    assert.ok(hits.length > 0, "merged implementation must improve over audited 0/5 callsite baseline");
+    assert.equal(hits.length, positives.length, "CA-02 typed receiver must close the last gold miss: " + JSON.stringify(misses));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
