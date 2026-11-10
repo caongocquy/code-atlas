@@ -1,5 +1,4 @@
-import path from "node:path";
-
+import type { FactLocalId } from "../../facts/facts.types.js";
 import type { IndexedSourceUnit } from "../../indexing/indexing.types.js";
 import { resolveImportCandidates } from "../imports.js";
 import { symbolIdentity, symbolIdentityKey, type SymbolIdentity } from "./identities.js";
@@ -76,7 +75,7 @@ export function buildImportedCallTargets(
     const scopes = new Map(unit.facts.containmentScopes.map((scope) => [scope.localId, scope]));
     for (const call of unit.facts.callSites) {
       if (!call.scopeId || !identifier.test(call.calleeText)) continue;
-      let current: string | undefined = call.scopeId;
+      let current: FactLocalId | undefined = call.scopeId;
       const visited = new Set<string>();
       while (current && !visited.has(current)) {
         visited.add(current);
@@ -100,7 +99,7 @@ export function buildImportedCallTargets(
           }
           break;
         }
-        current = scopes.get(current as never)?.parentId;
+        current = scopes.get(current)?.parentId;
       }
     }
   }
