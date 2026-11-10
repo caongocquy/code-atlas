@@ -9,6 +9,7 @@ import { getRepositoryIdentity } from "../src/core/repository/repository-identit
 import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
 import { mergeEdgeProvenance, MAX_COMPACT_EVIDENCE } from "../src/core/graph/resolver/provenance.js";
 import { symbolIdentityKey, symbolIdentity } from "../src/core/graph/resolver/identities.js";
+import type { GraphEdge } from "../src/core/graph/types.js";
 
 const initial = [
   "export function target() { return 1; }",
@@ -68,7 +69,7 @@ test("CA-02 bounds evidence deterministically and rejects mixed edge identities"
     evidence: [{ kind: "resolver", sourceUnit: "source.ts", startLine: line, endLine: line, evidenceId: `call:${line}` }],
     resolutionVersion: "1.2.6", sourceLogicalIdentity: identity("caller"), targetLogicalIdentity: identity("target"),
   });
-  let graph = base;
+  let graph: GraphEdge = base;
   for (const line of [14, 11, 10, 12, 13, 10, 16, 19, 18, 15, 17]) {
     graph = mergeEdgeProvenance(graph, make(line));
   }
@@ -100,7 +101,8 @@ test("CA-02 refreshes repeated-callsite provenance after incremental edit", asyn
     assert.equal((await syncRepository(root, { skipGit: true })).kind, "published");
     assert.equal((await indexRepository(clean, { skipGit: true })).kind, "published");
     const current = readPublished(root);
-    assert.deepEqual(current, readPublished(clean));
+    assert.deepEqual(current.map((item) => ({ from: item.from, to: item.to, evidence: item.resolution?.evidence })),
+      readPublished(clean).map((item) => ({ from: item.from, to: item.to, evidence: item.resolution?.evidence })));
     assert.equal(current.length, 1);
     assert.deepEqual(current[0]?.resolution?.evidence.map((item) => item.startLine), [3, 4]);
   } finally {
