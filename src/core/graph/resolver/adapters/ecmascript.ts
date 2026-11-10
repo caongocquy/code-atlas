@@ -60,7 +60,9 @@ export function normalizeEcmascriptFacts(facts: ParsedFactsBlob, context: Adapte
     const sourceExpression: ExpressionIdentity | undefined = item.sourceExpressionId ? { sourceUnit: unit, localId: item.sourceExpressionId } : undefined;
     const sourceBinding = findBinding(item.sourceName, undefined);
     const sourceType = sourceBinding ? typeByBinding.get(sourceBinding.localId) : undefined;
-    // A declared target type (including unknown/union) must not be replaced by an alias assignment.\n    if (sourceType && !typeByBinding.has(item.targetId)) typeByBinding.set(item.targetId, sourceType);
+    // Preserve declared target annotations without blocking inferred alias chains.
+    const hasDeclaredTargetType = facts.declaredTypeAnnotations.some((annotation) => annotation.ownerId === item.targetId);
+    if (sourceType && !hasDeclaredTargetType) typeByBinding.set(item.targetId, sourceType);
     result.assignments = [...result.assignments, { ...base("assignment", item.localId, item.range), kind: "assignment", targetBindingId: item.targetId, sourceExpression, sourceType }];
   }
   for (const item of facts.constructors) result.constructors = [...result.constructors, { ...base("constructor", item.localId, item.range), kind: "constructor", constructedType: typeOf(item.constructedTypeName) ?? { kind: "named", name: item.constructedTypeName }, resultBindingId: item.resultBindingId }];
