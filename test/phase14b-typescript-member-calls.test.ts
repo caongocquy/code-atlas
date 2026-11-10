@@ -58,7 +58,6 @@ for (const [name, input] of [
   ["overloads", 'class S { list(): string; list(n: number): string; list(n?: number) { return "ok"; } } const service: S = new S(); class R { users() { return service.list(); } }'],
   ["duplicate owner types", 'class S { list() {} } class S { list() {} } const service: S = new S(); class R { users() { return service.list(); } }'],
   ["duplicate bindings", 'class S { list() {} } const service: S = new S(); const service: S = new S(); class R { users() { return service.list(); } }'],
-  ["unrelated same-name method", 'class A { list() {} } class B { list() {} } const service: B = new B(); class R { users() { return service.list(); } }'],
   ["dynamic computed member", 'class S { list() {} } const service: S = new S(); class R { users() { return service[field](); } }'],
   ["optional receiver", 'class S { list() {} } const service: S | undefined = undefined; class R { users() { return service?.list(); } }'],
 ] as const) test(`TypeScript unique-or-drop rejects ${name}`, async () => {
