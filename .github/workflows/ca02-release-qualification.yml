@@ -25,12 +25,15 @@ jobs:
       - run: corepack enable
       - name: Install current exact dependencies
         run: pnpm install --frozen-lockfile
+      - name: Prepare current native parser runtime
+        run: node scripts/parser-distribution.mjs prepare --build-missing
       - name: Prepare old CA-02 baseline
         shell: bash
         run: |
           git worktree add --detach "$RUNNER_TEMP/ca02-baseline" 65078cf878099dedf3ceac36fafa9675dc09468b
           cd "$RUNNER_TEMP/ca02-baseline"
           pnpm install --frozen-lockfile
+          node scripts/parser-distribution.mjs prepare --build-missing
       - name: Compare real stdio MCP old/current public contracts
         env:
           CA02_BASELINE_DIR: ${{ runner.temp }}/ca02-baseline
