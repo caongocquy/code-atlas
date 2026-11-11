@@ -1,0 +1,62 @@
+name: CA-02 release qualification
+
+on:
+  pull_request:
+    paths:
+      - 'test/ca02-expanded-qualification.test.ts'
+      - 'scripts/ca02-mcp-contract-comparison.mjs'
+      - '.github/workflows/ca02-release-qualification.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-mcp-compat:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.3'
+      - run: corepack enable
+      - name: Install current exact dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Prepare old CA-02 baseline
+        shell: bash
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/ca02-baseline" 65078cf878099dedf3ceac36fafa9675dc09468b
+          cd "$RUNNER_TEMP/ca02-baseline"
+          pnpm install --frozen-lockfile
+      - name: Compare real stdio MCP old/current public contracts
+        env:
+          CA02_BASELINE_DIR: ${{ runner.temp }}/ca02-baseline
+          CA02_BASELINE_REF: 65078cf878099dedf3ceac36fafa9675dc09468b
+        run: node scripts/ca02-mcp-contract-comparison.mjs
+      - name: Typecheck and native parsers
+        run: |
+          pnpm exec tsc --noEmit
+          node scripts/parser-distribution.mjs prepare --build-missing
+      - name: Expanded oracle and existing gold
+        run: node --import tsx/esm --test test/ca02-expanded-qualification.test.ts test/ca02-final-validation.test.ts
+
+  macos-gold:
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.3'
+      - run: corepack enable
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm exec tsc --noEmit
+      - name: Prepare macOS native parsers
+        run: node scripts/parser-distribution.mjs prepare --build-missing
+      - name: Gold, expanded labeled oracle and incremental parity
+        run: node --import tsx/esm --test test/ca02-expanded-qualification.test.ts test/ca02-final-validation.test.ts test/ca02-typed-receiver-resolution.test.ts
