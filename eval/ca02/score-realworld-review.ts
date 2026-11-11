@@ -68,7 +68,8 @@ if (process.argv[1] && /score-realworld-review\.(?:ts|js)$/.test(process.argv[1]
   assert.ok(inputIndex > -1 && outputIndex > -1, "Usage: --input packet.json --output score.json");
   const packet = JSON.parse(await readFile(process.argv[inputIndex + 1]!, "utf8"));
   assert.equal(packet.schemaVersion, "ca02-realworld-review-v1");
-  const result = scoreAdjudicatedSites(packet.sites);
+  const scored = scoreAdjudicatedSites(packet.sites);
+  const result = { ...scored, selection: packet.selection ?? { method: "full_census", populationCallsites: packet.sites.length } };
   await writeFile(path.resolve(process.argv[outputIndex + 1]!), JSON.stringify(result, null, 2) + "\n");
   process.stdout.write("CA02_REALWORLD_SCORE " + JSON.stringify(result) + "\n");
 }
