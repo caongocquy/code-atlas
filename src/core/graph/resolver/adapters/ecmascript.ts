@@ -60,7 +60,9 @@ export function normalizeEcmascriptFacts(facts: ParsedFactsBlob, context: Adapte
     const sourceExpression: ExpressionIdentity | undefined = item.sourceExpressionId ? { sourceUnit: unit, localId: item.sourceExpressionId } : undefined;
     const sourceBinding = findBinding(item.sourceName, undefined);
     const sourceType = sourceBinding ? typeByBinding.get(sourceBinding.localId) : undefined;
-    if (sourceType) typeByBinding.set(item.targetId, sourceType);
+    // Preserve declared target annotations without blocking inferred alias chains.
+    const hasDeclaredTargetType = facts.declaredTypeAnnotations.some((annotation) => annotation.ownerId === item.targetId);
+    if (sourceType && !hasDeclaredTargetType) typeByBinding.set(item.targetId, sourceType);
     result.assignments = [...result.assignments, { ...base("assignment", item.localId, item.range), kind: "assignment", targetBindingId: item.targetId, sourceExpression, sourceType }];
   }
   for (const item of facts.constructors) result.constructors = [...result.constructors, { ...base("constructor", item.localId, item.range), kind: "constructor", constructedType: typeOf(item.constructedTypeName) ?? { kind: "named", name: item.constructedTypeName }, resultBindingId: item.resultBindingId }];
@@ -76,7 +78,12 @@ export function normalizeEcmascriptFacts(facts: ParsedFactsBlob, context: Adapte
     const members = ownerSymbol ? facts.symbols.filter((symbol) => symbol.kind === "method" && symbol.name === item.memberName
       && symbol.scopeId && scopes.get(symbol.scopeId)?.parentId === ownerScopeId) : [];
     const member = members.length === 1 ? members[0] : undefined;
-    if (ownerType && member) {
+    // Overload declarations introduce multiple possible signatures. The unique
+    // implementation alone is insufficient to establish overload selection.
+    const overloaded = member && facts.symbols.some((symbol) => symbol.localId !== member.localId
+      && symbol.kind === "method" && symbol.name === item.memberName && symbol.scopeId
+      && (symbol.scopeId === ownerScopeId || scopes.get(symbol.scopeId)?.parentId === ownerScopeId));
+    if (ownerType && member && !overloaded) {
       result.members = [...result.members, { ...base("member", item.localId, item.range), kind: "member", ownerType, memberName: item.memberName, member: symbols.get(member.localId)!, access: item.access }];
     } else {
     result.diagnostics = [...result.diagnostics, { sourceUnit: unit, range: item.range, code: "receiver_type_unknown", message: `Cannot resolve receiver for ${item.memberName}` }];

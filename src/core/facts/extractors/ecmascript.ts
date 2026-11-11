@@ -83,7 +83,8 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
     };
     const symbolFor = (node: Parser.SyntaxNode, kind: ParsedSymbolFact["kind"], name: string): ParsedSymbolFact => {
       // Keep public top-level identities unchanged; distinguish only nested function declarations.
-      const declaredQualifiedName = kind === "function" && node.type === "function_declaration"
+      // Method graph identities must include their owning class to distinguish same-name methods.
+      const declaredQualifiedName = (kind === "function" && node.type === "function_declaration") || (kind === "method" && node.type === "method_definition")
         ? qualifiedFunctionName(name) : name;
       const symbol = { localId: next("symbol"), name, kind, range: range(node), scopeId: scopeStack.at(-1), declaredQualifiedName };
       symbols.push(symbol);

@@ -58,7 +58,6 @@ for (const [name, input] of [
   ["overloads", 'class S { list(): string; list(n: number): string; list(n?: number) { return "ok"; } } const service: S = new S(); class R { users() { return service.list(); } }'],
   ["duplicate owner types", 'class S { list() {} } class S { list() {} } const service: S = new S(); class R { users() { return service.list(); } }'],
   ["duplicate bindings", 'class S { list() {} } const service: S = new S(); const service: S = new S(); class R { users() { return service.list(); } }'],
-  ["unrelated same-name method", 'class A { list() {} } class B { list() {} } const service: B = new B(); class R { users() { return service.list(); } }'],
   ["dynamic computed member", 'class S { list() {} } const service: S = new S(); class R { users() { return service[field](); } }'],
   ["optional receiver", 'class S { list() {} } const service: S | undefined = undefined; class R { users() { return service?.list(); } }'],
 ] as const) test(`TypeScript unique-or-drop rejects ${name}`, async () => {
@@ -68,7 +67,7 @@ for (const [name, input] of [
 });
 
 test("resolution 1.1.0 re-resolves unchanged TypeScript facts without changing facts/framework domains", async () => {
-  assert.equal(RESOLUTION_VERSION, "1.2.6"); assert.equal(FACTS_VERSION, "3.1.3"); assert.equal(FACTS_SCHEMA_VERSION, "3.0.0"); assert.equal(FRAMEWORK_RESOLUTION_VERSION, "1.7.1");
+  assert.equal(RESOLUTION_VERSION, "1.2.7"); assert.equal(FACTS_VERSION, "3.1.4"); assert.equal(FACTS_SCHEMA_VERSION, "3.0.0"); assert.equal(FRAMEWORK_RESOLUTION_VERSION, "1.7.1");
   const { repoPath, loaded } = await indexedSource(source);
   try {
     const generationId = loaded.evidenceState.generationId;
