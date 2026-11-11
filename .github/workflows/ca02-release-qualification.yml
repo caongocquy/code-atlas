@@ -5,6 +5,7 @@ on:
     paths:
       - 'test/ca02-expanded-qualification.test.ts'
       - 'scripts/ca02-mcp-contract-comparison.mjs'
+      - 'scripts/ca02-graph-query-compat.mjs'
       - '.github/workflows/ca02-release-qualification.yml'
   workflow_dispatch:
 
@@ -39,6 +40,11 @@ jobs:
           CA02_BASELINE_DIR: ${{ runner.temp }}/ca02-baseline
           CA02_BASELINE_REF: 65078cf878099dedf3ceac36fafa9675dc09468b
         run: node scripts/ca02-mcp-contract-comparison.mjs
+      - name: Compare indexed graph query MCP responses (historical vs current)
+        env:
+          CA02_BASELINE_DIR: ${{ runner.temp }}/ca02-baseline
+          CA02_BASELINE_REF: 65078cf878099dedf3ceac36fafa9675dc09468b
+        run: node scripts/ca02-graph-query-compat.mjs
       - name: Typecheck and native parsers
         run: |
           pnpm exec tsc --noEmit
