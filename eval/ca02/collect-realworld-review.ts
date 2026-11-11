@@ -132,6 +132,10 @@ const entries: ReviewItem[] = sites.map((site) => {
   };
 }).sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.column - b.column || a.id.localeCompare(b.id));
 const ambiguousSites = entries.filter((site) => (byLine.get(`${site.file}:${site.line}`) ?? 0) > 1).length;
+const graphCalls = graph.edges.filter((edge) => edge.type === "calls");
+const graphEvidenceCount = graphCalls.reduce((count, edge) => count + (edge.resolution?.evidence.length ?? 0), 0);
+const parsedLines = new Set(sites.map((site) => `${site.file}:${site.line}`));
+const graphEvidenceMatchingParsedLines = [...predictions.keys()].filter((key) => parsedLines.has(key)).length;
 const packet = {
   schemaVersion: "ca02-realworld-review-v1",
   provenance: { sourceRepository, commitSha, includedFiles: accepted, extractor: "Code Atlas HEAD" },
@@ -139,6 +143,9 @@ const packet = {
     fileCount: accepted.length,
     callsites: entries.length,
     predictedCallsites: entries.filter((site) => site.predictedTargets.length > 0).length,
+    publishedGraphCallEdges: graphCalls.length,
+    graphEdgeEvidenceRecords: graphEvidenceCount,
+    graphEvidenceMatchingParsedLines,
     ambiguousSameLineCallsites: ambiguousSites,
     parseDiagnosticFiles: parseDiagnostics.length,
     reviewCompleted: 0,
