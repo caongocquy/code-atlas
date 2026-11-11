@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import process from "node:process";
+import console from "node:console";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
