@@ -57,5 +57,6 @@ jobs:
           name: ca02-pqueue-review-packet
           path: |
             artifacts/ca02-p-queue-review-packet.json
+            artifacts/ca02-p-queue-review-packet-full-census.json
             artifacts/ca02-p-queue-score.json
           retention-days: 30
