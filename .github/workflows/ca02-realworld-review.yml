@@ -1,0 +1,61 @@
+name: CA-02 real-world evaluation review packet
+
+on:
+  pull_request:
+    paths:
+      - 'eval/ca02/**'
+      - 'test/ca02-realworld-review.test.ts'
+      - '.github/workflows/ca02-realworld-review.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pinned-realworld-review:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.3'
+      - run: corepack enable
+      - name: Install pinned Code Atlas dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm exec tsc --noEmit
+      - name: Validate independent review score gating
+        run: node --import tsx/esm --test test/ca02-realworld-review.test.ts
+      - name: Prepare native parser runtime
+        run: node scripts/parser-distribution.mjs prepare --build-missing
+      - name: Checkout pinned public TypeScript repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --quiet --filter=blob:none --no-checkout https://github.com/sindresorhus/p-queue.git "$RUNNER_TEMP/p-queue"
+          git -C "$RUNNER_TEMP/p-queue" checkout --quiet 7f272ab5ff2254c0dc2537b7977e88ede1cd55e8
+          test "$(git -C "$RUNNER_TEMP/p-queue" rev-parse HEAD)" = "7f272ab5ff2254c0dc2537b7977e88ede1cd55e8"
+      - name: Collect every TypeScript/JavaScript callsite and predicted graph target
+        env:
+          REALWORLD_REPO: ${{ runner.temp }}/p-queue
+        run: |
+          node --import tsx/esm eval/ca02/collect-realworld-review.ts \
+            --repo "$REALWORLD_REPO" \
+            --source https://github.com/sindresorhus/p-queue \
+            --commit 7f272ab5ff2254c0dc2537b7977e88ede1cd55e8 \
+            --output artifacts/ca02-p-queue-review-packet.json
+      - name: Prove unreviewed predictions do not become accuracy claims
+        run: |
+          node --import tsx/esm eval/ca02/score-realworld-review.ts \
+            --input artifacts/ca02-p-queue-review-packet.json \
+            --output artifacts/ca02-p-queue-score.json
+          node --input-type=module -e "import fs from 'node:fs';const x=JSON.parse(fs.readFileSync('artifacts/ca02-p-queue-score.json'));if(x.status!=='review_required'||x.metrics!==null)process.exit(1)"
+      - name: Upload reviewer packet and pending score
+        uses: actions/upload-artifact@v4
+        with:
+          name: ca02-pqueue-review-packet
+          path: |
+            artifacts/ca02-p-queue-review-packet.json
+            artifacts/ca02-p-queue-score.json
+          retention-days: 30
