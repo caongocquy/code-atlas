@@ -149,6 +149,37 @@ const packet = {
   sites: entries,
   methodology: "Reviewer must inspect source and resolve every callsite independently. A single line with multiple sites is unscored until site-level provenance can be attributed. No TP/FP/FN or precision/recall before adjudication.",
 };
+// Keep the full census for source-level recall auditing, but provide a bounded
+// review subset so reviewers do not need to annotate thousands of callsites.
+const sampleLimit = 160;
+const selected = new Set<string>();
+const select = (item: ReviewItem) => { if (selected.size < sampleLimit) selected.add(item.id); };
+for (const site of entries.filter((item) => item.predictedTargets.length > 0)) select(site);
+for (const file of accepted) {
+  const first = entries.find((item) => item.file === file);
+  if (first) select(first);
+}
+for (const item of [...entries].sort((a, b) =>
+  sha256(commitSha + ":" + a.id).localeCompare(sha256(commitSha + ":" + b.id)))) select(item);
+const sampled = entries.filter((item) => selected.has(item.id));
+const reviewPacket = {
+  ...packet,
+  selection: {
+    method: "deterministic_nonprobability_stratified",
+    seed: commitSha,
+    populationCallsites: entries.length,
+    sampleCallsites: sampled.length,
+    includesEveryAvailablePrediction: entries.filter((item) => item.predictedTargets.length > 0)
+      .every((item) => selected.has(item.id)),
+    description: "Prioritize predicted sites, then at least one site per source file, then deterministic hash ordering. Scores on this sample are NOT population-wide precision/recall.",
+  },
+  sites: sampled,
+  summary: { ...packet.summary, reviewSampleCallsites: sampled.length },
+};
+const censusOutput = output.replace(/\.json$/, "-full-census.json");
 await mkdir(path.dirname(output), { recursive: true });
-await writeFile(output, JSON.stringify(packet, null, 2) + "\n");
-process.stdout.write("CA02_REALWORLD_REVIEW " + JSON.stringify({ sourceRepository, commitSha, ...packet.summary }) + "\n");
+await writeFile(output, JSON.stringify(reviewPacket, null, 2) + "\n");
+await writeFile(censusOutput, JSON.stringify(packet, null, 2) + "\n");
+process.stdout.write("CA02_REALWORLD_REVIEW " + JSON.stringify({
+  sourceRepository, commitSha, ...reviewPacket.summary, selection: reviewPacket.selection,
+}) + "\n");
