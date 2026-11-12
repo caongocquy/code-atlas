@@ -93,8 +93,26 @@ const outcome = await indexRepository(root, { skipGit: true });
 assert.equal(outcome.kind, "published", JSON.stringify(outcome));
 const store = new AtlasStore(path.join(root, ".codeatlas", "atlas.db"), { readOnly: true });
 let graph;
-try { graph = store.loadGraph(getRepositoryIdentity(root).id); }
-finally { store.close(); }
+let resolutionCoverage;
+let resolutionDiagnostics;
+try {
+  const repoId = getRepositoryIdentity(root).id;
+  graph = store.loadGraph(repoId);
+  resolutionCoverage = store.getGraphResolutionCoverage(repoId);
+  resolutionDiagnostics = store.getGraphResolutionDiagnostics(repoId);
+} finally { store.close(); }
+const resolutionReasonHistogram: Record<string, number> = {};
+for (const diagnostic of resolutionDiagnostics) {
+  const reason = diagnostic.kind === "unresolved"
+    ? `unresolved:${diagnostic.reason}`
+    : diagnostic.kind === "ambiguous" ? `ambiguous:${diagnostic.ambiguityReason}` : diagnostic.kind;
+  resolutionReasonHistogram[reason] = (resolutionReasonHistogram[reason] ?? 0) + 1;
+}
+assert.equal(resolutionCoverage.calls,
+  resolutionCoverage.resolvedCalls + resolutionCoverage.unresolvedCalls + resolutionCoverage.ambiguousCalls,
+  "Persisted resolution decisions must reconcile with total analyzed calls");
+assert.ok(resolutionCoverage.calls <= sites.length,
+  "Resolver decisions cannot exceed parser-extracted callsites");
 const nodes = new Map(graph.nodes.map((node) => [node.id, node]));
 const predictions = new Map<string, CallEvidence[]>();
 for (const edge of graph.edges.filter((item) => item.type === "calls")) {
@@ -144,6 +162,10 @@ const packet = {
     callsites: entries.length,
     predictedCallsites: entries.filter((site) => site.predictedTargets.length > 0).length,
     publishedGraphCallEdges: graphCalls.length,
+    resolutionCoverage,
+    resolutionReasonHistogram: Object.fromEntries(Object.entries(resolutionReasonHistogram).sort(([a], [b]) => a.localeCompare(b))),
+    parserToResolverMissingDecisions: sites.length - resolutionCoverage.calls,
+    resolvedDecisionsWithoutPublishedEdges: Math.max(0, resolutionCoverage.resolvedCalls - graphCalls.length),
     graphEdgeEvidenceRecords: graphEvidenceCount,
     graphEvidenceMatchingParsedLines,
     ambiguousSameLineCallsites: ambiguousSites,
