@@ -49,10 +49,7 @@ jobs:
         env:
           REALWORLD_REPO: ${{ runner.temp }}/p-queue
         run: |
-          node --import tsx/esm eval/ca02/triage-realworld-source.ts \\
-            --repo "$REALWORLD_REPO" \\
-            --commit 7f272ab5ff2254c0dc2537b7977e88ede1cd55e8 \\
-            --output artifacts/ca02-p-queue-source-triage.json
+          node --import tsx/esm eval/ca02/triage-realworld-source.ts --repo "$REALWORLD_REPO" --commit 7f272ab5ff2254c0dc2537b7977e88ede1cd55e8 --output artifacts/ca02-p-queue-source-triage.json
       - name: Report persisted resolver-to-graph coverage audit
         run: |
           node --input-type=module -e "import fs from 'node:fs'; const p=JSON.parse(fs.readFileSync('artifacts/ca02-p-queue-review-packet.json'));const s=p.summary;console.log('CA02_COVERAGE_AUDIT '+JSON.stringify({parsed:s.callsites,resolution:s.resolutionCoverage,missingDecisions:s.parserToResolverMissingDecisions,graphEdges:s.publishedGraphCallEdges,reasonHistogram:s.resolutionReasonHistogram}));if(!s.resolutionCoverage || !Number.isInteger(s.parserToResolverMissingDecisions))process.exit(1)"
