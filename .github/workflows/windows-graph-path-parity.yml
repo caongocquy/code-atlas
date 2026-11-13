@@ -5,6 +5,7 @@ on:
     paths:
       - 'src/core/graph/build-graph.ts'
       - 'src/core/graph/build-file-updates.ts'
+      - 'src/storage/atlas/atlas.store.ts'
       - 'test/phase0-incremental.test.ts'
       - '.github/workflows/windows-graph-path-parity.yml'
   workflow_dispatch:
