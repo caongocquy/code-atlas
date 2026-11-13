@@ -120,3 +120,31 @@ test("incremental sync handles unchanged, one changed importer impact, deletion,
     }
   });
 });
+
+test("incremental graph resolves imports from Windows-style relative paths", async () => {
+  await withRepo(async (repoPath) => {
+    const repoId = getRepoId(repoPath);
+    const initial = await buildCodeGraph(repoPath);
+    assert.deepEqual(
+      initial.nodes.filter((node) => node.type === "file").map((node) => node.file).sort(),
+      ["src/importer.ts", "src/target.ts"],
+    );
+
+    await writeFile(path.join(repoPath, "src", "target.ts"), "export function newTarget() {}\\n");
+    await writeFile(
+      path.join(repoPath, "src", "importer.ts"),
+      'import { newTarget } from "./target.js";\\nexport function run() { newTarget(); }\\n',
+    );
+
+    const posixFiles = ["src/target.ts", "src/importer.ts"];
+    const windowsFiles = [path.win32.join("src", "target.ts"), path.win32.join("src", "importer.ts")];
+    const posix = await buildFileGraphs(repoPath, repoId, posixFiles, new Set(posixFiles), initial);
+    const windows = await buildFileGraphs(repoPath, repoId, windowsFiles, new Set(windowsFiles), initial);
+
+    assert.deepEqual(windows, posix);
+    assert.deepEqual(windows.map((update) => update.file).sort(), [...posixFiles].sort());
+    assert.equal(windows.flatMap((update) => update.edges).filter((edge) => edge.type === "imports").length, 1);
+    assert.equal(windows.flatMap((update) => update.edges).filter((edge) => edge.type === "calls").length, 1);
+    assert.equal(windows.some((update) => update.nodes.some((node) => node.file.includes("\\\\"))), false);
+  });
+});
