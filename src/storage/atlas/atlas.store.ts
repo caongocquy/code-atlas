@@ -1117,6 +1117,9 @@ export class AtlasStore {
     graphVersion?: string,
   ): void {
     this.ensureRepositoryId(repoId);
+    // Graph identities are repository-relative POSIX paths on all hosts.
+    // Callers may still supply native Windows separators for deleted files.
+    const canonicalDeletedFiles = deletedFiles.map((file) => file.replaceAll("\\", "/"));
     this.database.exec("BEGIN IMMEDIATE;");
 
     try {
@@ -1127,7 +1130,7 @@ export class AtlasStore {
         "DELETE FROM symbols WHERE repository_id = ? AND file_path = ?",
       );
 
-      for (const file of deletedFiles) {
+      for (const file of canonicalDeletedFiles) {
         deleteOwnedEdges.run(repoId, file);
         deleteNodes.run(repoId, file);
         this.deleteCapabilityState(repoId, file, "graph");
@@ -1168,7 +1171,7 @@ export class AtlasStore {
         if (update.resolution) this.upsertGraphResolutionFile(repoId, update.file, update.resolution);
       }
 
-      for (const file of deletedFiles) {
+      for (const file of canonicalDeletedFiles) {
         this.deleteOrphanFile(repoId, file);
       }
 
