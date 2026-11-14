@@ -1,0 +1,100 @@
+name: Current-master full-suite differential (non-release)
+
+on:
+  pull_request:
+    paths:
+      - 'src/core/graph/**'
+      - 'src/storage/atlas/atlas.store.ts'
+      - 'test/phase0-incremental.test.ts'
+      - '.github/workflows/current-master-graph-differential.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  full-suite-differential:
+    name: Master vs candidate / ${{ matrix.os }} / Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+        node: ['22.23.3', '24.21.0']
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v4
+        with:
+          path: candidate
+          fetch-depth: 1
+      - name: Checkout exact PR base commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha || 'e7b5eddc9d65be2e7ababf8454b98b465ea2ab9f' }}
+          path: comparison-master
+          fetch-depth: 1
+      - name: Verify comparison identities
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || 'e7b5eddc9d65be2e7ababf8454b98b465ea2ab9f' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          test "$(git -C comparison-master rev-parse HEAD)" = "$BASE_SHA"
+          test "$(git -C candidate rev-parse HEAD)" = "$HEAD_SHA"
+          printf 'baseline=%s\ncandidate=%s\n' "$BASE_SHA" "$HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"
+      - name: Set up pinned native builder Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.3'
+      - run: corepack enable
+      - name: Install and prepare pinned parser dependencies in both revisions
+        run: |
+          set -euo pipefail
+          for directory in comparison-master candidate; do
+            (cd "$directory" && pnpm install --frozen-lockfile && node scripts/parser-distribution.mjs prepare --build-missing)
+          done
+      - name: Switch to matrix test Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Build and run equivalent full suites
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          for directory in comparison-master candidate; do
+            (
+              cd "$directory"
+              pnpm build > "../evidence/${directory}-build.log" 2>&1
+              # Preserve every failed test in TAP; do not mask failures in the comparator.
+              if node --import tsx/esm --test --test-concurrency=2 --test-reporter=tap test/*.test.ts > "../evidence/${directory}-tests.tap" 2>&1; then
+                echo 0 > "../evidence/${directory}-tests.exit"
+              else
+                echo "$?" > "../evidence/${directory}-tests.exit"
+              fi
+            )
+          done
+      - name: Compare failures and skip identity against current master
+        run: |
+          set -euo pipefail
+          node candidate/scripts/compare-release-tests.mjs \
+            --normalize-root "$GITHUB_WORKSPACE/comparison-master" \
+            --normalize-root "$GITHUB_WORKSPACE/candidate" \
+            evidence/comparison-master-tests.tap \
+            evidence/candidate-tests.tap \
+            evidence/current-master-differential.json
+          node --input-type=module -e 'import fs from "node:fs"; const r=JSON.parse(fs.readFileSync("evidence/current-master-differential.json","utf8")); console.log(JSON.stringify({passed:r.passed,baseline:r.baseline,candidate:r.candidate,added:r.added.map(x=>x.identity),changed:r.changed.map(x=>x.identity),addedSkips:r.addedSkips},null,2));'
+      - name: Upload auditable TAP and comparison evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: current-master-differential-${{ matrix.os }}-node-${{ matrix.node }}
+          path: |
+            evidence/*-tests.tap
+            evidence/*-tests.exit
+            evidence/*-build.log
+            evidence/current-master-differential.json
+          if-no-files-found: warn
+          retention-days: 14
