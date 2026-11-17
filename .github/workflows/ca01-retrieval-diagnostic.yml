@@ -5,6 +5,8 @@ on:
     paths:
       - 'test/ca01-ecmascript-method-identity.test.ts'
       - 'test/ca01-retrieval-quality-diagnostic.test.ts'
+      - 'test/ca01-test-identity-audit.test.ts'
+      - 'scripts/ca01-test-identity-audit.mjs'
       - 'scripts/verify-ca01-retrieval-quality.mjs'
       - '.github/workflows/ca01-retrieval-diagnostic.yml'
   workflow_dispatch:
@@ -43,7 +45,7 @@ jobs:
         shell: bash
         run: |
           cd candidate
-          node --import tsx/esm --test test/ca01-ecmascript-method-identity.test.ts test/ca01-retrieval-quality-diagnostic.test.ts
+          node --import tsx/esm --test test/ca01-ecmascript-method-identity.test.ts test/ca01-retrieval-quality-diagnostic.test.ts test/ca01-test-identity-audit.test.ts
       - name: Export frozen and candidate retrieval measurements
         shell: bash
         run: |
