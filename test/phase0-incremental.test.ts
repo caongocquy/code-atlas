@@ -192,7 +192,7 @@ test("forced reindex replaces persisted Windows-style legacy graph identities", 
         file: legacyPath(node.file),
         ...(node.type === "file" ? {
           name: legacyPath(node.name),
-          qualifiedName: legacyPath(node.qualifiedName),
+          qualifiedName: legacyPath(node.qualifiedName ?? node.file),
         } : {}),
       })),
       edges: graph.edges.map((edge) => ({
