@@ -181,7 +181,9 @@ test("forced reindex replaces persisted Windows-style legacy graph identities", 
     const legacyPath = (file: string): string => file.replaceAll("/", "\\");
     const legacyIds = new Map(graph.nodes.map((node) => [
       node.id,
-      createGraphNodeId(repoId, legacyPath(node.file), node.type, node.qualifiedName),
+      createGraphNodeId(repoId, legacyPath(node.file), node.type, node.type === "file"
+        ? legacyPath(node.file)
+        : node.qualifiedName ?? node.name),
     ]));
     const legacyGraph = {
       nodes: graph.nodes.map((node) => ({
