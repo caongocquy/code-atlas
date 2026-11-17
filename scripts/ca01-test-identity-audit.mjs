@@ -1,4 +1,3 @@
-import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
