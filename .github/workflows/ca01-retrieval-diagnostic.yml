@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - 'test/ca01-ecmascript-method-identity.test.ts'
+      - 'test/ca01-retrieval-quality-diagnostic.test.ts'
+      - 'scripts/verify-ca01-retrieval-quality.mjs'
       - '.github/workflows/ca01-retrieval-diagnostic.yml'
   workflow_dispatch:
 
@@ -41,7 +43,7 @@ jobs:
         shell: bash
         run: |
           cd candidate
-          node --import tsx/esm --test test/ca01-ecmascript-method-identity.test.ts
+          node --import tsx/esm --test test/ca01-ecmascript-method-identity.test.ts test/ca01-retrieval-quality-diagnostic.test.ts
       - name: Export frozen and candidate retrieval measurements
         shell: bash
         run: |
@@ -98,6 +100,10 @@ jobs:
             fs.writeFileSync(".evidence/parity-differences.json",JSON.stringify(summary,null,2)+"\n");
             console.log(JSON.stringify(summary,null,2));
           '
+      - name: Check stable relevance metrics without altering the frozen oracle
+        shell: bash
+        run: |
+          node candidate/scripts/verify-ca01-retrieval-quality.mjs .evidence/baseline-parity.json .evidence/candidate-parity.json .evidence/retrieval-quality.json
       - name: Upload immutable diagnostics, not a release qualification
         if: always()
         uses: actions/upload-artifact@v4
