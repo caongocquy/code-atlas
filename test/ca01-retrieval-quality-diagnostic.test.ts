@@ -34,3 +34,20 @@ test("CA-01 diagnostic rejects missing cases and profiles instead of silently sk
   missingProfile.parityPayload[0].profiles = {};
   assert.deepEqual(evaluateRetrievalQuality(baseline, missingProfile).regressions.map(x => x.reason), ["missing_profile"]);
 });
+
+test("CA-01 diagnostic preserves legitimately unjudged null metrics", () => {
+  const unjudged = Object.fromEntries(GUARDED_METRICS.map(key => [key, null]));
+  const result = evaluateRetrievalQuality(report(unjudged), report({ ...unjudged }));
+  assert.equal(result.regressions.length, 0);
+  assert.equal(result.improvements.length, 0);
+});
+
+test("CA-01 diagnostic flags newly judged or newly unjudged metrics for review", () => {
+  const unjudged = Object.fromEntries(GUARDED_METRICS.map(key => [key, null]));
+  const becameJudged = evaluateRetrievalQuality(report(unjudged), report(allMetrics()));
+  const becameUnjudged = evaluateRetrievalQuality(report(allMetrics()), report(unjudged));
+  for (const result of [becameJudged, becameUnjudged]) {
+    assert.equal(result.regressions.length, 3 * GUARDED_METRICS.length);
+    assert.ok(result.regressions.every(item => item.reason === "invalid_or_changed_metric"));
+  }
+});
