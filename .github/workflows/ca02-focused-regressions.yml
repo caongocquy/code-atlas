@@ -1,0 +1,65 @@
+name: CA-02 focused graph regressions
+
+on:
+  pull_request:
+    paths:
+      - 'src/core/graph/build-graph.ts'
+      - 'src/core/graph/resolver/**'
+      - 'src/core/facts/extractors/ecmascript.ts'
+      - 'src/core/indexing/index-pipeline.service.ts'
+      - 'src/core/repository/index-version.ts'
+      - 'src/config/constants.ts'
+      - 'test/ca02-bare-call-resolution.test.ts'
+      - 'test/ca02-import-alias-resolution.test.ts'
+      - 'test/ca02-nested-function-identity.test.ts'
+      - 'test/ca02-repeated-callsite-provenance.test.ts'
+      - 'test/ca02-typed-receiver-resolution.test.ts'
+      - 'test/ca02-final-validation.test.ts'
+      - '.github/workflows/ca02-focused-regressions.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ca02-focused-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  focused-graph-regressions:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.3'
+      - run: corepack enable
+      - name: Install pinned dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if pnpm install --frozen-lockfile; then exit 0; fi
+            if [[ "$attempt" -eq 3 ]]; then exit 1; fi
+            sleep $((attempt * 10))
+          done
+      - name: Typecheck
+        run: pnpm exec tsc --noEmit
+      - name: Prepare native parsers
+        run: node scripts/parser-distribution.mjs prepare --build-missing
+      # Union of every distinct test file from the five original focused workflows.
+      - name: CA-02 focused and existing graph resolution regressions
+        run: |
+          node --import tsx/esm --test \
+            test/ca02-bare-call-resolution.test.ts \
+            test/ca02-import-alias-resolution.test.ts \
+            test/ca02-nested-function-identity.test.ts \
+            test/ca02-repeated-callsite-provenance.test.ts \
+            test/ca02-typed-receiver-resolution.test.ts \
+            test/ca02-final-validation.test.ts \
+            test/phase14b-resolver-decisions.test.ts \
+            test/phase14b-facts-graph-resolver.test.ts \
+            test/phase14b-language-ecmascript.test.ts \
+            test/phase14b-typescript-member-calls.test.ts \
+            test/phase17d-c-config-integrity.test.ts
