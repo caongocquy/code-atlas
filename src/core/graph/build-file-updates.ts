@@ -127,6 +127,15 @@ async function buildFileGraphsInternal(
 ): Promise<BuiltFileGraph[]> {
   const results: BuiltFileGraph[] = [];
 
+  // Persist repository-relative graph keys using POSIX separators on all platforms.
+  const toGraphPath = (file: string): string =>
+    file ? path.posix.normalize(file.replaceAll("\\", "/")) : file;
+  const filePaths = files.map(toGraphPath);
+  const repositoryFiles = new Set([...allRepoFiles].map(toGraphPath));
+  const factsByFile = unitsByFile
+    ? new Map([...unitsByFile].map(([file, unit]) => [toGraphPath(file), unit] as const))
+    : undefined;
+
   //
   // Build all local nodes first so call resolution
   // can see symbols created by other impacted files.
@@ -143,8 +152,8 @@ async function buildFileGraphsInternal(
     }
   >();
 
-  for (let index = 0; index < files.length; index += 1) {
-    const relativePath = files[index];
+  for (let index = 0; index < filePaths.length; index += 1) {
+    const relativePath = filePaths[index];
 
     if (!relativePath) {
       continue;
@@ -152,7 +161,7 @@ async function buildFileGraphsInternal(
 
     const absolutePath = path.join(repoPath, relativePath);
 
-    const indexedUnit = unitsByFile?.get(relativePath);
+    const indexedUnit = factsByFile?.get(relativePath);
     const source = indexedUnit?.source ?? await fs.readFile(absolutePath, "utf8");
 
     const fileNodeId = createGraphNodeId(
@@ -216,7 +225,7 @@ async function buildFileGraphsInternal(
       edges,
     });
 
-    reporter?.setProgress(index + 1, files.length);
+    reporter?.setProgress(index + 1, filePaths.length);
   }
 
   //
@@ -227,7 +236,7 @@ async function buildFileGraphsInternal(
   // fresh nodes for impacted files.
   //
 
-  const impactedSet = new Set(files);
+  const impactedSet = new Set(filePaths);
 
   const workingGraph: CodeGraph = {
     nodes: baseGraph.nodes.filter((node) => !impactedSet.has(node.file)),
@@ -242,7 +251,7 @@ async function buildFileGraphsInternal(
   // Build imports + calls for each impacted file.
   //
 
-  for (const relativePath of files) {
+  for (const relativePath of filePaths) {
     const local = localGraphs.get(relativePath);
 
     if (!local) {
@@ -277,7 +286,7 @@ async function buildFileGraphsInternal(
       );
 
       const targetFile = candidates.find((candidate) =>
-        allRepoFiles.has(candidate),
+        repositoryFiles.has(candidate),
       );
 
       if (!targetFile) {
@@ -304,8 +313,8 @@ async function buildFileGraphsInternal(
     //
 
     const bindings = local.facts
-      ? factsImportBindings(local.facts, allRepoFiles)
-      : extractImportBindings(local.source, relativePath, allRepoFiles);
+      ? factsImportBindings(local.facts, repositoryFiles)
+      : extractImportBindings(local.source, relativePath, repositoryFiles);
 
     const calls = local.facts
       ? factsCalls(local.facts, codeChunksFromFacts(local.facts))

@@ -590,9 +590,9 @@ export async function buildCodeGraphWithResolution(
 
   const files = sourceFiles ?? await scanRepo(absoluteRepoPath);
 
-  const relativeFiles = files.map((filePath) =>
-    path.relative(absoluteRepoPath, filePath),
-  );
+  const toGraphPath = (filePath: string): string =>
+    path.relative(absoluteRepoPath, filePath).split(path.sep).join("/");
+  const relativeFiles = files.map(toGraphPath);
 
   const fileSet = new Set(relativeFiles);
 
@@ -639,7 +639,7 @@ export async function buildCodeGraphWithResolution(
       continue;
     }
 
-    const relativePath = path.relative(absoluteRepoPath, filePath);
+    const relativePath = toGraphPath(filePath);
 
     const fileNodeId = fileNodeIds.get(relativePath);
 
@@ -693,7 +693,7 @@ export async function buildCodeGraphWithResolution(
   //
 
   for (const filePath of files) {
-    const relativePath = path.relative(absoluteRepoPath, filePath);
+    const relativePath = toGraphPath(filePath);
 
     const importerNodeId = fileNodeIds.get(relativePath);
 
@@ -740,7 +740,7 @@ export async function buildCodeGraphWithResolution(
   //
 
   for (const filePath of files) {
-    const relativePath = path.relative(absoluteRepoPath, filePath);
+    const relativePath = toGraphPath(filePath);
 
     const source = await fs.readFile(filePath, "utf8");
 
