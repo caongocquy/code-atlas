@@ -35,7 +35,7 @@ jobs:
           corepack enable
           corepack prepare pnpm@11.22.0 --activate
           for dir in baseline candidate; do
-            (cd "$dir" && pnpm install --frozen-lockfile && node scripts/parser-distribution.mjs prepare --build-missing)
+            (cd "$dir" && pnpm install --frozen-lockfile && node scripts/parser-distribution.mjs prepare --build-missing && pnpm build)
           done
       - name: Verify new owner-qualified identity regression
         shell: bash
