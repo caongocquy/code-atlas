@@ -6,6 +6,9 @@ import assert from "node:assert/strict";
 
 import { buildFileGraphs } from "../src/core/graph/build-file-updates.js";
 import { buildCodeGraph } from "../src/core/graph/build-graph.js";
+import { createGraphNodeId } from "../src/core/graph/node-id.js";
+import { reindexRepository } from "../src/core/indexing/index-pipeline.service.js";
+import { getRepositoryIdentity } from "../src/core/repository/repository-identity.js";
 import { AtlasStore } from "../src/storage/atlas/atlas.store.js";
 import { createFileHash } from "../src/core/repository/file-hash.js";
 import { getRepoId, scanRepo } from "../src/core/repository/repository-files.js";
@@ -164,6 +167,64 @@ test("AtlasStore removes canonical graph files when deletion uses Windows separa
       assert.equal(store.loadGraph(repoId).nodes.some((node) => node.file === "src/importer.ts"), true);
     } finally {
       store.close();
+    }
+  });
+});
+
+test("forced reindex replaces persisted Windows-style legacy graph identities", async () => {
+  await withRepo(async (repoPath) => {
+    const dbPath = path.join(repoPath, ".codeatlas", "atlas.db");
+    await mkdir(path.dirname(dbPath), { recursive: true });
+    const store = new AtlasStore(dbPath);
+    const repoId = store.ensureRepository(getRepositoryIdentity(repoPath)).id;
+    const graph = await buildCodeGraph(repoPath);
+    const legacyPath = (file: string): string => file.replaceAll("/", "\\");
+    const legacyIds = new Map(graph.nodes.map((node) => [
+      node.id,
+      createGraphNodeId(repoId, legacyPath(node.file), node.type, node.qualifiedName),
+    ]));
+    const legacyGraph = {
+      nodes: graph.nodes.map((node) => ({
+        ...node,
+        id: legacyIds.get(node.id)!,
+        file: legacyPath(node.file),
+        ...(node.type === "file" ? {
+          name: legacyPath(node.name),
+          qualifiedName: legacyPath(node.qualifiedName),
+        } : {}),
+      })),
+      edges: graph.edges.map((edge) => ({
+        ...edge,
+        from: legacyIds.get(edge.from)!,
+        to: legacyIds.get(edge.to)!,
+      })),
+    };
+
+    try {
+      const fileHashes = await hashes(repoPath, new Set(["src/importer.ts", "src/target.ts"]));
+      store.replaceGraph(
+        repoId,
+        legacyGraph,
+        new Map([...fileHashes].map(([file, hash]) => [legacyPath(file), hash])),
+      );
+      assert.equal(store.loadGraph(repoId).nodes.some((node) => node.file.includes("\\")), true);
+    } finally {
+      store.close();
+    }
+
+    const result = await reindexRepository(repoPath);
+    assert.equal(result.kind, "published", result.kind === "failed" ? result.failure.message : undefined);
+
+    const reopened = new AtlasStore(dbPath);
+    try {
+      const rebuilt = reopened.loadGraph(repoId);
+      assert.equal(rebuilt.nodes.some((node) => node.file.includes("\\")), false);
+      assert.equal(rebuilt.nodes.some((node) => node.file === "src/target.ts"), true);
+      assert.equal(rebuilt.nodes.some((node) => node.file === "src/importer.ts"), true);
+      const ids = new Set(rebuilt.nodes.map((node) => node.id));
+      assert.equal(rebuilt.edges.every((edge) => ids.has(edge.from) && ids.has(edge.to)), true);
+    } finally {
+      reopened.close();
     }
   });
 });
