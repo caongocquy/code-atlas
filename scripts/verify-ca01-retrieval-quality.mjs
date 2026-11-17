@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
+import process from "node:process";
 import { pathToFileURL } from "node:url";
 
 export const GUARDED_METRICS = Object.freeze([
@@ -24,8 +25,11 @@ export function evaluateRetrievalQuality(baseline, candidate) {
         const b = latest[stage]?.metrics;
         if (!a || !b) { regressions.push({ id, profile, stage, reason: "missing_stage_metrics" }); continue; }
         for (const metric of GUARDED_METRICS) {
+          // Unjudged relevance is null in both reports, not a regression.
+          // A transition between null and a score requires independent review.
+          if (a[metric] === null && b[metric] === null) continue;
           if (!Number.isFinite(a[metric]) || !Number.isFinite(b[metric])) {
-            regressions.push({ id, profile, stage, metric, reason: "invalid_metric" });
+            regressions.push({ id, profile, stage, metric, reason: "invalid_or_changed_metric" });
             continue;
           }
           const delta = b[metric] - a[metric];
@@ -45,6 +49,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   if (![baselinePath, candidatePath, outputPath].every(Boolean)) throw new Error("Usage: verify-ca01-retrieval-quality.mjs <baseline.json> <candidate.json> <output.json>");
   const result = evaluateRetrievalQuality(JSON.parse(readFileSync(baselinePath, "utf8")), JSON.parse(readFileSync(candidatePath, "utf8")));
   writeFileSync(outputPath, JSON.stringify(result, null, 2) + "\n");
-  console.log(JSON.stringify({ cases: result.cases, regressions: result.regressions.length, improvements: result.improvements.length }));
+  process.stdout.write(JSON.stringify({ cases: result.cases, regressions: result.regressions.length, improvements: result.improvements.length }) + "\n");
   if (result.regressions.length) process.exitCode = 1;
 }
