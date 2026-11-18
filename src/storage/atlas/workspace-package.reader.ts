@@ -35,7 +35,8 @@ export function readWorkspacePackages(database: DatabaseSync, snapshot: Workspac
   const scope: SQLInputValue[] = [repositoryId, snapshot.generationId];
   const state = "FROM generation_framework_state WHERE repository_id = ? AND generation_id = ?";
   try {
-    if (snapshot.versions.schemaVersion !== INDEX_SCHEMA_VERSION || !isCertifiedPackageFrameworkVersion(snapshot.versions.frameworkResolutionVersion))
+    const frameworkVersion = snapshot.versions.frameworkResolutionVersion;
+    if (snapshot.versions.schemaVersion !== INDEX_SCHEMA_VERSION || !frameworkVersion || !isCertifiedPackageFrameworkVersion(frameworkVersion))
       throw new WorkspaceReadError("package_semantic_domain_unsupported", "incompatible");
     checkWorkspaceDeadline(budget);
     const binding = database.prepare(`SELECT count(*) AS count, coalesce(sum(length(CAST(relative_path AS BLOB)) + length(CAST(content_hash AS BLOB)) + length(CAST(fact_blob_key AS BLOB))), 0) AS bytes
@@ -44,7 +45,7 @@ export function readWorkspacePackages(database: DatabaseSync, snapshot: Workspac
     reserve(binding.count, binding.bytes);
     if (!binding.count) throw new WorkspaceReadError("js_ts_evidence_missing", "incompatible");
     const size = database.prepare(`SELECT length(CAST(config_json AS BLOB)) AS bytes,
-      framework_resolution_version = ? AS certified ${state}`).get(snapshot.versions.frameworkResolutionVersion, ...scope) as { bytes: number; certified: number } | undefined;
+      framework_resolution_version = ? AS certified ${state}`).get(frameworkVersion, ...scope) as { bytes: number; certified: number } | undefined;
     if (!size) throw new WorkspaceReadError("package_config_unavailable");
     if (!size.certified) throw new WorkspaceReadError("package_semantic_domain_unsupported", "incompatible");
     if (size.bytes > MAX_STORED_CONFIG_BYTES) throw new WorkspaceReadError("payload_budget_exceeded", "partial");
