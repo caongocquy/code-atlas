@@ -219,7 +219,12 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
         bindingSeeds.push(binding);
         // Only parser-proven simple identifiers are materialized as variable symbols.
         // Keep the declaration range so same-line declarators yield separate source chunks.
-        if (target.type === "identifier") symbolFor(declarator, "variable", target.text);
+        if (target.type === "identifier") {
+          const simpleDeclarators = node.namedChildren.filter((child) => child.type === "variable_declarator");
+          // Include the declaration keyword for a single declarator, preserving exact source columns.
+          // For comma-separated declarations, retain each declarator's own non-overlapping range.
+          symbolFor(simpleDeclarators.length === 1 ? node : declarator, "variable", target.text);
+        }
         const annotation = declarator.namedChildren.find((child) => child.type === "type_annotation");
         if (annotation) declaredTypeAnnotations.push({ localId: next("type"), ownerId: binding.localId, text: annotation.text.replace(/^:\s*/, ""), range: range(annotation) });
         if (value) {
