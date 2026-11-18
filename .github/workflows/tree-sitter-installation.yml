@@ -69,7 +69,18 @@ jobs:
         run: |
           corepack enable
           corepack prepare pnpm@11.22.0 --activate
-          pnpm install --frozen-lockfile
+          # Retry transient network failures in native dependency postinstall.
+          # Keep the lockfile and lifecycle policies unchanged.
+          for attempt in 1 2 3; do
+            if pnpm install --frozen-lockfile; then
+              break
+            fi
+            if [[ "$attempt" -eq 3 ]]; then
+              echo "Native parser dependency installation failed after 3 attempts." >&2
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
           pnpm build
       - name: Build Kotlin and Dart native parsers
         shell: bash
