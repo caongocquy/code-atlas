@@ -217,6 +217,9 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
         if (!target) continue;
         const binding = { localId: next("binding"), name: target.text, bindingKind: "local", ownerId: scopeStack.at(-1), range: range(target) };
         bindingSeeds.push(binding);
+        // Only parser-proven simple identifiers are materialized as variable symbols.
+        // Keep the declaration range so same-line declarators yield separate source chunks.
+        if (target.type === "identifier") symbolFor(declarator, "variable", target.text);
         const annotation = declarator.namedChildren.find((child) => child.type === "type_annotation");
         if (annotation) declaredTypeAnnotations.push({ localId: next("type"), ownerId: binding.localId, text: annotation.text.replace(/^:\s*/, ""), range: range(annotation) });
         if (value) {
