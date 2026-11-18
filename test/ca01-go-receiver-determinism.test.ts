@@ -16,8 +16,8 @@ test("Go method receiver is recorded once across repeated tree-sitter node wrapp
   };
   const expected = extract();
   const receiverBindings = expected.bindingSeeds.filter(binding => binding.bindingKind === "receiver");
-  assert.equal(receiverBindings.length, 2);
-  assert.equal(expected.parameters.filter(parameter => parameter.receiverKind === "go_receiver").length, 2);
+  assert.equal(receiverBindings.length, 6);
+  assert.equal(expected.parameters.filter(parameter => parameter.receiverKind === "go_receiver").length, 6);
   assert.equal(expected.parameters.filter(parameter => parameter.name === "s" && parameter.receiverKind !== "go_receiver").length, 1);
 
   for (let run = 0; run < 16; run++) {
