@@ -138,6 +138,12 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
       if (specifiers.length > 0) return;
       const namespace = node.namedChildren.find((child) => child.type === "namespace_export");
       if (namespace) { exports.push({ localId: next("export"), exportedName: "*", moduleSpecifier: moduleSpecifier ? unquote(moduleSpecifier.text) : undefined, kind: "star", range: range(namespace) }); return; }
+      // Bare "export * from" has a '*' token but no namespace_export child.
+      // Require a parser-proven source string so local exports cannot become star re-exports.
+      if (moduleSpecifier && node.children.some((child) => child.type === "*")) {
+        exports.push({ localId: next("export"), exportedName: "*", moduleSpecifier: unquote(moduleSpecifier.text), kind: "star", range: range(node) });
+        return;
+      }
       const declaration = node.childForFieldName("declaration");
       // A variable declaration can export several named bindings; the declaration
       // itself has no name field. Preserve each parser-proven simple identifier.
