@@ -42,6 +42,18 @@ test("CA-02 resolves typed receiver to owning method and excludes same-name deco
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+
+test("CA-01 historical same-name method case resolves typed B receiver instead of dropping the edge", async () => {
+  // The former negative fixture was intentionally removed when CA-02 qualified class owners.
+  const source = "class A { list() {} } class B { list() {} } const service: B = new B(); class R { users() { return service.list(); } }";
+  const root = await fixture(source);
+  try {
+    assert.equal((await indexRepository(root, { skipGit: true })).kind, "published");
+    assert.deepEqual(calls(root).map(edge => [edge.from, edge.to, edge.strategy]),
+      [["R.users", "B.list", "receiver-member"]]);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("CA-02 rejects structurally asserted, unknown and shadowed receivers", async () => {
   const sources = [
     'class First { work() {} } class Second { work() {} } function call(receiver: unknown) { return (receiver as { work(): unknown }).work(); }',
