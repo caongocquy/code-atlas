@@ -95,3 +95,26 @@ and original target unchanged. Request a decision on the new integration target
 and semantic contracts before implementing any approved oracle or policy
 migration. Continue to use independently green CI as supporting evidence, not
 a substitute for failed CA-01 release qualification.
+
+
+## Post-rollback strict-green debt inventory — 2026-11-19
+
+Evidence: [proposed-target Linux Node 22 run #44438403956](https://github.com/caongocquy/code-atlas/actions/runs/44438403956), artifact `ca01-proposed-target-linux-node22` (ID `14490331296`). Candidate `7237a32332f3e810c72ca112ef8da09977e4b6d9`; proposed base `eeb5a33584f19af71871c7e09c21a6e21cf7c111`. Full differential **PASS** with 14 equivalent failures, zero added/changed/skipped/missing identities, and 34 baseline failures corrected since the initial 48. **Strict-green remains false**.
+
+| Group | Count | Exact remaining failures | Evidence / disposition |
+|---|---:|---|---|
+| Phase14A graph parity | 2 | `facts graph preserves clean-fixture graph nodes and edges`; `incremental graph matches a clean full rebuild for imports, calls, extends, malformed, delete, and rename` | Missing inferred same-file `calls` edge in graph comparison; malformed incremental update returns `failed` instead of expected `published`. Do not restore speculative edges or relax publication integrity without semantic/security review. |
+| Phase14A local identity/containment | 2 | `extracts one path-neutral fact blob from a TypeScript source snapshot`; `records containment ownership for symbols, calls, and references` | Current unified fact sequence yields `symbol:13,15,27,33` instead of legacy `symbol:1..4`; current scope is `scope:2` vs expected `scope:1`. Review consumers before altering IDs. |
+| Phase14A publication/counters | 2 | `malformed source publishes reusable deterministic partial facts`; `index work counters observe importer invalidation and uncertain resolution fallback` | Current malformed source rejects publication; importer counter observed 0 vs expected 1. Requires integrity and invalidation contract decisions. |
+| Phase14A parse/lexical | 2 | `facts graph does not parse again for member and extends resolution`; `facts materialization preserves columns for same-line symbols` | No inferred member call (expected 1); no symbol-derived chunks for `const first/second`. Previous attempt to emit global `variable` symbols caused 7 new and 4 changed failures plus lazy-route regressions (run #44286862548); **reverted**. Any future lexical fix must be isolated from shared symbol/graph identities. |
+| Phase14A template call evidence | 2 | `facts member evidence preserves executable template interpolation`; `facts evidence handles nested template interpolation and masks nested regex literals` | Expected one resolved member call, actual zero. The masker assertions are not sufficient to certify receiver-member resolution; review CA-02 typed-receiver safeguards before changing call edges. |
+| Phase14B TypeScript semantic oracle | 3 | `all target-language fixtures satisfy the applicable semantic floor`; `conformance decisions and persisted edge projections are deterministic across cold, warm, and parallel runs`; `independent worker resolver jobs overlap and remain deterministically equivalent` | `Service.refresh` vs legacy `refresh`. Semantic behavior changed intentionally in CA-02; independent oracle-owner approval required, no automatic oracle rewrite. |
+| B4A retrieval fingerprint | 1 | `B4A keeps parser-only retrieval stable and aligns TaskContext and SCIP evidence paths` | Full-payload SHA differs; six hybrid graph-expansion ranking deltas documented above. Requires owner review before fingerprint update. |
+
+**Total 14**: 10 Phase14A, 3 Phase14B, 1 B4A. No remaining `workspace_package_links` or Go deterministic extraction failures in this proposed-target artifact.
+
+### Follow-up engineering boundaries
+
+- A production fix may be kept only after the focused original failing test **and** complete cross-OS workflow/differential evidence show no added/changed failures or graph/retrieval regression. The rollback shows that treating a legacy lexical oracle as authority over global symbol shape is unsafe.
+- No automated rewriting of Phase14B `expected.json`, B4A full-payload fingerprint, historical test identities, strict comparator, original target `d2570bd` or Policy B.
+- The proposed-target run is *diagnostic*, not release qualification. Resolve explicit owner approvals or make the remaining 14 genuinely strict-green before requalification.
