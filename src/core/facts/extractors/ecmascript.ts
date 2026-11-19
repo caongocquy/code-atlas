@@ -250,7 +250,7 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
       }
       if (node.type === "call_expression") {
         const callee = node.childForFieldName("function");
-        callSites.push({ localId: next("call"), calleeText: callee?.text ?? node.text, scopeId: scopeStack.at(-1), range: range(node) });
+        callSites.push({ localId: next("call"), calleeText: callee?.text ?? node.text, callerId: callableStack.at(-1)?.localId, scopeId: scopeStack.at(-1), range: range(node) });
         expressionFor(node, "call");
       }
       if (node.type === "return_statement") {
