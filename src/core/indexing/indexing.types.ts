@@ -81,7 +81,8 @@ export function codeChunksFromFacts(unit: IndexedSourceUnit): CodeChunk[] {
   if (unit.facts.language !== "typescript" && unit.facts.language !== "javascript") return symbolChunks;
   const lexicalVariables: CodeChunk[] = [];
   for (const exported of unit.facts.exports) {
-    if (exported.kind !== "declaration" || !exported.localName || exported.range.startLine !== exported.range.endLine) continue;
+    if (exported.kind !== "declaration" || !exported.localName || exported.range.startLine !== exported.range.endLine
+      || exported.range.startColumn === undefined || exported.range.endColumn === undefined) continue;
     if (!unit.facts.bindingSeeds.some((seed) => seed.bindingKind === "local" && seed.name === exported.localName
       && seed.range.startLine === exported.range.startLine
       && seed.range.startColumn === exported.range.startColumn)) continue;
