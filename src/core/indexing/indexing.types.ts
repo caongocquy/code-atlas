@@ -65,7 +65,7 @@ export function codeChunksFromFacts(unit: IndexedSourceUnit): CodeChunk[] {
     return [first, ...selected.slice(1, -1), last].join("\n");
   }
 
-  return unit.facts.symbols.map((symbol) => ({
+  const symbolChunks = unit.facts.symbols.map((symbol) => ({
     symbolName: symbol.name,
     symbolType: symbol.kind,
     language: unit.facts.language,
@@ -75,6 +75,35 @@ export function codeChunksFromFacts(unit: IndexedSourceUnit): CodeChunk[] {
     startColumn: symbol.range.startColumn,
     endColumn: symbol.range.endColumn,
   }));
+
+  // Keep graph symbol identities unchanged. A parser-proven exported variable
+  // declarator can still contribute a lexical chunk even when it is not a graph symbol.
+  if (unit.facts.language !== "typescript" && unit.facts.language !== "javascript") return symbolChunks;
+  const lexicalVariables: CodeChunk[] = [];
+  for (const exported of unit.facts.exports) {
+    if (exported.kind !== "declaration" || !exported.localName || exported.range.startLine !== exported.range.endLine) continue;
+    if (!unit.facts.bindingSeeds.some((seed) => seed.bindingKind === "local" && seed.name === exported.localName
+      && seed.range.startLine === exported.range.startLine
+      && seed.range.startColumn === exported.range.startColumn)) continue;
+
+    const line = lines[exported.range.startLine - 1];
+    if (!line) continue;
+    const prefix = line.slice(0, exported.range.startColumn);
+    const declaration = /(?:^|;\s*)export\s+(const|let|var)\s+$/.exec(prefix);
+    if (!declaration) continue;
+    const keywordStart = prefix.lastIndexOf(declaration[1] + " ");
+    const suffix = line.slice(exported.range.endColumn);
+    if (!suffix.startsWith(";") || keywordStart < 0) continue;
+    const startColumn = keywordStart;
+    const endColumn = exported.range.endColumn + 1;
+    lexicalVariables.push({
+      symbolName: exported.localName, symbolType: "variable", language: unit.facts.language,
+      content: line.slice(startColumn, endColumn),
+      startLine: exported.range.startLine, endLine: exported.range.endLine,
+      startColumn, endColumn,
+    });
+  }
+  return [...symbolChunks, ...lexicalVariables];
 }
 
 export type ChangeDetectionMode = "git" | "filesystem";
