@@ -118,3 +118,39 @@ Evidence: [proposed-target Linux Node 22 run #44438403956](https://github.com/ca
 - A production fix may be kept only after the focused original failing test **and** complete cross-OS workflow/differential evidence show no added/changed failures or graph/retrieval regression. The rollback shows that treating a legacy lexical oracle as authority over global symbol shape is unsafe.
 - No automated rewriting of Phase14B `expected.json`, B4A full-payload fingerprint, historical test identities, strict comparator, original target `d2570bd` or Policy B.
 - The proposed-target run is *diagnostic*, not release qualification. Resolve explicit owner approvals or make the remaining 14 genuinely strict-green before requalification.
+
+
+## Portable release gate: separate target and incident — 2026-11-19
+
+The portable matrix compares against an **independent, immutable release base**
+`8f3c2d7671b4d9a9deaa70c83c80c4fccb94689f`, not CA-01's proposed
+`master` target `eeb5a33584f19af71871c7e09c21a6e21cf7c111`.
+Evidence: [portable run #44442522585](https://github.com/caongocquy/code-atlas/actions/runs/44442522585),
+macOS Intel uploaded `portable-candidate-darwin-x64` artifact `14492961196`,
+`.evidence/regression-comparison.json`. The release comparator reports **three
+added assertion failures**, zero changed failures and zero new skips:
+
+1. `test/phase14b-conformance.test.ts :: all target-language fixtures satisfy the applicable semantic floor`
+2. `test/phase14b-conformance.test.ts :: conformance decisions and persisted edge projections are deterministic across cold, warm, and parallel runs`
+3. `test/phase16c-b4a-measurement-parity.test.ts :: B4A keeps parser-only retrieval stable and aligns TaskContext and SCIP evidence paths`
+
+These are **not** evidence that the portable archive, native parser loading or
+package bundling generated three new defects. They come from the historical
+release baseline's Phase14B owner-qualified `Service.refresh` change and the
+B4A full-retrieval fingerprint. The proposed-target CA-01 differential passing
+does **not** authorize changing this independent release comparison base,
+relaxing the release comparator or rewriting the expected artifacts.
+
+A separate infrastructure failure occurred in the macOS Intel ONNX source
+checkout: `git fetch` for pinned
+`microsoft/onnxruntime@f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7`
+returned `fatal: repository ... not found` with exit 128 on three action
+attempts. This is an upstream checkout availability/access incident, not the
+release assertion cause. Do not switch to an unverified mirror, move the pin
+or skip the ONNX build. Recheck upstream access and integrity before re-running.
+
+The portable workflow now writes **exact added/changed/skipped test identities**
+to job logs and GitHub job summary when the strict release comparison fails;
+the failure gate still exits nonzero and uploads the same evidence artifact.
+**Disposition:** release baseline/oracle approvals and independent ONNX availability
+are outstanding. PR remains NO-GO.
