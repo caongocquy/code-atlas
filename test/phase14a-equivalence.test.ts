@@ -104,7 +104,7 @@ test("incremental graph matches a clean full rebuild for imports, calls, extends
     await writeFile(path.join(repoPath, "renamed-base.ts"), "export class Base { work() {} }\n");
     await writeFile(path.join(repoPath, "consumer.ts"), 'import { Base } from "./renamed-base.js"; export class Consumer extends Base { run() { this.work(); } }\n');
     const incremental = await syncRepository(repoPath, { skipGit: true });
-    assert.equal(incremental.kind, "published");
+    assert.equal(incremental.kind, "published", incremental.kind === "failed" ? incremental.failure.message : undefined);
 
     const incrementalStore = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
     const repository = incrementalStore.ensureRepository(getRepositoryIdentity(repoPath));
