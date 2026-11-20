@@ -291,4 +291,27 @@ jobs:
         if: always() && steps.review-artifacts.outcome == 'success'
         shell: bash
         run: |
-          node --input-type=module -e 'import fs from "node:fs"; const report=JSON.parse(fs.readFileSync(".evidence/regression-comparison.json")); if(report.passed!==true) { console.error(`Full-suite regression gate failed: ${report.added.length} added, ${report.changed.length} changed, ${report.addedSkips.length} new skips.`); process.exit(1); }'
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+
+          const report = JSON.parse(fs.readFileSync(".evidence/regression-comparison.json", "utf8"));
+          if (report.passed !== true) {
+            const summary = `Full-suite regression gate failed: ${report.added.length} added, ${report.changed.length} changed, ${report.addedSkips.length} new skips.`;
+            console.error(summary);
+            const failures = [
+              ...report.added.map((item) => ["added", item]),
+              ...report.changed.map((item) => ["changed", item]),
+              ...report.addedSkips.map((item) => ["new skip", item]),
+            ];
+            for (const [kind, item] of failures) {
+              console.error(`  ${kind}: ${item.identity ?? "(unidentified)"}`);
+            }
+            if (process.env.GITHUB_STEP_SUMMARY) {
+              const lines = ["### Portable full-suite regression gate", "", summary, "", ...failures.map(
+                ([kind, item]) => `- **${kind}**: \`${String(item.identity ?? "(unidentified)").replaceAll("`", "'")}\``,
+              )];
+              fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
+            }
+            process.exitCode = 1;
+          }
+          NODE

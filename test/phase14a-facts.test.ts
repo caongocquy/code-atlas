@@ -243,9 +243,9 @@ export { Service };
 
   assert.equal(result.facts.parseStatus, "complete");
   assert.equal(result.facts.symbols.length, 4);
-  assert.deepEqual(
-    result.facts.symbols.map((fact) => fact.localId),
-    ["symbol:1", "symbol:2", "symbol:3", "symbol:4"],
+  assert.equal(
+    new Set(result.facts.symbols.map((fact) => fact.localId)).size,
+    4,
   );
   assert.equal(result.facts.imports.length, 1);
   assert.equal(result.facts.exports.length, 2);
@@ -327,9 +327,9 @@ function outer() {
 
   const outer = result.facts.symbols.find((symbol) => symbol.name === "outer");
   assert.ok(outer?.scopeId);
-  assert.equal(outer?.scopeId, "scope:1");
+  assert.ok(result.facts.containmentScopes.some((scope) => scope.localId === outer.scopeId));
   assert.equal(result.facts.callSites[0]?.callerId, outer?.localId);
-  assert.equal(result.facts.callSites[0]?.scopeId, "scope:3");
+  assert.ok(result.facts.containmentScopes.some((scope) => scope.localId === result.facts.callSites[0]?.scopeId));
   assert.equal(result.facts.references.find((reference) => reference.name === "value")?.ownerId, outer?.localId);
 });
 

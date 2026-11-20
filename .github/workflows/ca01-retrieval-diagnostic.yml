@@ -1,0 +1,116 @@
+name: CA-01 retrieval parity diagnostic (non-release)
+
+on:
+  pull_request:
+    paths:
+      - 'test/ca01-ecmascript-method-identity.test.ts'
+      - 'test/ca01-retrieval-quality-diagnostic.test.ts'
+      - 'test/ca01-test-identity-audit.test.ts'
+      - 'scripts/ca01-test-identity-audit.mjs'
+      - 'scripts/verify-ca01-retrieval-quality.mjs'
+      - '.github/workflows/ca01-retrieval-diagnostic.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  retrieval-parity-diagnostic:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout frozen CA-01 target
+        uses: actions/checkout@v4
+        with:
+          ref: d2570bd789095d82442ff332beb36a5ddd998194
+          path: baseline
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: candidate
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.3'
+      - name: Prepare both revisions
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@11.22.0 --activate
+          for dir in baseline candidate; do
+            (cd "$dir" && pnpm install --frozen-lockfile && node scripts/parser-distribution.mjs prepare --build-missing && pnpm build)
+          done
+      - name: Verify new owner-qualified identity regression
+        shell: bash
+        run: |
+          cd candidate
+          node --import tsx/esm --test test/ca01-ecmascript-method-identity.test.ts test/ca01-retrieval-quality-diagnostic.test.ts test/ca01-test-identity-audit.test.ts
+      - name: Export frozen and candidate retrieval measurements
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .evidence
+          export EVIDENCE_ROOT="$PWD/.evidence"
+          for dir in baseline candidate; do
+            (cd "$dir" && CODE_ATLAS_EVAL_OFFLINE=1 EVAL_VARIANT="$dir" node --import tsx/esm --input-type=module -e '
+              import { mkdir, writeFile } from "node:fs/promises";
+              import { createHash } from "node:crypto";
+              import path from "node:path";
+              import { runRetrievalEval } from "./eval/retrieval/run.ts";
+              const root = process.cwd();
+              const outputDirectory = path.join(process.env.EVIDENCE_ROOT, process.env.EVAL_VARIANT + "-report");
+              await mkdir(outputDirectory, {recursive:true});
+              const { report } = await runRetrievalEval({repoRoot:root, outputDirectory});
+              const parityPayload = report.cases.map(item => ({
+                id: item.id,
+                profiles: Object.fromEntries(Object.entries(item.profiles).map(([name,p]) => [name,{
+                  semanticState:p.semanticState, vector:p.vector, lexical:p.lexical, hybrid:p.hybrid,
+                  hybridGraphExpansion:p.hybridGraphExpansion, graphExpansion:p.graphExpansion,
+                }])),
+              }));
+              const sha256 = createHash("sha256").update(JSON.stringify(parityPayload)).digest("hex");
+              await writeFile(path.join(process.env.EVIDENCE_ROOT,process.env.EVAL_VARIANT+"-parity.json"),JSON.stringify({sha256,parityPayload},null,2)+"\n");
+              console.log(process.env.EVAL_VARIANT, "retrieval SHA256:",sha256,"cases:",parityPayload.length);
+            ')
+          done
+      - name: Produce non-waiving per-case and per-profile differences
+        shell: bash
+        run: |
+          node --input-type=module -e '
+            import fs from "node:fs";
+            import { isDeepStrictEqual } from "node:util";
+            const a=JSON.parse(fs.readFileSync(".evidence/baseline-parity.json"));
+            const b=JSON.parse(fs.readFileSync(".evidence/candidate-parity.json"));
+            const keys=new Set([...a.parityPayload.map(x=>x.id),...b.parityPayload.map(x=>x.id)]);
+            const mapA=new Map(a.parityPayload.map(x=>[x.id,x]));
+            const mapB=new Map(b.parityPayload.map(x=>[x.id,x]));
+            const differences=[];
+            for(const id of [...keys].sort()){
+              const left=mapA.get(id),right=mapB.get(id);
+              if(!left || !right) {differences.push({id,kind:!left?"added-case":"missing-case"});continue;}
+              const profiles=new Set([...Object.keys(left.profiles),...Object.keys(right.profiles)]);
+              for(const p of profiles) {
+                const l=left.profiles[p],r=right.profiles[p];
+                if(!isDeepStrictEqual(l,r)) {
+                  const stages=new Set([...Object.keys(l||{}),...Object.keys(r||{})]);
+                  differences.push({id,profile:p,stages:[...stages].filter(stage=>!isDeepStrictEqual(l?.[stage],r?.[stage]))});
+                }
+              }
+            }
+            const summary={baseline:a.sha256,candidate:b.sha256,differences};
+            fs.writeFileSync(".evidence/parity-differences.json",JSON.stringify(summary,null,2)+"\n");
+            console.log(JSON.stringify(summary,null,2));
+          '
+      - name: Check stable relevance metrics without altering the frozen oracle
+        shell: bash
+        run: |
+          node candidate/scripts/verify-ca01-retrieval-quality.mjs .evidence/baseline-parity.json .evidence/candidate-parity.json .evidence/retrieval-quality.json
+      - name: Upload immutable diagnostics, not a release qualification
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ca01-retrieval-parity-diagnostics
+          path: .evidence/
+          include-hidden-files: true
+          if-no-files-found: error

@@ -1,0 +1,105 @@
+name: CA-01 proposed-target qualification diagnostic (non-release)
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/ca01-current-target-diagnostic.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  proposed-target-differential:
+    name: Proposed target / Linux Node 22 diagnostic
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    env:
+      PROPOSED_BASE: eeb5a33584f19af71871c7e09c21a6e21cf7c111
+      CODE_ATLAS_EVAL_OFFLINE: '1'
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: candidate
+          fetch-depth: 0
+      - name: Checkout exact proposed target
+        uses: actions/checkout@v4
+        with:
+          ref: eeb5a33584f19af71871c7e09c21a6e21cf7c111
+          path: baseline
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.3'
+      - name: Verify comparable immutable revision inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C baseline rev-parse HEAD)" = "$PROPOSED_BASE"
+          git -C candidate merge-base --is-ancestor "$PROPOSED_BASE" HEAD
+          git -C candidate diff --exit-code "$PROPOSED_BASE" -- package.json pnpm-lock.yaml scripts/parser-sources.json
+          mkdir -p .evidence
+          printf 'proposed_base=%s\ncandidate=%s\n' "$PROPOSED_BASE" "$(git -C candidate rev-parse HEAD)" > .evidence/revisions.txt
+      - name: Install and build both revisions with identical locked inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@11.22.0 --activate
+          for dir in baseline candidate; do
+            (cd "$dir" && pnpm install --frozen-lockfile && node scripts/parser-distribution.mjs prepare --build-missing && pnpm build)
+          done
+      - name: Capture complete suites without waiving baseline failures
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_root="$PWD/.evidence"
+          for dir in baseline candidate; do
+            (
+              cd "$dir"
+              mkdir -p node_modules/.bin
+              chmod +x dist/cli.js
+              ln -sf "$PWD/dist/cli.js" node_modules/.bin/code-atlas
+              export CODE_ATLAS_CLI="$PWD/node_modules/.bin/code-atlas"
+              export PATH="$PWD/node_modules/.bin:$PATH"
+              node scripts/run-ca01-suite.mjs "$evidence_root/$dir"
+            )
+          done
+      - name: Compare entire frozen-shape assertion trees
+        shell: bash
+        run: |
+          set -euo pipefail
+          node candidate/scripts/compare-ca01-tests.mjs \
+            "$PWD/.evidence/baseline" "$PWD/.evidence/candidate" "$PWD/.evidence/comparison.json" \
+            "$PWD/baseline" "$PWD/candidate" "$(node -p 'require("node:os").tmpdir()')"
+      - name: Classify moved, removed and changed test identities independently
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f .evidence/baseline.jsonl && -f .evidence/candidate.jsonl ]]; then
+            node candidate/scripts/ca01-test-identity-audit.mjs \
+              .evidence/baseline.jsonl .evidence/candidate.jsonl .evidence/identity-audit.json || true
+          fi
+      - name: Record strict gate and differential gate separately
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f .evidence/comparison.json ]]; then
+            node --input-type=module -e '
+              import fs from "node:fs";
+              const report=JSON.parse(fs.readFileSync(".evidence/comparison.json","utf8"));
+              const summary={proposedBase:process.env.PROPOSED_BASE,strictGreen:report.strictGreen,differentialPass:report.differentialPass,baseline:report.baseline,candidate:report.candidate,addedFailures:report.addedFailures.length,changedFailures:report.changedFailures.length,missingTests:report.missingTests.length,releaseAuthorization:false};
+              fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, "## Proposed-target diagnostic — NOT RELEASE AUTHORIZATION\n\n"+JSON.stringify(summary,null,2)+"\n");
+            '
+          else
+            echo 'Comparison missing/incomplete: NO-GO; no release authorization.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload complete diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ca01-proposed-target-linux-node22
+          path: .evidence/
+          include-hidden-files: true
+          if-no-files-found: error

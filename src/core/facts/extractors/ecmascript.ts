@@ -138,6 +138,12 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
       if (specifiers.length > 0) return;
       const namespace = node.namedChildren.find((child) => child.type === "namespace_export");
       if (namespace) { exports.push({ localId: next("export"), exportedName: "*", moduleSpecifier: moduleSpecifier ? unquote(moduleSpecifier.text) : undefined, kind: "star", range: range(namespace) }); return; }
+      // Bare "export * from" has a '*' token but no namespace_export child.
+      // Require a parser-proven source string so local exports cannot become star re-exports.
+      if (moduleSpecifier && node.children.some((child) => child.type === "*")) {
+        exports.push({ localId: next("export"), exportedName: "*", moduleSpecifier: unquote(moduleSpecifier.text), kind: "star", range: range(node) });
+        return;
+      }
       const declaration = node.childForFieldName("declaration");
       // A variable declaration can export several named bindings; the declaration
       // itself has no name field. Preserve each parser-proven simple identifier.
@@ -244,7 +250,7 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
       }
       if (node.type === "call_expression") {
         const callee = node.childForFieldName("function");
-        callSites.push({ localId: next("call"), calleeText: callee?.text ?? node.text, scopeId: scopeStack.at(-1), range: range(node) });
+        callSites.push({ localId: next("call"), calleeText: callee?.text ?? node.text, callerId: callableStack.at(-1)?.localId, scopeId: scopeStack.at(-1), range: range(node) });
         expressionFor(node, "call");
       }
       if (node.type === "return_statement") {
@@ -258,7 +264,7 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
         if (body && body.type !== "statement_block" && owner) returns.push({ localId: next("return"), ownerSymbolId: owner.localId, expressionId: expressionFor(body, body.type === "member_expression" ? "member" : "identifier").localId, range: range(body) });
       }
       if (node.type === "identifier" && node.parent && !["variable_declarator", "required_parameter", "optional_parameter", "formal_parameter", "type_annotation", "type_identifier", "import_specifier", "export_specifier"].includes(node.parent.type)) {
-        const reference = { localId: next("reference"), name: node.text, scopeId: scopeStack.at(-1), range: range(node) };
+        const reference = { localId: next("reference"), name: node.text, ownerId: callableStack.at(-1)?.localId, scopeId: scopeStack.at(-1), range: range(node) };
         references.push(reference);
         syntax.linkFact(node, reference.localId);
       }
