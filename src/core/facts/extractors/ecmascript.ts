@@ -264,7 +264,7 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
         if (body && body.type !== "statement_block" && owner) returns.push({ localId: next("return"), ownerSymbolId: owner.localId, expressionId: expressionFor(body, body.type === "member_expression" ? "member" : "identifier").localId, range: range(body) });
       }
       if (node.type === "identifier" && node.parent && !["variable_declarator", "required_parameter", "optional_parameter", "formal_parameter", "type_annotation", "type_identifier", "import_specifier", "export_specifier"].includes(node.parent.type)) {
-        const reference = { localId: next("reference"), name: node.text, scopeId: scopeStack.at(-1), range: range(node) };
+        const reference = { localId: next("reference"), name: node.text, ownerId: callableStack.at(-1)?.localId, scopeId: scopeStack.at(-1), range: range(node) };
         references.push(reference);
         syntax.linkFact(node, reference.localId);
       }
