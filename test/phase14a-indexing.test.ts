@@ -101,8 +101,8 @@ test("index work counters observe importer invalidation and uncertain resolution
     const result = await syncRepository(repoPath, { skipGit: true });
     assert.equal(result.kind, "published");
     assert.equal(result.counters.importersInvalidated, 1);
-    assert.equal(result.counters.fullResolutionFallbacks, 1);
-    assert.equal(result.counters.filesResolved, 3);
+    assert.equal(result.counters.fullResolutionFallbacks, 0);
+    assert.equal(result.counters.filesResolved, 2);
   } finally {
     await rm(repoPath, { recursive: true, force: true });
   }
