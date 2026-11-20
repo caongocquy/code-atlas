@@ -18,7 +18,7 @@ test("malformed source publishes reusable deterministic partial facts", async ()
   try {
     await writeFile(path.join(repoPath, "broken.ts"), "export function broken( {\n");
     const first = await indexRepository(repoPath, { skipGit: true });
-    assert.equal(first.kind, "published");
+    assert.equal(first.kind, "published", first.kind === "failed" ? first.failure.message : undefined);
 
     const store = new AtlasStore(path.join(repoPath, ".codeatlas", "atlas.db"));
     const repository = store.ensureRepository(getRepositoryIdentity(repoPath));
