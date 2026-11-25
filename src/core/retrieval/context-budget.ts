@@ -48,7 +48,8 @@ export async function applyContextBudgetDetailed(
     // ponytail: O(n²) render checks, candidate count is bounded by retrieval caps.
     const tokenCount = await countContextTokens(buildContext([...selected, chunk]), tokenCounter);
 
-    if (usedTokens + tokenCount > maxTokens) {
+    // tokenCount already includes the accepted context and the candidate.
+    if (tokenCount > maxTokens) {
       decisions.push({
         chunk,
         tokens: tokenCount,
