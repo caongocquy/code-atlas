@@ -18,6 +18,7 @@ import type { CapabilityState } from "../../storage/atlas/atlas.types.js";
 import { applyContextBudgetDetailed } from "./context-budget.js";
 import type { DetailedContextBudgetResult, TokenCounter } from "./context-budget.js";
 import { buildContext } from "./context.js";
+import { retrievalCandidateKey } from "./retrieval-candidate-key.js";
 import { getRepositoryIdentity } from "../repository/repository-identity.js";
 
 export type RetrievalInspectOptions = {
@@ -257,18 +258,22 @@ function inspectBudget(
 function mergeChunks(
   primary: InspectorChunk[],
   graphChunks: InspectorChunk[],
+  repositoryId: string,
 ): InspectorChunk[] {
   const merged = new Map<string, InspectorChunk>();
 
   for (const chunk of [...primary, ...graphChunks]) {
-    const existing = merged.get(chunk.key);
+    // Graph chunks are scoped to the repository being inspected.
+    const key = retrievalCandidateKey(chunk, chunk.source === "lexical" ? "lexical" : "raw",
+      chunk.source === "graph" ? repositoryId : chunk.repoId);
+    const existing = merged.get(key);
 
     if (!existing) {
-      merged.set(chunk.key, chunk);
+      merged.set(key, chunk);
       continue;
     }
 
-    merged.set(chunk.key, {
+    merged.set(key, {
       ...existing,
       source: existing.source === "graph" ? chunk.source : existing.source,
       provenance: [...existing.provenance, ...chunk.provenance],
@@ -436,7 +441,7 @@ export async function inspectRetrieval(
   );
   const withGraph = inspectBudget(
     await applyContextBudgetDetailed(
-      mergeChunks(rerankedResults, graphChunks),
+      mergeChunks(rerankedResults, graphChunks, repoId),
       options.tokenBudget,
       tokenCounter,
     ),
