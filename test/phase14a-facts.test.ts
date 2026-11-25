@@ -17,6 +17,7 @@ import {
   INDEX_SCHEMA_VERSION,
 } from "../src/core/repository/index-version.js";
 import { parseCodeSymbols } from "../src/core/graph/parsers/code-parser.js";
+import { codeChunksFromFacts } from "../src/core/indexing/indexing.types.js";
 
 const parserIdentity = {
   language: "typescript" as const,
@@ -263,13 +264,29 @@ export { Service };
   assert.equal(materializedB.relativePath, "src/renamed.ts");
   assert.equal(factBlobKey(materializedA.facts), factBlobKey(materializedB.facts));
 
-  const existingSymbols = parseCodeSymbols(source, "fixture.ts");
+  // Semantic facts retain callable ownership; lexical materialization also emits
+  // parser-proven exported variables that are not graph symbols.
   assert.deepEqual(
     result.facts.symbols.map((fact) => [fact.name, fact.kind, fact.range.startLine]),
-    existingSymbols
-      .toSorted((left, right) => left.startLine - right.startLine)
-      .map((chunk) => [chunk.symbolName, chunk.symbolType, chunk.startLine]),
+    [["Service", "class", 4], ["run", "method", 5], ["outer", "function", 7], ["arrow_function@191", "function", 8]],
   );
+  const arrow = result.facts.symbols.find((symbol) => symbol.name === "arrow_function@191");
+  assert.ok(arrow?.scopeId);
+  assert.equal(result.facts.containmentScopes.find((scope) => scope.localId === arrow.scopeId)?.kind, "arrow_function");
+  assert.equal(result.facts.references.find((reference) => reference.name === "value")?.ownerId, arrow.localId);
+  const chunks = codeChunksFromFacts({ relativePath: "fixture.ts", source, facts: result.facts });
+  const legacy = parseCodeSymbols(source, "fixture.ts");
+  const project = (items: typeof chunks) => items
+    .toSorted((left, right) => left.startLine - right.startLine || left.symbolName.localeCompare(right.symbolName))
+    .map((chunk) => [chunk.symbolName, chunk.symbolType, chunk.startLine]);
+  assert.deepEqual(project(legacy), [
+    ["value", "variable", 3], ["Service", "class", 4], ["run", "method", 5], ["outer", "function", 7],
+  ]);
+  assert.deepEqual(project(chunks), [
+    ...project(legacy), ["arrow_function@191", "function", 8],
+  ]);
+  assert.equal(chunks.find((chunk) => chunk.symbolName === "value")?.content, "const value: Result = helper();");
+  assert.equal(chunks.find((chunk) => chunk.symbolName === arrow.name)?.content, "() => value");
 });
 
 test("preserves side-effect imports and aliased export bindings", () => {
