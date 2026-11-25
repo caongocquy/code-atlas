@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { installOfflineGuard } from "../context/offline-guard.js";
+import { initializeRetrievalFixtureGit } from "./initialize-fixture-git.js";
 import { indexRepository } from "../../src/core/indexing/index-pipeline.service.js";
 import type { ScipIndexer } from "../../src/core/indexing/scip-indexer.types.js";
 import type { ScipTool } from "../../src/core/indexing/scip-indexer.types.js";
@@ -720,6 +721,7 @@ export async function runRetrievalEval(options: RetrievalEvalOptions): Promise<{
       const fixtureRoot = path.join(tempRoot, fixture);
       fixtureHashes[fixture] = await hashDirectory(fixtureSource);
       await cp(fixtureSource, fixtureRoot, { recursive: true });
+      await initializeRetrievalFixtureGit(fixtureRoot);
       const noScip: ScipIndexer = { discover: async () => ({ status: "unavailable" }), index: async () => [] };
       const indexed = await indexRepository(fixtureRoot, { skipGit: true, includeSemantic: false, scipIndexer: noScip });
       if (!indexed.published) throw new Error(`Could not build parser-only retrieval fixture ${fixture}: ${indexed.failure.message}`);
@@ -731,6 +733,7 @@ export async function runRetrievalEval(options: RetrievalEvalOptions): Promise<{
       if (pairedCases.length) {
         scipRoot = path.join(tempRoot, `${fixture}-scip-enriched`);
         await cp(fixtureSource, scipRoot, { recursive: true });
+        await initializeRetrievalFixtureGit(scipRoot);
         const scipIndexed = await indexRepository(scipRoot, {
           skipGit: true,
           includeSemantic: false,
