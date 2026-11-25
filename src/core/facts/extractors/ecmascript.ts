@@ -62,6 +62,8 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
     const scopeStack: FactLocalId[] = [], callableStack: ParsedSymbolFact[] = [];
     const syntax = createObjectiveSyntaxCollector();
     const expressionIds = new WeakMap<Parser.SyntaxNode, FactLocalId>();
+    const handledAnnotations = new Set<string>();
+    const annotationKey = (node: Parser.SyntaxNode) => `${node.type}:${node.startIndex}:${node.endIndex}`;
     let sequence = 0;
     const next = (kind: string) => id(kind, ++sequence);
     const qualifiedFunctionName = (name: string): string => {
@@ -181,8 +183,12 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
           const target = node.childForFieldName("value")?.text;
           if (target) aliases.push({ localId: next("alias"), aliasName: nodeName, targetName: target, aliasKind: "type", range: range(node) });
         }
-        const returnType = node.childForFieldName("return_type")?.text?.replace(/^:\s*/, "");
-        if (returnType) declaredTypeAnnotations.push({ localId: next("type"), ownerId: callable.localId, text: returnType, range: range(node.childForFieldName("return_type")!) });
+        const returnAnnotation = node.childForFieldName("return_type");
+        const returnType = returnAnnotation?.text?.replace(/^:\s*/, "");
+        if (returnAnnotation && returnType) {
+          declaredTypeAnnotations.push({ localId: next("type"), ownerId: callable.localId, text: returnType, range: range(returnAnnotation) });
+          handledAnnotations.add(annotationKey(returnAnnotation));
+        }
         const heritage = node.namedChildren.find((child) => child.type === "class_heritage");
         if (heritage) for (const clause of heritage.namedChildren) {
           const target = clause.namedChildren.at(-1)?.text;
@@ -210,7 +216,11 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
       if (node.type === "import_statement") processImport(node);
       if (node.type === "export_statement") processExport(node);
       if (node.type === "type_annotation" && !node.parent?.type.includes("parameter")) {
-        declaredTypeAnnotations.push({ localId: next("type"), ownerId: callableStack.at(-1)?.localId ?? scopeStack.at(-1) ?? id("scope", 1), text: node.text.replace(/^:\s*/, ""), range: range(node) });
+        // Reserve the original allocation slot so subsequent fact and symbol identities stay stable.
+        const localId = next("type");
+        if (!handledAnnotations.has(annotationKey(node))) {
+          declaredTypeAnnotations.push({ localId, ownerId: callableStack.at(-1)?.localId ?? scopeStack.at(-1) ?? id("scope", 1), text: node.text.replace(/^:\s*/, ""), range: range(node) });
+        }
       }
       if (["lexical_declaration", "variable_declaration"].includes(node.type)) for (const declarator of node.namedChildren.filter((child) => child.type === "variable_declarator")) {
         const target = declarator.childForFieldName("name"), value = declarator.childForFieldName("value");
@@ -218,7 +228,10 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
         const binding = { localId: next("binding"), name: target.text, bindingKind: "local", ownerId: scopeStack.at(-1), range: range(target) };
         bindingSeeds.push(binding);
         const annotation = declarator.namedChildren.find((child) => child.type === "type_annotation");
-        if (annotation) declaredTypeAnnotations.push({ localId: next("type"), ownerId: binding.localId, text: annotation.text.replace(/^:\s*/, ""), range: range(annotation) });
+        if (annotation) {
+          declaredTypeAnnotations.push({ localId: next("type"), ownerId: binding.localId, text: annotation.text.replace(/^:\s*/, ""), range: range(annotation) });
+          handledAnnotations.add(annotationKey(annotation));
+        }
         if (value) {
           const expression = expressionFor(value, value.type === "new_expression" ? "construct" : value.type === "call_expression" ? "call" : value.type === "member_expression" ? "member" : value.type === "identifier" ? "identifier" : "other");
           assignments.push({ localId: next("assignment"), targetId: binding.localId, sourceExpressionId: expression.localId, sourceName: value.type === "identifier" ? value.text : undefined, assignmentKind: value.type === "identifier" ? "alias" : "declaration", range: range(declarator) });
@@ -264,9 +277,15 @@ function extractEcmascriptTreeFacts(parsed: ParsedSource | undefined, input: Lan
         if (body && body.type !== "statement_block" && owner) returns.push({ localId: next("return"), ownerSymbolId: owner.localId, expressionId: expressionFor(body, body.type === "member_expression" ? "member" : "identifier").localId, range: range(body) });
       }
       if (node.type === "identifier" && node.parent && !["variable_declarator", "required_parameter", "optional_parameter", "formal_parameter", "type_annotation", "type_identifier", "import_specifier", "export_specifier"].includes(node.parent.type)) {
-        const reference = { localId: next("reference"), name: node.text, ownerId: callableStack.at(-1)?.localId, scopeId: scopeStack.at(-1), range: range(node) };
-        references.push(reference);
-        syntax.linkFact(node, reference.localId);
+        const localId = next("reference");
+        const declarationName = ["function_declaration", "function_expression", "generator_function_declaration", "generator_function", "class_declaration", "class", "interface_declaration", "type_alias_declaration", "enum_declaration"].includes(node.parent.type)
+          ? node.parent.childForFieldName("name") : undefined;
+        // Declaration names are not references. Keep the allocation slot for downstream identities.
+        if (!declarationName || declarationName.startIndex !== node.startIndex || declarationName.endIndex !== node.endIndex) {
+          const reference = { localId, name: node.text, ownerId: callableStack.at(-1)?.localId, scopeId: scopeStack.at(-1), range: range(node) };
+          references.push(reference);
+          syntax.linkFact(node, reference.localId);
+        }
       }
       for (const child of node.namedChildren) visit(child);
       if (isCallable && callable) callableStack.pop();
