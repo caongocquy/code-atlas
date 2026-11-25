@@ -249,7 +249,7 @@ export { Service };
   );
   assert.equal(result.facts.imports.length, 1);
   assert.equal(result.facts.exports.length, 2);
-  assert.equal(result.facts.bindingSeeds.length, 3);
+  assert.equal(result.facts.bindingSeeds.length, 4);
   assert.equal(result.facts.callSites.length, 3);
   assert.ok(result.facts.containmentScopes.length >= 4);
   assert.equal(result.facts.references.length, 5);
