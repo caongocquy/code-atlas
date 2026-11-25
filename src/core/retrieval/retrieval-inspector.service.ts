@@ -379,7 +379,13 @@ export async function inspectRetrieval(
         const graph = graphStore.loadGraph(repoId);
         const expansion = expandGraphContextDetailed(
           graph,
-          rerankedResults.map((result) => result),
+          rerankedResults.map((result) => ({
+            file: result.file,
+            symbolName: result.symbolName,
+            symbolType: result.symbolType,
+            startLine: result.startLine,
+            ...(result.lexicalScore === undefined ? {} : { lexicalSymbolName: result.symbolName }),
+          })),
           {
             maxDepth: options.graphDepth,
             maxNodes: options.graphMaxNodes,

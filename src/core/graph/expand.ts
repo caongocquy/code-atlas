@@ -1,8 +1,11 @@
 import type { CodeGraph, GraphEdge, GraphNode } from "./types.js";
+import { searchableIdentifier } from "../lexical/searchable-identifier.js";
 
 export type GraphExpansionSeed = {
   file?: string;
   symbolName?: string;
+  /** An explicitly lexical-encoded name, not a raw graph identifier. */
+  lexicalSymbolName?: string;
   symbolType?: string;
   startLine?: number;
 };
@@ -41,9 +44,13 @@ function edgePriority(edge: GraphEdge): number {
 function matchesSeed(node: GraphNode, seed: GraphExpansionSeed): boolean {
   return (
     node.file === seed.file &&
-    node.name === seed.symbolName &&
     node.type === seed.symbolType &&
-    (seed.startLine === undefined || node.startLine === seed.startLine)
+    (seed.startLine === undefined || node.startLine === seed.startLine) &&
+    (node.name === seed.symbolName ||
+      // Match the exact stored lexical encoding only with a known source occurrence.
+      (seed.startLine !== undefined &&
+        seed.lexicalSymbolName !== undefined &&
+        searchableIdentifier(node.name) === seed.lexicalSymbolName))
   );
 }
 
