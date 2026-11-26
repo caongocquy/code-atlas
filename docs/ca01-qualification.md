@@ -121,3 +121,26 @@ Opt-in relation responses expose `output.resultCounts.beforeFilter` and
 pagination. `totalReturned` counts only `results` in the current page, including
 zero after full filtering. These counts are not repository-wide totals. Calls
 without response options retain the legacy handler contract.
+
+## Integration target requalification (PR #42, 2026-11-26)
+
+The maintainer requested the next qualification run against current master
+`eeb5a33584f19af71871c7e09c21a6e21cf7c111` after reviewing the Linux Node 22 migration evidence from
+candidate `52a70f50b6135bcf4ca474143f583b2404fc606b`, run 45756053010, artifact 15088375819.
+That artifact reports 1,575 candidate tests: 1,572 pass, zero fail, three skip;
+raw missing identities 10, reviewed missing identities zero, no added/changed
+failures or new skips, reviewed differential PASS. This approves proceeding with
+integration-target qualification, not merge, release, or a baseline-debt waiver.
+
+The eight-cell CA-01 matrix now uses that exact integration base and candidate
+HEAD. The frozen comparator remains unchanged. Only Linux x64 Node 22.23.3 may
+apply the ten exact source-blob-bound mappings from the reviewed manifest; raw
+and translated reports are retained. Other tuples must pass the raw comparator
+until separately reviewed. Every tuple must also pass strict candidate green,
+focused contracts, unchanged full-payload legacy parity against the integration
+target and packed consumer checks. No baseline artifacts or historical v1.7.0
+protected attestation inputs are replaced. The legacy parity script's default
+continues to require the historical frozen target.
+
+**Current decision: NO-GO.** Fresh matrix evidence is pending; macOS Intel ONNX
+upstream acquisition remains blocked. Historical evidence above is retained.

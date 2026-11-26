@@ -70,9 +70,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          raw_status=0
           node candidate/scripts/compare-ca01-tests.mjs \
             "$PWD/.evidence/baseline" "$PWD/.evidence/candidate" "$PWD/.evidence/comparison.json" \
-            "$PWD/baseline" "$PWD/candidate" "$(node -p 'require("node:os").tmpdir()')"
+            "$PWD/baseline" "$PWD/candidate" "$(node -p 'require("node:os").tmpdir()')" || raw_status=$?
+          # Preserve the raw comparator outcome; the following reviewed replay is required.
+          node --input-type=module -e 'import fs from "node:fs";const r=JSON.parse(fs.readFileSync(".evidence/comparison.json","utf8"));if(Number(process.argv[1])!==(r.differentialPass?0:1))throw new Error("Raw comparator did not complete normally");' "$raw_status"
       - name: Classify moved, removed and changed test identities independently
         if: always()
         shell: bash
@@ -82,15 +85,14 @@ jobs:
               .evidence/baseline.jsonl .evidence/candidate.jsonl .evidence/identity-audit.json || true
           fi
       - name: Replay reviewed location-only migration (diagnostic, not a waiver)
-        if: always()
         shell: bash
         run: |
-          if [[ -f .evidence/comparison.json ]]; then
-            node candidate/scripts/ca01-reviewed-identity-migration.mjs \
-              "$PWD/.evidence/baseline" "$PWD/.evidence/candidate" "$PWD/.evidence/reviewed-migration.json" \
-              "$PWD/baseline" "$PWD/candidate" "$(node -p 'require("node:os").tmpdir()')" \
-              "$PWD/candidate/test/fixtures/ca01-reviewed-identity-migration.json"
-          fi
+          test -s .evidence/comparison.json
+          node candidate/scripts/ca01-reviewed-identity-migration.mjs \
+            "$PWD/.evidence/baseline" "$PWD/.evidence/candidate" "$PWD/.evidence/reviewed-migration.json" \
+            "$PWD/baseline" "$PWD/candidate" "$(node -p 'require("node:os").tmpdir()')" \
+            "$PWD/candidate/test/fixtures/ca01-reviewed-identity-migration.json"
+          node --input-type=module -e 'import fs from "node:fs";const r=JSON.parse(fs.readFileSync(".evidence/reviewed-migration.json","utf8"));if(!r.translated.strictGreen.candidate||!r.translated.differentialPass)throw new Error("Reviewed integration comparison did not qualify");'
       - name: Record strict gate and differential gate separately
         if: always()
         shell: bash
@@ -99,7 +101,8 @@ jobs:
             node --input-type=module -e '
               import fs from "node:fs";
               const report=JSON.parse(fs.readFileSync(".evidence/comparison.json","utf8"));
-              const summary={proposedBase:process.env.PROPOSED_BASE,strictGreen:report.strictGreen,differentialPass:report.differentialPass,baseline:report.baseline,candidate:report.candidate,addedFailures:report.addedFailures.length,changedFailures:report.changedFailures.length,missingTests:report.missingTests.length,releaseAuthorization:false};
+              const reviewed=fs.existsSync(".evidence/reviewed-migration.json")?JSON.parse(fs.readFileSync(".evidence/reviewed-migration.json","utf8")):null;
+              const summary={proposedBase:process.env.PROPOSED_BASE,strictGreen:report.strictGreen,rawDifferentialPass:report.differentialPass,reviewedDifferentialPass:reviewed?.translated.differentialPass??null,baseline:report.baseline,candidate:report.candidate,addedFailures:report.addedFailures.length,changedFailures:report.changedFailures.length,rawMissingTests:report.missingTests.length,reviewedMissingTests:reviewed?.translated.missingTests.length??null,releaseAuthorization:false};
               fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, "## Proposed-target diagnostic — NOT RELEASE AUTHORIZATION\n\n"+JSON.stringify(summary,null,2)+"\n");
             '
           else
