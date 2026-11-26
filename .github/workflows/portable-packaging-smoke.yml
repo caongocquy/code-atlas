@@ -21,6 +21,7 @@ on:
       - test/upgrade-platforms.test.ts
       - scripts/verify-release-archive.mjs
       - scripts/build-onnx-darwin-x64.mjs
+      - scripts/checkout-onnx-source.sh
       - scripts/onnx-darwin-x64.mjs
       - scripts/compare-release-tests.mjs
       - scripts/parser-distribution.mjs
@@ -71,6 +72,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Restore validated ONNX macOS x64 payload
+        if: matrix.platform == 'darwin' && matrix.arch == 'x64'
+        id: onnx-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/code-atlas-onnx-native
+          key: onnx-1.30.0-f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7-macos15-x64-coreml-webgpu-cmake3.31.8-minos13.5-v2
+      - name: Check out exact ONNX Runtime source and submodules
+        if: matrix.platform == 'darwin' && matrix.arch == 'x64' && steps.onnx-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: bash scripts/checkout-onnx-source.sh .onnx-source f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7 1.30.0
       - uses: actions/download-artifact@v4
         with:
           name: code-atlas-parser-consumer-package
@@ -178,43 +190,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Restore validated ONNX macOS x64 payload
-        if: matrix.platform == 'darwin' && matrix.arch == 'x64'
-        id: onnx-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: ${{ runner.temp }}/code-atlas-onnx-native
-          key: onnx-1.30.0-f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7-macos15-x64-coreml-webgpu-cmake3.31.8-minos13.5-v2
-      - name: Check out exact ONNX Runtime source and submodules
-        if: matrix.platform == 'darwin' && matrix.arch == 'x64' && steps.onnx-cache.outputs.cache-hit != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          onnx_commit=f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7
-          # Public upstream checkout must not inherit the private repository token or Git configuration.
-          public_git() {
-            env -i PATH="$PATH" HOME="$HOME" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
-              GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/usr/bin/false \
-              git -c credential.helper= -c http.extraHeader= \
-              -c 'url.https://github.com/.insteadOf=git@github.com:' \
-              -c 'url.https://github.com/.insteadOf=ssh://git@github.com/' "$@"
-          }
-          mkdir .onnx-source
-          public_git -C .onnx-source init --quiet --template=
-          public_git -C .onnx-source remote add origin https://github.com/microsoft/onnxruntime.git
-          for attempt in 1 2 3; do
-            if public_git -C .onnx-source fetch --no-tags --depth=1 origin "$onnx_commit"; then break; fi
-            if [ "$attempt" -eq 3 ]; then exit 1; fi
-            sleep 10
-          done
-          public_git -C .onnx-source checkout --quiet --detach FETCH_HEAD
-          test "$(public_git -C .onnx-source rev-parse HEAD)" = "$onnx_commit"
-          public_git -C .onnx-source submodule update --init --recursive --depth=1
-          submodule_status=$(public_git -C .onnx-source submodule status --recursive)
-          if printf '%s\n' "$submodule_status" | grep -Eq '^[+-U]'; then
-            echo 'ONNX Runtime source submodules are missing or differ from the pinned commit' >&2
-            exit 1
-          fi
       - name: Build full ONNX Runtime 1.30.0 macOS x64 payload
         if: matrix.platform == 'darwin' && matrix.arch == 'x64' && steps.onnx-cache.outputs.cache-hit != 'true'
         shell: bash
