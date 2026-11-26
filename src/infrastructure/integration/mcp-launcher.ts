@@ -26,6 +26,17 @@ export async function resolveDurableMcpLaunch(
     : resolvePathCandidates(env.PATH);
   for (const candidate of candidates) {
     if (!isEphemeralMcpPath(candidate) && await isExecutableFile(candidate)) {
+      if (process.platform === "win32" && path.extname(candidate).toLowerCase() === ".cmd") {
+        // A batch shim is not directly spawnable by stdio MCP clients on Windows.
+        // Resolve our own installed package entrypoint, not arbitrary shim contents.
+        const entrypoint = path.resolve(path.dirname(modulePath), "../../../dist/cli.js");
+        const node = process.execPath;
+        if (isEphemeralMcpPath(entrypoint) || isEphemeralMcpPath(node) ||
+            !isNodeExecutable(node) || !await isExecutableFile(node) || !await isFile(entrypoint)) {
+          throw new Error("CodeAtlas must be installed durably before configuring an agent; resolve the installed Node executable and dist/cli.js.");
+        }
+        return { command: node, args: [entrypoint, "mcp"] };
+      }
       return { command: candidate, args: ["mcp"] };
     }
   }
@@ -77,7 +88,9 @@ function isNodeExecutable(command: string): boolean {
 }
 
 function resolvePathCandidates(pathValue: string | undefined): string[] {
-  return (pathValue ?? "").split(path.delimiter).filter(Boolean).map((directory) => path.resolve(directory, "code-atlas"));
+  const names = process.platform === "win32" ? ["code-atlas.exe", "code-atlas.cmd"] : ["code-atlas"];
+  return (pathValue ?? "").split(path.delimiter).filter(Boolean).flatMap((directory) =>
+    names.map((name) => path.resolve(directory, name)));
 }
 
 function isCodeAtlasExecutablePath(filePath: string): boolean {

@@ -75,8 +75,7 @@ test("Codex integration preserves unrelated TOML and is idempotent", async () =>
     assert.equal(parsed.model, "test-model");
     assert.deepEqual(parsed.mcp_servers.other, { command: "other", args: ["serve"] });
     assert.deepEqual(parsed.mcp_servers["code-atlas"], {
-      command: (await resolveDurableMcpLaunch()).command,
-      args: ["mcp"],
+      ...await resolveDurableMcpLaunch(),
       enabled: true,
     });
 
@@ -162,8 +161,8 @@ test("reconnect migrates managed node plus dist launchers to the installed CLI e
     await integrations.install("opencode", { repoPath: root, scope: "user" });
     const codex = parseToml(await readFile(path.join(home, ".codex", "config.toml"), "utf8")) as Record<string, any>;
     const openCode = parseJsonc(await readFile(path.join(home, ".config", "opencode", "opencode.json"), "utf8")) as Record<string, any>;
-    assert.deepEqual(codex.mcp_servers["code-atlas"], { command: launch.command, args: ["mcp"], enabled: true });
-    assert.deepEqual(openCode.mcp["code-atlas"].command, [launch.command, "mcp"]);
+    assert.deepEqual(codex.mcp_servers["code-atlas"], { ...launch, enabled: true });
+    assert.deepEqual(openCode.mcp["code-atlas"].command, [launch.command, ...launch.args]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -330,7 +329,12 @@ test("ephemeral launcher resolution fails before any adapter writes config", asy
 async function assertFreshMcpInitialize(command: string, args: string[], cwd: string): Promise<void> {
   const child = spawn(command, args, {
     cwd,
-    env: { PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, HOME: cwd },
+    env: {
+      PATH: [path.dirname(process.execPath), ...(process.platform === "win32" ? [] : ["/usr/bin", "/bin"])].join(path.delimiter),
+      HOME: cwd,
+      USERPROFILE: cwd,
+      SystemRoot: process.env.SystemRoot,
+    },
     stdio: ["pipe", "pipe", "pipe"],
   });
   let stdout = "";

@@ -166,9 +166,14 @@ function statusValue(
 
 async function listEditorExtensions(environment: ResolvedIntegrationEnvironment): Promise<readonly string[]> {
   if (!(await commandAvailable("code", environment))) return [];
-  const result = await execFile("code", ["--list-extensions"], {
-    env: environment.env,
-    timeout: 2_000,
-  });
+  // The Windows VS Code CLI is commonly a .cmd shim. Use a fixed command,
+  // never interpolate user-provided paths or arguments into the shell.
+  const options = { env: environment.env, timeout: 2_000 };
+  const result = process.platform === "win32"
+    ? await execFile(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", "code --list-extensions"], {
+      ...options,
+      env: { ...environment.env, NoDefaultCurrentDirectoryInExePath: "1" },
+    })
+    : await execFile("code", ["--list-extensions"], options);
   return result.stdout.split(/\r?\n/).map((extension) => extension.trim()).filter(Boolean);
 }
