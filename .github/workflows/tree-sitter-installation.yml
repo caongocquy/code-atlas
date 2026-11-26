@@ -443,11 +443,26 @@ jobs:
       - name: Install and build both revisions
         shell: bash
         run: |
-          pnpm install --frozen-lockfile
+          set -euo pipefail
+          # Native dependency postinstalls may encounter transient CDN failures.
+          install_locked() {
+            local attempt
+            for attempt in 1 2 3; do
+              if pnpm "$@" install --frozen-lockfile; then
+                return 0
+              fi
+              if [[ "$attempt" -eq 3 ]]; then
+                echo 'Locked dependency install failed after 3 attempts.' >&2
+                return 1
+              fi
+              sleep "$((attempt * 10))"
+            done
+          }
+          install_locked
           pnpm build
           pnpm exec tsc --noEmit
           pnpm lint
-          pnpm --dir .release-base install --frozen-lockfile
+          install_locked --dir .release-base
           (cd .release-base && pnpm build)
       - name: Require CA-01 focused contracts and comparator checks
         shell: bash
