@@ -5,6 +5,7 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 import { auditTestIdentityDrift } from "./ca01-test-identity-audit.mjs";
 import { selectReviewedLocationPairs } from "./ca01-reviewed-location-pairs.mjs";
+import { selectReviewedSourcePairs } from "./ca01-reviewed-source-pairs.mjs";
 
 const completed = event => event.type === "test:pass" || event.type === "test:fail";
 const identityKey = id => JSON.stringify([id.file, id.line, id.column, id.nesting, id.name]);
@@ -56,7 +57,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   if (![basePrefix, candidatePrefix, output, baseRoot, candidateRoot, tempRoot, manifestPath].every(Boolean)) throw new Error("Missing reviewed migration diagnostic arguments");
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
   const { baselineRevision, source } = manifest;
-  const v2 = manifest.schemaVersion === 2;
+  const sourceBound = manifest.schemaVersion === 3;
+  const v2 = manifest.schemaVersion === 2 || sourceBound;
   if (manifest.schemaVersion !== undefined && !v2) throw new Error("Unsupported migration manifest version");
   const reviewedRuntimes = v2 ? manifest.allowedRuntimes : [manifest.runtime, ...(manifest.additionalReviewedRuntimes ?? []).map(entry => entry.runtime)];
   if (git(baseRoot, ["rev-parse", "HEAD"]) !== baselineRevision) throw new Error("Reviewed baseline revision changed");
@@ -84,7 +86,14 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   if (v2) {
     pairs = selectReviewedLocationPairs(auditTestIdentityDrift(baseline, candidate), manifest.sources);
     if (pairs.length !== manifest.requiredPairCount) throw new Error("Incomplete reviewed location set");
-    for (const group of manifest.sources) {
+    const sourceGroups = [...manifest.sources];
+    if (sourceBound) {
+      if (!manifest.stableSource || sourceGroups.some(group => group.file === manifest.stableSource.file)) {
+        throw new Error("Missing or overlapping reviewed source registry");
+      }
+      sourceGroups.push(manifest.stableSource);
+    }
+    for (const group of sourceGroups) {
       verifySource(baseRoot, group.file, group.baselineBlob);
       verifySource(candidateRoot, group.file, group.candidateBlob);
       if (git(baseRoot, ["hash-object", "--no-filters", group.file]) !== group.baselineBlob ||
@@ -92,10 +101,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
         throw new Error("Reviewed worktree bytes changed: " + group.file);
       }
     }
+    if (sourceBound) pairs.push(...selectReviewedSourcePairs(baseline, candidate, manifest.stableSource));
   }
   const translated = compareReports(baseline, applyReviewedIdentityMigration(baseline, candidate, pairs), locations);
   if ((bp.exitCode === 0) !== raw.strictGreen.baseline || (cp.exitCode === 0) !== raw.strictGreen.candidate) throw new Error("Exit code and test summary disagree");
-  writeFileSync(output, JSON.stringify({ releaseAuthorization: false, gateDecision: "DIAGNOSTIC_ONLY_NO_WAIVER", baselineRevision, candidateRevision: git(candidateRoot, ["rev-parse", "HEAD"]), runtime, reviewedPairs: pairs, raw, translated }, null, 2) + "\n");
+  writeFileSync(output, JSON.stringify({ releaseAuthorization: false, gateDecision: "DIAGNOSTIC_ONLY_NO_WAIVER", baselineRevision, candidateRevision: git(candidateRoot, ["rev-parse", "HEAD"]), runtime, ...(sourceBound ? { sourceRegistry: manifest.stableSource } : {}), reviewedPairs: pairs, raw, translated }, null, 2) + "\n");
   process.stdout.write(JSON.stringify({ rawMissing: raw.missingTests.length, translatedMissing: translated.missingTests.length, translatedDifferentialPass: translated.differentialPass, releaseAuthorization: false }) + "\n");
   if (!translated.differentialPass) process.exitCode = 1;
 }

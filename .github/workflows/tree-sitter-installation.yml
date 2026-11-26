@@ -470,7 +470,7 @@ jobs:
       - name: Require CA-01 focused contracts and comparator checks
         shell: bash
         run: |
-          node --import tsx/esm --test test/ca01-mcp-response.test.ts test/ca01-response-budget.test.ts test/ca01-mcp-stdio.test.ts test/ca01-qualification.test.ts test/ca01-ci-regression.test.ts test/ca01-reviewed-identity-migration.test.ts test/ca01-reviewed-location-pairs.test.ts test/phase14g-mcp-response-efficiency.test.ts test/phase15e-mcp-metadata.test.ts > .evidence/focused.tap 2>&1
+          node --import tsx/esm --test test/ca01-mcp-response.test.ts test/ca01-response-budget.test.ts test/ca01-mcp-stdio.test.ts test/ca01-qualification.test.ts test/ca01-ci-regression.test.ts test/ca01-reviewed-identity-migration.test.ts test/ca01-reviewed-location-pairs.test.ts test/ca01-reviewed-source-pairs.test.ts test/phase14g-mcp-response-efficiency.test.ts test/phase15e-mcp-metadata.test.ts > .evidence/focused.tap 2>&1
       - name: Capture complete suites
         id: suites
         shell: bash
@@ -505,7 +505,7 @@ jobs:
           temp_root="$(node -p 'require("node:os").tmpdir()')"
           # Every supported runtime must reproduce the exact source-bound reviewed locations.
           # The original comparator still rejects new failures, changed errors, skips and missing tests.
-          node scripts/ca01-reviewed-identity-migration.mjs "$output_root/baseline" "$output_root/candidate" "$output_root/reviewed-migration.json" "$baseline_root" "$candidate_root" "$temp_root" test/fixtures/ca01-reviewed-identity-migration-v2.json
+          node scripts/ca01-reviewed-identity-migration.mjs "$output_root/baseline" "$output_root/candidate" "$output_root/reviewed-migration.json" "$baseline_root" "$candidate_root" "$temp_root" test/fixtures/ca01-reviewed-identity-migration-v3.json
           node --input-type=module -e 'import fs from "node:fs";const r=JSON.parse(fs.readFileSync(".evidence/reviewed-migration.json","utf8"));fs.writeFileSync(".evidence/comparison.json",JSON.stringify(r.raw,null,2)+"\n");if(!r.translated.strictGreen.candidate||!r.translated.differentialPass)throw new Error("Reviewed integration comparison did not qualify");'
       - name: Record independent test identity evidence
         if: ${{ always() && !cancelled() && steps.suites.outcome == 'success' }}

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { execFile as execFileCallback, spawn } from "node:child_process";
+import { execFile as execFileCallback } from "node:child_process";
+import { assertFreshMcpInitialize } from "./helpers/mcp-initialize.js";
 import { access, chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -325,62 +326,6 @@ test("ephemeral launcher resolution fails before any adapter writes config", asy
     await rm(root, { recursive: true, force: true });
   }
 });
-
-async function assertFreshMcpInitialize(command: string, args: string[], cwd: string): Promise<void> {
-  const child = spawn(command, args, {
-    cwd,
-    env: {
-      PATH: [path.dirname(process.execPath), ...(process.platform === "win32" ? [] : ["/usr/bin", "/bin"])].join(path.delimiter),
-      HOME: cwd,
-      USERPROFILE: cwd,
-      SystemRoot: process.env.SystemRoot,
-    },
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-  let stdout = "";
-  let stderr = "";
-  child.stdout.setEncoding("utf8");
-  child.stderr.setEncoding("utf8");
-  child.stdout.on("data", (chunk) => { stdout += chunk; });
-  child.stderr.on("data", (chunk) => { stderr += chunk; });
-  const response = await new Promise<Record<string, any>>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      child.kill();
-      reject(new Error(`MCP initialize timed out. stderr: ${stderr}`));
-    }, 10_000);
-    child.on("error", (error) => {
-      clearTimeout(timeout);
-      reject(error);
-    });
-    child.stdout.on("data", () => {
-      const line = stdout.trim().split("\n").find(Boolean);
-      if (!line) return;
-      try {
-        const parsed = JSON.parse(line) as Record<string, any>;
-        clearTimeout(timeout);
-        child.kill();
-        resolve(parsed);
-      } catch {
-        // Wait for a complete JSON-RPC message.
-      }
-    });
-    child.stdin.write(`${JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "initialize",
-      params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "batch-2", version: "1" } },
-    })}\n`);
-  });
-  assert.equal(response.result.serverInfo.name, "code-atlas");
-  assert.ok(stdout.trim().split("\n").every((line) => {
-    try {
-      JSON.parse(line);
-      return true;
-    } catch {
-      return false;
-    }
-  }));
-}
 
 test("malformed config is reported without overwrite and strict guidance preserves other blocks", async () => {
   const { root, home, bin } = await fixture("safety");

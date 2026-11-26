@@ -91,7 +91,7 @@ jobs:
           node candidate/scripts/ca01-reviewed-identity-migration.mjs \
             "$PWD/.evidence/baseline" "$PWD/.evidence/candidate" "$PWD/.evidence/reviewed-migration.json" \
             "$PWD/baseline" "$PWD/candidate" "$(node -p 'require("node:os").tmpdir()')" \
-            "$PWD/candidate/test/fixtures/ca01-reviewed-identity-migration-v2.json"
+            "$PWD/candidate/test/fixtures/ca01-reviewed-identity-migration-v3.json"
           node --input-type=module -e 'import fs from "node:fs";const r=JSON.parse(fs.readFileSync(".evidence/reviewed-migration.json","utf8"));if(!r.translated.strictGreen.candidate||!r.translated.differentialPass)throw new Error("Reviewed integration comparison did not qualify");'
       - name: Record strict gate and differential gate separately
         if: always()
