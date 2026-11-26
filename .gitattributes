@@ -12,3 +12,5 @@ eval/context/corpus/manifest.json -text
 eval/context/corpus/snapshots/** -text
 eval/context/corpus/synthetic/** -text
 eval/context/baselines/** -text
+artifacts/retrieval-eval-baseline.json -text
+artifacts/retrieval-eval-baseline.md -text
