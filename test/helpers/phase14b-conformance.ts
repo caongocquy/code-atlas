@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import { readFile } from "node:fs/promises";
 import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
 
@@ -367,12 +369,18 @@ export async function runPhase14bFixture(
 
 export async function runConcurrentPhase14bFixtures(languages: readonly [LanguageId, LanguageId]): Promise<readonly ParallelFixtureResult[]> {
   const barrier = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
-  const workers = languages.map((language) => new Worker(new URL("./phase14b-conformance.ts", import.meta.url), {
-    type: "module",
-    execArgv: process.execArgv,
-    workerData: { kind: "phase14b-conformance", language, barrier } satisfies ParallelWorkerData,
-  }));
+  // Node 24 test processes may expose process-only flags in execArgv.
+  // Workers only need the pinned TypeScript loader, not those runtime flags.
+  const loader = pathToFileURL(createRequire(import.meta.url).resolve("tsx/esm")).href;
+  const workers: Worker[] = [];
   try {
+    for (const language of languages) {
+      workers.push(new Worker(new URL("./phase14b-conformance.ts", import.meta.url), {
+        type: "module",
+        execArgv: ["--import", loader],
+        workerData: { kind: "phase14b-conformance", language, barrier } satisfies ParallelWorkerData,
+      }));
+    }
     return await Promise.all(workers.map(waitForParallelWorker));
   } finally {
     await Promise.all(workers.map((worker) => worker.terminate()));

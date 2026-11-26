@@ -139,8 +139,13 @@ test("read-only schema-1 construction does not mutate or migrate legacy rows", a
   assert.equal(store.loadGraph("legacy-repo").edges[0]?.resolution, undefined);
   store.close();
   assert.deepEqual(await readFile(databasePath), before);
-  const version = (new DatabaseSync(databasePath, { readOnly: true }).prepare("SELECT version FROM atlas_schema").get() as { version: string }).version;
-  assert.equal(version, "1");
+  const legacy = new DatabaseSync(databasePath, { readOnly: true });
+  try {
+    const version = (legacy.prepare("SELECT version FROM atlas_schema").get() as { version: string }).version;
+    assert.equal(version, "1");
+  } finally {
+    legacy.close();
+  }
 }));
 
 test("candidate writes roll back invalid logical identities", async () => withFixture(() => {

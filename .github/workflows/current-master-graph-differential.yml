@@ -26,6 +26,9 @@ jobs:
       run:
         shell: bash
     steps:
+      - name: Preserve committed fixture bytes before checkout
+        shell: bash
+        run: git config --global core.autocrlf false
       - name: Checkout candidate
         uses: actions/checkout@v4
         with:

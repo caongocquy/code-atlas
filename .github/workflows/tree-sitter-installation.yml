@@ -399,6 +399,9 @@ jobs:
       CA01_PR_BASE: ${{ github.event.pull_request.base.sha }}
       CODE_ATLAS_EVAL_OFFLINE: '1'
     steps:
+      - name: Preserve committed fixture bytes before checkout
+        shell: bash
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref || github.event.pull_request.head.sha || github.sha }}
