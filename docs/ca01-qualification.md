@@ -144,3 +144,15 @@ continues to require the historical frozen target.
 
 **Current decision: NO-GO.** Fresh matrix evidence is pending; macOS Intel ONNX
 upstream acquisition remains blocked. Historical evidence above is retained.
+
+### Legacy inspection budget compatibility
+
+Integration-target artifact 15097459691 (run 45774802851) captured all 11 MCP
+legacy cases. After excluding the existing volatile timing metrics, only
+`inspect_retrieval` differed, at `retrievalOnly.tokens`, `withGraph.tokens`,
+and `finalContext.tokens` (2069 versus 3932 for the 4000-token workload).
+The prior algorithm conservatively charged the already-selected context twice.
+Preserve that selection only for MCP inspection requests without `response`;
+explicit compact/focused/full modes and all ordinary core budget callers use the
+corrected whole-context policy. No parity assertions or captured baseline payloads
+are altered. A separate regression checks both policies and their MCP routing.

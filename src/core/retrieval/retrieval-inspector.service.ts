@@ -16,7 +16,7 @@ import {
 import type { RerankerProvider } from "./reranker-provider.js";
 import type { CapabilityState } from "../../storage/atlas/atlas.types.js";
 import { applyContextBudgetDetailed } from "./context-budget.js";
-import type { DetailedContextBudgetResult, TokenCounter } from "./context-budget.js";
+import type { ContextBudgetPolicy, DetailedContextBudgetResult, TokenCounter } from "./context-budget.js";
 import { buildContext } from "./context.js";
 import { retrievalCandidateKey } from "./retrieval-candidate-key.js";
 import { getRepositoryIdentity } from "../repository/repository-identity.js";
@@ -28,6 +28,8 @@ export type RetrievalInspectOptions = {
   graphDepth?: number;
   graphMaxNodes?: number;
   tokenBudget?: number;
+  /** Internal compatibility policy for MCP calls without explicit response options. */
+  contextBudgetPolicy?: ContextBudgetPolicy;
   repoPath?: string;
   providers?: RetrievalProviders;
 };
@@ -437,13 +439,14 @@ export async function inspectRetrieval(
       ? inputOptions.providers?.embeddingProvider?.countTokens
       : undefined;
   const retrievalOnly = inspectBudget(
-    await applyContextBudgetDetailed(rerankedResults, options.tokenBudget, tokenCounter),
+    await applyContextBudgetDetailed(rerankedResults, options.tokenBudget, tokenCounter, inputOptions.contextBudgetPolicy),
   );
   const withGraph = inspectBudget(
     await applyContextBudgetDetailed(
       mergeChunks(rerankedResults, graphChunks, repoId),
       options.tokenBudget,
       tokenCounter,
+      inputOptions.contextBudgetPolicy,
     ),
   );
   const finalContext = options.graphEnabled ? withGraph : retrievalOnly;

@@ -1053,6 +1053,9 @@ export function createMcpServer(): McpServer {
         topK: (args.limit as number | undefined) ?? DEFAULT_LIMIT,
         graphEnabled: args.graphEnabled as boolean | undefined,
         tokenBudget: args.tokenBudget as number | undefined,
+        // Preserve the versionless legacy MCP payload. Explicit response modes
+        // opt into the corrected whole-context budget used by core retrieval.
+        contextBudgetPolicy: args.response ? "whole-context" : "legacy-inspection",
         providers: providers ? {
           embeddingProvider: args.includeSemantic === true ? providers.embeddingProvider : undefined,
           vectorStore: args.includeSemantic === true ? providers.vectorStore : undefined,
