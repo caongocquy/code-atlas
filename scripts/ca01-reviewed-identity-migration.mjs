@@ -3,6 +3,8 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
+import { auditTestIdentityDrift } from "./ca01-test-identity-audit.mjs";
+import { selectReviewedLocationPairs } from "./ca01-reviewed-location-pairs.mjs";
 
 const completed = event => event.type === "test:pass" || event.type === "test:fail";
 const identityKey = id => JSON.stringify([id.file, id.line, id.column, id.nesting, id.name]);
@@ -53,13 +55,18 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   const [basePrefix, candidatePrefix, output, baseRoot, candidateRoot, tempRoot, manifestPath] = process.argv.slice(2);
   if (![basePrefix, candidatePrefix, output, baseRoot, candidateRoot, tempRoot, manifestPath].every(Boolean)) throw new Error("Missing reviewed migration diagnostic arguments");
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  const { baselineRevision, source, pairs } = manifest;
-  const reviewedRuntimes = [manifest.runtime, ...manifest.additionalReviewedRuntimes.map(entry => entry.runtime)];
+  const { baselineRevision, source } = manifest;
+  const v2 = manifest.schemaVersion === 2;
+  if (manifest.schemaVersion !== undefined && !v2) throw new Error("Unsupported migration manifest version");
+  const reviewedRuntimes = v2 ? manifest.allowedRuntimes : [manifest.runtime, ...(manifest.additionalReviewedRuntimes ?? []).map(entry => entry.runtime)];
   if (git(baseRoot, ["rev-parse", "HEAD"]) !== baselineRevision) throw new Error("Reviewed baseline revision changed");
   git(candidateRoot, ["merge-base", "--is-ancestor", baselineRevision, "HEAD"]);
-  verifySource(baseRoot, source.file, source.baselineBlob);
-  verifySource(candidateRoot, source.file, source.candidateBlob);
-  if (pairs.some(({ before, after }) => before.file !== source.file || after.file !== source.file)) throw new Error("Migration outside reviewed source file");
+  if (v2) git(candidateRoot, ["merge-base", "--is-ancestor", manifest.reviewedCandidateRevision, "HEAD"]);
+  else {
+    verifySource(baseRoot, source.file, source.baselineBlob);
+    verifySource(candidateRoot, source.file, source.candidateBlob);
+    if (manifest.pairs.some(({ before, after }) => before.file !== source.file || after.file !== source.file)) throw new Error("Migration outside reviewed source file");
+  }
   const readProcess = prefix => JSON.parse(readFileSync(prefix + ".process.json", "utf8"));
   const bp = readProcess(basePrefix), cp = readProcess(candidatePrefix);
   const runtime = reviewedRuntimes.find(tuple => ["node", "platform", "arch"].every(key => tuple[key] === cp[key]));
@@ -73,6 +80,19 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   const { compareReports } = await import("./compare-ca01-tests.mjs");
   const locations = { baseline: { root: baseRoot, tempRoot }, candidate: { root: candidateRoot, tempRoot } };
   const raw = compareReports(baseline, candidate, locations);
+  let pairs = manifest.pairs;
+  if (v2) {
+    pairs = selectReviewedLocationPairs(auditTestIdentityDrift(baseline, candidate), manifest.sources);
+    if (pairs.length !== manifest.requiredPairCount) throw new Error("Incomplete reviewed location set");
+    for (const group of manifest.sources) {
+      verifySource(baseRoot, group.file, group.baselineBlob);
+      verifySource(candidateRoot, group.file, group.candidateBlob);
+      if (git(baseRoot, ["hash-object", "--no-filters", group.file]) !== group.baselineBlob ||
+          git(candidateRoot, ["hash-object", "--no-filters", group.file]) !== group.candidateBlob) {
+        throw new Error("Reviewed worktree bytes changed: " + group.file);
+      }
+    }
+  }
   const translated = compareReports(baseline, applyReviewedIdentityMigration(baseline, candidate, pairs), locations);
   if ((bp.exitCode === 0) !== raw.strictGreen.baseline || (cp.exitCode === 0) !== raw.strictGreen.candidate) throw new Error("Exit code and test summary disagree");
   writeFileSync(output, JSON.stringify({ releaseAuthorization: false, gateDecision: "DIAGNOSTIC_ONLY_NO_WAIVER", baselineRevision, candidateRevision: git(candidateRoot, ["rev-parse", "HEAD"]), runtime, reviewedPairs: pairs, raw, translated }, null, 2) + "\n");
