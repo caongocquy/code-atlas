@@ -3,12 +3,15 @@ import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
 import test from "node:test";
 import { promisify } from "node:util";
 
 const root = path.resolve(import.meta.dirname, "..");
 const execFileAsync = promisify(execFile);
-const tsxLoader = process.env.CODE_ATLAS_TSX_LOADER ?? "tsx/esm";
+const configuredLoader = process.env.CODE_ATLAS_TSX_LOADER ?? createRequire(import.meta.url).resolve("tsx/esm");
+const tsxLoader = path.isAbsolute(configuredLoader) ? pathToFileURL(configuredLoader).href : configuredLoader;
 
 async function readJson(relativePath: string): Promise<Record<string, unknown>> {
   return JSON.parse(await readFile(path.join(root, relativePath), "utf8")) as Record<string, unknown>;
@@ -82,7 +85,7 @@ test("propagates a failing evaluator process through a fail-fast CI-style shell 
   const scriptPath = path.join(tempRoot, "ci-step.sh");
   const evaluatorPath = path.join(tempRoot, "failing-evaluator.mjs");
   const evaluator = `
-    import { runContextEval } from ${JSON.stringify(path.join(root, "eval/context/run.ts"))};
+    import { runContextEval } from ${JSON.stringify(pathToFileURL(path.join(root, "eval/context/run.ts")).href)};
     const result = await runContextEval({ cwd: ${JSON.stringify(tempRoot)}, reportPath: ${JSON.stringify(reportPath)} });
     process.exitCode = result.exitCode;
   `;
@@ -92,13 +95,13 @@ test("propagates a failing evaluator process through a fail-fast CI-style shell 
     await writeFile(evaluatorPath, evaluator);
     await writeFile(scriptPath, `#!/usr/bin/env bash
 set -euo pipefail
-node --import ${JSON.stringify(tsxLoader)} ${JSON.stringify(evaluatorPath)}
-touch ${JSON.stringify(marker)}
+node --import "$1" "$2"
+touch "$3"
 `);
 
     let childError: { code?: number; stdout?: string; stderr?: string } | undefined;
     try {
-      await execFileAsync("bash", [scriptPath], { cwd: root });
+      await execFileAsync("bash", [scriptPath, tsxLoader, evaluatorPath, marker], { cwd: root });
     } catch (error) {
       childError = error as { code?: number; stdout?: string; stderr?: string };
     }

@@ -14,7 +14,7 @@ import { resolveDurableMcpLaunch } from "../src/infrastructure/integration/mcp-l
 
 const execFile = promisify(execFileCallback);
 const cliPath = path.resolve("src/cli.ts");
-const tsxLoader = createRequire(import.meta.url).resolve("tsx/esm");
+const tsxLoader = pathToFileURL(createRequire(import.meta.url).resolve("tsx/esm")).href;
 
 test("integration config exports a durable JSON launch from any cwd", async () => {
   const cwd = await mkdtemp(path.join(tmpdir(), "code-atlas-config-export-"));

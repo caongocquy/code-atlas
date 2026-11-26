@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -11,7 +11,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createMcpServer } from "../src/adapters/mcp/mcp-server.js";
 import { indexRepository } from "../src/core/indexing/index-pipeline.service.js";
 
-const tsxLoader = createRequire(import.meta.url).resolve("tsx/esm");
+const tsxLoader = pathToFileURL(createRequire(import.meta.url).resolve("tsx/esm")).href;
 const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 function run(args: string[], cwd: string) {
   return spawnSync(process.execPath, ["--import", tsxLoader, cli, "workspace", "map", ...args, "--json"], { cwd, encoding: "utf8", timeout: 20000 });
