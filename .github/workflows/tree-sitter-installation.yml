@@ -503,9 +503,10 @@ jobs:
           output_root="$(node -p 'require("node:path").resolve(".evidence")')"
           candidate_root="$(node -p 'process.cwd()')"
           temp_root="$(node -p 'require("node:os").tmpdir()')"
-          if [[ "${{ matrix.target.platform }}" == "linux-x64" && "${{ matrix.node }}" == "22.23.3" ]]; then
-            # Only this exact tuple has reviewed location mappings. The helper verifies
-            # source blobs, baseline, runtime, uniqueness, dispositions and errors.
+          if [[ "${{ matrix.target.platform }}" != "darwin-x64" ]]; then
+            # Six observed runtime tuples share the exact ten reviewed mappings.
+            # The helper verifies source blobs, baseline, runtime, uniqueness and outcomes.
+            # Intel macOS remains strict until its own artifacts have been reviewed.
             node scripts/ca01-reviewed-identity-migration.mjs "$output_root/baseline" "$output_root/candidate" "$output_root/reviewed-migration.json" "$baseline_root" "$candidate_root" "$temp_root" test/fixtures/ca01-reviewed-identity-migration.json
             node --input-type=module -e 'import fs from "node:fs";const r=JSON.parse(fs.readFileSync(".evidence/reviewed-migration.json","utf8"));fs.writeFileSync(".evidence/comparison.json",JSON.stringify(r.raw,null,2)+"\n");if(!r.translated.strictGreen.candidate||!r.translated.differentialPass)throw new Error("Reviewed integration comparison did not qualify");'
           else

@@ -171,5 +171,47 @@
         "name": "extracts export-star facts with their source module"
       }
     }
+  ],
+  "additionalReviewedRuntimes": [
+    {
+      "runtime": {
+        "node": "v24.21.0",
+        "platform": "linux",
+        "arch": "x64"
+      },
+      "artifact": 15093811451
+    },
+    {
+      "runtime": {
+        "node": "v22.23.3",
+        "platform": "win32",
+        "arch": "x64"
+      },
+      "artifact": 15093534719
+    },
+    {
+      "runtime": {
+        "node": "v24.21.0",
+        "platform": "win32",
+        "arch": "x64"
+      },
+      "artifact": 15094145944
+    },
+    {
+      "runtime": {
+        "node": "v22.23.3",
+        "platform": "darwin",
+        "arch": "arm64"
+      },
+      "artifact": 15094790757
+    },
+    {
+      "runtime": {
+        "node": "v24.21.0",
+        "platform": "darwin",
+        "arch": "arm64"
+      },
+      "artifact": 15094096837
+    }
   ]
 }

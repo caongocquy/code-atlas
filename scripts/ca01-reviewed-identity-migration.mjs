@@ -53,7 +53,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   const [basePrefix, candidatePrefix, output, baseRoot, candidateRoot, tempRoot, manifestPath] = process.argv.slice(2);
   if (![basePrefix, candidatePrefix, output, baseRoot, candidateRoot, tempRoot, manifestPath].every(Boolean)) throw new Error("Missing reviewed migration diagnostic arguments");
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  const { baselineRevision, runtime, source, pairs } = manifest;
+  const { baselineRevision, source, pairs } = manifest;
+  const reviewedRuntimes = [manifest.runtime, ...manifest.additionalReviewedRuntimes.map(entry => entry.runtime)];
   if (git(baseRoot, ["rev-parse", "HEAD"]) !== baselineRevision) throw new Error("Reviewed baseline revision changed");
   git(candidateRoot, ["merge-base", "--is-ancestor", baselineRevision, "HEAD"]);
   verifySource(baseRoot, source.file, source.baselineBlob);
@@ -61,6 +62,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   if (pairs.some(({ before, after }) => before.file !== source.file || after.file !== source.file)) throw new Error("Migration outside reviewed source file");
   const readProcess = prefix => JSON.parse(readFileSync(prefix + ".process.json", "utf8"));
   const bp = readProcess(basePrefix), cp = readProcess(candidatePrefix);
+  const runtime = reviewedRuntimes.find(tuple => ["node", "platform", "arch"].every(key => tuple[key] === cp[key]));
+  if (!runtime) throw new Error("Unreviewed candidate runtime");
   for (const p of [bp, cp]) {
     if (p.error || p.signal || ![0, 1].includes(p.exitCode)) throw new Error("Invalid suite process result");
     for (const key of ["node", "platform", "arch"]) if (p[key] !== runtime[key]) throw new Error("Unreviewed runtime: " + key);

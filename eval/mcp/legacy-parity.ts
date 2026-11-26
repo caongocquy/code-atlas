@@ -50,6 +50,10 @@ try {
       if (name === "inspect_retrieval") delete value.metrics;
       return { isError: result.isError ?? false, value };
     };
+    if (integrationTarget) {
+      // Capture complete MCP payloads before asserting, including any failure.
+      await writeFile(`.evidence/legacy-parity-case-${evidence.length + 1}-${name}.json`, JSON.stringify({ name, arguments: args, baseline: old, candidate: current }, null, 2) + "\n");
+    }
     assert.deepEqual(normalize(current), normalize(old), name);
     const hash = createHash("sha256").update(JSON.stringify(normalize(current))).digest("hex");
     evidence.push({ name, arguments: args, status: "PASS", sha256: hash, normalization: name === "inspect_retrieval" ? "exclude volatile root metrics only" : "none" });

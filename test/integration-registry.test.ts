@@ -171,7 +171,7 @@ test("Codex stale launcher remains a connection state", async () => {
   const home = path.join(root, "home");
   try {
     await mkdir(path.join(home, ".codex"), { recursive: true });
-    await writeFile(path.join(home, ".codex", "config.toml"), `[mcp_servers.code-atlas]\ncommand = "${path.join(root, "missing-node")}"\nargs = ["${path.join(root, "missing-cli.js")}", "mcp"]\n`);
+    await writeFile(path.join(home, ".codex", "config.toml"), `[mcp_servers.code-atlas]\ncommand = ${JSON.stringify(path.join(root, "missing-node"))}\nargs = [${JSON.stringify(path.join(root, "missing-cli.js"))}, "mcp"]\n`);
     const service = createAgentIntegrationService({ platform: "linux", cwd: root, home, env: { PATH: "" } });
     const status = await service.status("codex", { repoPath: root });
     assert.equal(status.installation.state, "not_detected");

@@ -151,7 +151,7 @@ test("reconnect migrates managed node plus dist launchers to the installed CLI e
     await mkdir(path.join(home, ".codex"), { recursive: true });
     await mkdir(path.join(home, ".config", "opencode"), { recursive: true });
     const old = { command: process.execPath, args: [path.resolve("dist/cli.js"), "mcp"] };
-    await writeFile(path.join(home, ".codex", "config.toml"), `[mcp_servers.code-atlas]\ncommand = "${old.command}"\nargs = ["${old.args[0]}", "mcp"]\n`);
+    await writeFile(path.join(home, ".codex", "config.toml"), `[mcp_servers.code-atlas]\ncommand = ${JSON.stringify(old.command)}\nargs = [${JSON.stringify(old.args[0])}, "mcp"]\n`);
     await writeFile(path.join(home, ".config", "opencode", "opencode.json"), JSON.stringify({ mcp: { "code-atlas": { type: "local", command: [old.command, ...old.args] } } }));
     const integrations = service(root, home, bin);
     const launch = await resolveDurableMcpLaunch();
@@ -252,7 +252,7 @@ test("all adapters report missing persisted durable launchers as stale", async (
   try {
     const missing = { command: path.join(root, "missing-node"), args: [path.join(root, "missing-cli.js"), "mcp"] };
     await mkdir(path.join(home, ".codex"), { recursive: true });
-    await writeFile(path.join(home, ".codex", "config.toml"), `[mcp_servers.code-atlas]\ncommand = "${missing.command}"\nargs = ["${missing.args[0]}", "mcp"]\n`);
+    await writeFile(path.join(home, ".codex", "config.toml"), `[mcp_servers.code-atlas]\ncommand = ${JSON.stringify(missing.command)}\nargs = [${JSON.stringify(missing.args[0])}, "mcp"]\n`);
     const openCodeRoot = path.join(home, ".config", "opencode");
     await mkdir(openCodeRoot, { recursive: true });
     await writeFile(path.join(openCodeRoot, "opencode.json"), JSON.stringify({ mcp: { "code-atlas": { type: "local", command: [missing.command, ...missing.args] } } }));
@@ -456,7 +456,7 @@ test("Git hooks compose safely, execute refresh, and uninstall only CodeAtlas co
     await chmod(hookPath, 0o755);
     const installed = await hooks.install({ hooks: ["post-commit"] });
     assert.equal(installed.hooks["post-commit"].installed, true);
-    await execFile(hookPath, [], { cwd: root, env: process.env });
+    await execFile("sh", [hookPath], { cwd: root, env: process.env });
     assert.equal(await readFile(marker, "utf8"), "sync");
     assert.equal(await readFile(path.join(root, "hook-original"), "utf8"), "original");
     await hooks.uninstall({ hooks: ["post-commit"] });
