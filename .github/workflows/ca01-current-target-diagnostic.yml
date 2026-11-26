@@ -81,6 +81,16 @@ jobs:
             node candidate/scripts/ca01-test-identity-audit.mjs \
               .evidence/baseline.jsonl .evidence/candidate.jsonl .evidence/identity-audit.json || true
           fi
+      - name: Replay reviewed location-only migration (diagnostic, not a waiver)
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f .evidence/comparison.json ]]; then
+            node candidate/scripts/ca01-reviewed-identity-migration.mjs \
+              "$PWD/.evidence/baseline" "$PWD/.evidence/candidate" "$PWD/.evidence/reviewed-migration.json" \
+              "$PWD/baseline" "$PWD/candidate" "$(node -p 'require("node:os").tmpdir()')" \
+              "$PWD/candidate/test/fixtures/ca01-reviewed-identity-migration.json"
+          fi
       - name: Record strict gate and differential gate separately
         if: always()
         shell: bash

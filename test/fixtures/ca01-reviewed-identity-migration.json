@@ -1,0 +1,175 @@
+{
+  "baselineRevision": "eeb5a33584f19af71871c7e09c21a6e21cf7c111",
+  "runtime": {
+    "node": "v22.23.3",
+    "platform": "linux",
+    "arch": "x64"
+  },
+  "source": {
+    "file": "test/phase14a-facts.test.ts",
+    "baselineBlob": "616d2438d1281145c3a05ed83a6a7faf7a2ff026",
+    "candidateBlob": "4407f1eb89d19b733b819c7c171afcc91665e5b3"
+  },
+  "pairs": [
+    {
+      "before": {
+        "file": "test/phase14a-facts.test.ts",
+        "line": 1,
+        "column": 1246,
+        "nesting": 0,
+        "name": "fact blob keys are canonical and path-independent"
+      },
+      "after": {
+        "file": "test/phase14a-facts.test.ts",
+        "line": 1,
+        "column": 1318,
+        "nesting": 0,
+        "name": "fact blob keys are canonical and path-independent"
+      }
+    },
+    {
+      "before": {
+        "file": "test/phase14a-facts.test.ts",
+        "line": 1,
+        "column": 2241,
+        "nesting": 0,
+        "name": "parser identity and facts version changes miss the fact cache"
+      },
+      "after": {
+        "file": "test/phase14a-facts.test.ts",
+        "line": 1,
+        "column": 2313,
+        "nesting": 0,
+        "name": "parser identity and facts version changes miss the fact cache"
+      }
+    },
+    {
+      "before": {
+        "file": "test/phase14a-facts.test.ts",
+        "line": 1,
+        "column": 2557,
+        "nesting": 0,
+        "name": "resolution-only and derived-only version changes retain the facts domain"
+      },
+      "after": {
+        "file": "test/phase14a-facts.test.ts",
+        "line": 1,
+        "column": 2629,
+        "nesting": 0,
+        "name": "resolution-only and derived-only version changes retain the facts domain"
+      }
+    },
+    {
+      "before": {
+        "file": "test/phase14a-facts.test.ts",
+        "line": 1,
+        "column": 3260,
+        "nesting": 0,
+        "name": "storage schema version is independently owned from facts schema version"
+      },
+      "after": {
+        "file": "test/phase14a-facts.test.ts",
+        "line": 1,
+        "column": 3332,
+        "nesting": 0,
+        "name": "storage schema version is independently owned from facts schema version"
+      }
+    },
+    {
+      "before": {
+        "file": "test/phase14a-facts.test.ts",
+        "line": 1,
+        "column": 3425,
+        "nesting": 0,
+        "name": "persisted facts exercise every path-neutral DTO and reject path state"
+      },
+      "after": {
+        "file": "test/phase14a-facts.test.ts",
+        "line": 1,
+        "column": 3497,
+        "nesting": 0,
+        "name": "persisted facts exercise every path-neutral DTO and reject path state"
+      }
+    },
+    {
+      "before": {
+        "file": "test/phase14a-facts.test.ts",
+        "line": 1,
+        "column": 5273,
+        "nesting": 0,
+        "name": "extracts one path-neutral fact blob from a TypeScript source snapshot"
+      },
+      "after": {
+        "file": "test/phase14a-facts.test.ts",
+        "line": 1,
+        "column": 5345,
+        "nesting": 0,
+        "name": "extracts one path-neutral fact blob from a TypeScript source snapshot"
+      }
+    },
+    {
+      "before": {
+        "file": "test/phase14a-facts.test.ts",
+        "line": 12,
+        "column": 1565,
+        "nesting": 0,
+        "name": "preserves side-effect imports and aliased export bindings"
+      },
+      "after": {
+        "file": "test/phase14a-facts.test.ts",
+        "line": 12,
+        "column": 2517,
+        "nesting": 0,
+        "name": "preserves side-effect imports and aliased export bindings"
+      }
+    },
+    {
+      "before": {
+        "file": "test/phase14a-facts.test.ts",
+        "line": 12,
+        "column": 2246,
+        "nesting": 0,
+        "name": "retains parser diagnostics for missing tree-sitter nodes"
+      },
+      "after": {
+        "file": "test/phase14a-facts.test.ts",
+        "line": 12,
+        "column": 3198,
+        "nesting": 0,
+        "name": "retains parser diagnostics for missing tree-sitter nodes"
+      }
+    },
+    {
+      "before": {
+        "file": "test/phase14a-facts.test.ts",
+        "line": 12,
+        "column": 2682,
+        "nesting": 0,
+        "name": "records containment ownership for symbols, calls, and references"
+      },
+      "after": {
+        "file": "test/phase14a-facts.test.ts",
+        "line": 12,
+        "column": 3634,
+        "nesting": 0,
+        "name": "records containment ownership for symbols, calls, and references"
+      }
+    },
+    {
+      "before": {
+        "file": "test/phase14a-facts.test.ts",
+        "line": 17,
+        "column": 569,
+        "nesting": 0,
+        "name": "extracts export-star facts with their source module"
+      },
+      "after": {
+        "file": "test/phase14a-facts.test.ts",
+        "line": 17,
+        "column": 662,
+        "nesting": 0,
+        "name": "extracts export-star facts with their source module"
+      }
+    }
+  ]
+}
