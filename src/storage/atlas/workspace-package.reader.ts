@@ -4,8 +4,12 @@ import { WORKSPACE_BOUNDS, WorkspaceReadError, type WorkspaceReadBudget } from "
 import { DEPENDENCY_KINDS, isPackageName, isRegistrySpec, packageRoleCoverage, type PackageRoleCoverage, type WorkspacePackageInputs, type WorkspacePackageLinksInput, type PackageEvidenceRef } from "../../core/workspace/workspace-package-links.types.js";
 import { checkWorkspaceDeadline, reserveWorkspaceRead, type WorkspaceSnapshot } from "./workspace-metadata.reader.js";
 
-// C1 deliberately accepts only the closed acquisition contract, independently of future current versions.
-const CERTIFIED_FRAMEWORK_VERSION = "1.7.0";
+// C1 accepts only versions whose root package evidence obeys the same validated closed acquisition contract.
+// Future framework domains require explicit compatibility review, not automatic acceptance.
+const CERTIFIED_FRAMEWORK_VERSIONS = new Set(["1.7.0", "1.7.1"]);
+export function isCertifiedPackageFrameworkVersion(version: string): boolean {
+  return CERTIFIED_FRAMEWORK_VERSIONS.has(version);
+}
 const MAX_STORED_CONFIG_BYTES = 2 * 1024 * 1024;
 const MAX_ROOT_BYTES = 256 * 1024;
 type Size = { count: number; bytes: number };
@@ -31,7 +35,8 @@ export function readWorkspacePackages(database: DatabaseSync, snapshot: Workspac
   const scope: SQLInputValue[] = [repositoryId, snapshot.generationId];
   const state = "FROM generation_framework_state WHERE repository_id = ? AND generation_id = ?";
   try {
-    if (snapshot.versions.schemaVersion !== INDEX_SCHEMA_VERSION || snapshot.versions.frameworkResolutionVersion !== CERTIFIED_FRAMEWORK_VERSION)
+    const frameworkVersion = snapshot.versions.frameworkResolutionVersion;
+    if (snapshot.versions.schemaVersion !== INDEX_SCHEMA_VERSION || !frameworkVersion || !isCertifiedPackageFrameworkVersion(frameworkVersion))
       throw new WorkspaceReadError("package_semantic_domain_unsupported", "incompatible");
     checkWorkspaceDeadline(budget);
     const binding = database.prepare(`SELECT count(*) AS count, coalesce(sum(length(CAST(relative_path AS BLOB)) + length(CAST(content_hash AS BLOB)) + length(CAST(fact_blob_key AS BLOB))), 0) AS bytes
@@ -40,7 +45,7 @@ export function readWorkspacePackages(database: DatabaseSync, snapshot: Workspac
     reserve(binding.count, binding.bytes);
     if (!binding.count) throw new WorkspaceReadError("js_ts_evidence_missing", "incompatible");
     const size = database.prepare(`SELECT length(CAST(config_json AS BLOB)) AS bytes,
-      framework_resolution_version = ? AS certified ${state}`).get(CERTIFIED_FRAMEWORK_VERSION, ...scope) as { bytes: number; certified: number } | undefined;
+      framework_resolution_version = ? AS certified ${state}`).get(frameworkVersion, ...scope) as { bytes: number; certified: number } | undefined;
     if (!size) throw new WorkspaceReadError("package_config_unavailable");
     if (!size.certified) throw new WorkspaceReadError("package_semantic_domain_unsupported", "incompatible");
     if (size.bytes > MAX_STORED_CONFIG_BYTES) throw new WorkspaceReadError("payload_budget_exceeded", "partial");

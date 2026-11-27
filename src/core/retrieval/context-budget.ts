@@ -21,6 +21,7 @@ export type DetailedContextBudgetResult = ContextBudgetResult & {
 };
 
 export type TokenCounter = (text: string) => Promise<number>;
+export type ContextBudgetPolicy = "whole-context" | "legacy-inspection";
 
 export async function applyContextBudget(
   chunks: SearchResult[],
@@ -39,6 +40,7 @@ export async function applyContextBudgetDetailed(
   chunks: SearchResult[],
   maxTokens = MAX_CONTEXT_TOKENS,
   tokenCounter?: TokenCounter,
+  policy: ContextBudgetPolicy = "whole-context",
 ): Promise<DetailedContextBudgetResult> {
   const selected: SearchResult[] = [];
   const decisions: ContextBudgetDecision[] = [];
@@ -48,7 +50,10 @@ export async function applyContextBudgetDetailed(
     // ponytail: O(n²) render checks, candidate count is bounded by retrieval caps.
     const tokenCount = await countContextTokens(buildContext([...selected, chunk]), tokenCounter);
 
-    if (usedTokens + tokenCount > maxTokens) {
+    // The corrected budget counts the complete rendered context once.
+    // Only the versionless legacy MCP inspector retains its historical selection.
+    const chargedTokens = policy === "legacy-inspection" ? usedTokens + tokenCount : tokenCount;
+    if (chargedTokens > maxTokens) {
       decisions.push({
         chunk,
         tokens: tokenCount,

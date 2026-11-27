@@ -1,5 +1,6 @@
 import type { SearchResult } from "./code-search.service.js";
 import { searchCode } from "./code-search.service.js";
+import { retrievalCandidateKey } from "./retrieval-candidate-key.js";
 import type { CapabilityState } from "../../storage/atlas/atlas.types.js";
 import type { EmbeddingProvider } from "../semantic/embedding-provider.js";
 import type { VectorStore } from "../semantic/vector-store.js";
@@ -35,16 +36,6 @@ export type HybridSearchProviders = {
   vectorStore?: VectorStore;
   semanticState?: CapabilityState;
 };
-
-function createResultKey(result: SearchResult): string {
-  return [
-    result.repoId ?? "",
-    result.file ?? "",
-    result.symbolType ?? "",
-    result.symbolName ?? "",
-    result.startLine ?? "",
-  ].join(":");
-}
 
 export async function hybridSearchCode(
   query: string,
@@ -133,7 +124,7 @@ export async function inspectHybridSearch(
   const fused = new Map<string, HybridSearchResult>();
 
   vectorResults.forEach((result, index) => {
-    const key = createResultKey(result);
+    const key = retrievalCandidateKey(result);
 
     const rank = index + 1;
 
@@ -147,7 +138,7 @@ export async function inspectHybridSearch(
 
   const firstRankByLexicalGroup = new Map<string, number>();
   lexicalResults.forEach((result: LexicalSearchResult, index) => {
-    const key = createResultKey(result);
+    const key = retrievalCandidateKey(result, "lexical");
     const position = index + 1;
     const rankGroup = result.lexicalRankGroup;
     const rank = rankGroup

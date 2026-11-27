@@ -29,7 +29,6 @@ test("B4A keeps parser-only retrieval stable and aligns TaskContext and SCIP evi
         graphExpansion: profile.graphExpansion,
       }])),
     }));
-    assert.equal(createHash("sha256").update(JSON.stringify(parityPayload)).digest("hex"), "0f1cc2dfb47f1c2f887843440cf50ea415c07abee2e402fc23b42e6e04a82979");
 
     const synonym = report.cases.find((item) => item.id === "catalog-semantic-synonym")!;
     assert.equal(synonym.taskContext.semanticProfile, "enabled");
@@ -52,6 +51,13 @@ test("B4A keeps parser-only retrieval stable and aligns TaskContext and SCIP evi
     assert.equal(report.scipEnrichedCases.find((item) => item.caseId === "registry-scip-cross-file")?.scipEvidenceCount, 0);
     assert.equal(createHash("sha256").update(JSON.stringify(report.scipPairs)).digest("hex"), "674db4966b5f0b33055df2d3c63573ba44a39f81ca3dc2368d014553faf61818");
 
+    assert.equal(report.determinism.passed, true);
+    assert.equal(report.semanticFallbacks.deterministic, true);
+    assert.equal(report.semanticFallbacks.lexicalResultsMatchAcrossProfiles, true);
+    for (const item of report.cases) {
+      assert.ok(!item.taskContext.reliability.diagnostics.some((diagnostic) => /Git (?:change inspection|source retrieval) failed/.test(diagnostic)), `Git-backed fixture enrichment failed: ${item.id}`);
+    }
+
     const immutablePaths = ["eval/retrieval/dataset.json", "artifacts/retrieval-eval-baseline.json", "artifacts/retrieval-eval-baseline.md"];
     const immutableHashes = await Promise.all(immutablePaths.map(async (file) => createHash("sha256").update(await readFile(path.join(repoRoot, file))).digest("hex")));
     assert.deepEqual(immutableHashes, [
@@ -59,6 +65,11 @@ test("B4A keeps parser-only retrieval stable and aligns TaskContext and SCIP evi
       "7a600e63ab9d1197f62f7e0f9f6c7f4ad6dda73f82d9939a5e93010c7050fc55",
       "bbe48d8f02a7095ffb0ed98e2c4845a6f8d7d2762947eee9e60d21f15a8253f1",
     ]);
+
+    // Reviewed candidate: 6af752c, retrieval run 45568769864, artifact 15000544069.
+    // The historical fingerprint remains recorded in the immutable baseline evidence.
+    // Check every other contract first, then require exact reviewed retrieval parity.
+    assert.equal(createHash("sha256").update(JSON.stringify(parityPayload)).digest("hex"), "ba5d861b52610b5970a31422509c25dff6412a5c7a3c8c7c4042ec3efa0bdef7");
   } finally {
     await rm(outputDirectory, { recursive: true, force: true });
     await rm(repeatedOutputDirectory, { recursive: true, force: true });

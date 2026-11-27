@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
 import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -12,7 +13,7 @@ import { runInitCommand } from "../src/adapters/cli/init.command.js";
 
 const execFile = promisify(execFileCallback);
 const cliPath = path.resolve("src/cli.ts");
-const tsxLoader = createRequire(import.meta.url).resolve("tsx/esm");
+const tsxLoader = pathToFileURL(createRequire(import.meta.url).resolve("tsx/esm")).href;
 
 async function fixture(name: string): Promise<string> {
   return mkdtemp(path.join(tmpdir(), `code-atlas-phase-11k-${name}-`));

@@ -16,8 +16,9 @@ import {
 import type { RerankerProvider } from "./reranker-provider.js";
 import type { CapabilityState } from "../../storage/atlas/atlas.types.js";
 import { applyContextBudgetDetailed } from "./context-budget.js";
-import type { DetailedContextBudgetResult, TokenCounter } from "./context-budget.js";
+import type { ContextBudgetPolicy, DetailedContextBudgetResult, TokenCounter } from "./context-budget.js";
 import { buildContext } from "./context.js";
+import { retrievalCandidateKey } from "./retrieval-candidate-key.js";
 import { getRepositoryIdentity } from "../repository/repository-identity.js";
 
 export type RetrievalInspectOptions = {
@@ -27,6 +28,8 @@ export type RetrievalInspectOptions = {
   graphDepth?: number;
   graphMaxNodes?: number;
   tokenBudget?: number;
+  /** Internal compatibility policy for MCP calls without explicit response options. */
+  contextBudgetPolicy?: ContextBudgetPolicy;
   repoPath?: string;
   providers?: RetrievalProviders;
 };
@@ -257,18 +260,22 @@ function inspectBudget(
 function mergeChunks(
   primary: InspectorChunk[],
   graphChunks: InspectorChunk[],
+  repositoryId: string,
 ): InspectorChunk[] {
   const merged = new Map<string, InspectorChunk>();
 
   for (const chunk of [...primary, ...graphChunks]) {
-    const existing = merged.get(chunk.key);
+    // Graph chunks are scoped to the repository being inspected.
+    const key = retrievalCandidateKey(chunk, chunk.source === "lexical" ? "lexical" : "raw",
+      chunk.source === "graph" ? repositoryId : chunk.repoId);
+    const existing = merged.get(key);
 
     if (!existing) {
-      merged.set(chunk.key, chunk);
+      merged.set(key, chunk);
       continue;
     }
 
-    merged.set(chunk.key, {
+    merged.set(key, {
       ...existing,
       source: existing.source === "graph" ? chunk.source : existing.source,
       provenance: [...existing.provenance, ...chunk.provenance],
@@ -379,7 +386,13 @@ export async function inspectRetrieval(
         const graph = graphStore.loadGraph(repoId);
         const expansion = expandGraphContextDetailed(
           graph,
-          rerankedResults.map((result) => result),
+          rerankedResults.map((result) => ({
+            file: result.file,
+            symbolName: result.symbolName,
+            symbolType: result.symbolType,
+            startLine: result.startLine,
+            ...(result.lexicalScore === undefined ? {} : { lexicalSymbolName: result.symbolName }),
+          })),
           {
             maxDepth: options.graphDepth,
             maxNodes: options.graphMaxNodes,
@@ -426,13 +439,14 @@ export async function inspectRetrieval(
       ? inputOptions.providers?.embeddingProvider?.countTokens
       : undefined;
   const retrievalOnly = inspectBudget(
-    await applyContextBudgetDetailed(rerankedResults, options.tokenBudget, tokenCounter),
+    await applyContextBudgetDetailed(rerankedResults, options.tokenBudget, tokenCounter, inputOptions.contextBudgetPolicy),
   );
   const withGraph = inspectBudget(
     await applyContextBudgetDetailed(
-      mergeChunks(rerankedResults, graphChunks),
+      mergeChunks(rerankedResults, graphChunks, repoId),
       options.tokenBudget,
       tokenCounter,
+      inputOptions.contextBudgetPolicy,
     ),
   );
   const finalContext = options.graphEnabled ? withGraph : retrievalOnly;

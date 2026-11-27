@@ -32,7 +32,7 @@ async function fixture(name: string): Promise<string> {
 }
 
 async function runCli(repoPath: string, ...args: string[]): Promise<{ stdout: string; stderr: string }> {
-  const durableCliPath = path.resolve("node_modules/.bin/code-atlas");
+  const durableCliPath = path.resolve("node_modules/.bin", process.platform === "win32" ? "code-atlas.cmd" : "code-atlas");
   const env = {
     ...process.env,
     CODEX_HOME: path.join(repoPath, ".codex-home"),
@@ -320,10 +320,16 @@ test("Codex MCP configuration launches with a minimal PATH and clean JSON-RPC st
     const entry = config.mcp_servers["code-atlas"];
 
     assert.ok(path.isAbsolute(entry.command));
-    assert.equal(path.basename(entry.command), process.platform === "win32" ? "code-atlas.cmd" : "code-atlas");
-    assert.equal(entry.args.length, 1);
+    if (process.platform === "win32") {
+      assert.equal(entry.command, process.execPath);
+      assert.deepEqual(entry.args, [path.resolve("dist/cli.js"), "mcp"]);
+      await access(entry.args[0]);
+      assert.equal(isEphemeralMcpPath(entry.args[0]), false);
+    } else {
+      assert.equal(path.basename(entry.command), "code-atlas");
+      assert.deepEqual(entry.args, ["mcp"]);
+    }
     await access(entry.command);
-    assert.equal(entry.args[0], "mcp");
     assert.equal(isEphemeralMcpPath(entry.command), false);
     assert.equal(entry.cwd, undefined);
 
@@ -337,9 +343,9 @@ test("Codex MCP configuration launches with a minimal PATH and clean JSON-RPC st
         USERPROFILE: repoPath,
         APPDATA: path.join(repoPath, ".appdata"),
         CODEX_HOME: path.join(repoPath, ".codex-home"),
-        CODE_ATLAS_CLI: entry.command,
+        SystemRoot: process.env.SystemRoot,
       },
-      shell: process.platform === "win32" ? process.env.ComSpec ?? "cmd.exe" : false,
+      shell: false,
       stdio: ["pipe", "pipe", "pipe"],
     });
     childClosed = new Promise<void>((resolve, reject) => {

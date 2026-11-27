@@ -1,3 +1,16 @@
 scripts/ca01-v170-common-harness.json text eol=lf
 .github/workflows/tree-sitter-installation.yml text eol=lf
 scripts/ca01-v170-compare-ca01-tests.mjs text eol=lf
+
+# Frozen evaluation data is byte-addressed (hashes and parser byte offsets).
+# Preserve committed bytes rather than applying checkout EOL conversion.
+eval/retrieval/fixtures/** -text
+eval/retrieval/dataset.json -text
+eval/retrieval/b4b-extension.json -text
+eval/retrieval/b4b-extension.sha256 -text
+eval/context/corpus/manifest.json -text
+eval/context/corpus/snapshots/** -text
+eval/context/corpus/synthetic/** -text
+eval/context/baselines/** -text
+artifacts/retrieval-eval-baseline.json -text
+artifacts/retrieval-eval-baseline.md -text

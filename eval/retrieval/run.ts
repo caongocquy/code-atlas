@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { installOfflineGuard } from "../context/offline-guard.js";
+import { initializeRetrievalFixtureGit } from "./initialize-fixture-git.js";
 import { indexRepository } from "../../src/core/indexing/index-pipeline.service.js";
 import type { ScipIndexer } from "../../src/core/indexing/scip-indexer.types.js";
 import type { ScipTool } from "../../src/core/indexing/scip-indexer.types.js";
@@ -27,6 +28,7 @@ import type { InspectorChunk } from "../../src/core/retrieval/retrieval-inspecto
 import type { EmbeddingProvider } from "../../src/core/semantic/embedding-provider.js";
 import type { VectorPoint, VectorSearchResult, VectorStore } from "../../src/core/semantic/vector-store.js";
 import type { SearchResult } from "../../src/core/retrieval/code-search.service.js";
+import { retrievalCandidateKey } from "../../src/core/retrieval/retrieval-candidate-key.js";
 import type { LexicalSearchResult } from "../../src/core/lexical/lexical-search.service.js";
 import { encodeScipDocument, encodeScipIndex, type ScipFixtureOccurrence } from "./scip-fixture.js";
 import { aggregateRankingMetrics, canonicalIdentity, evaluateRanking, matchesSelector, type AmbiguityExpectation, type RankedCandidate, type RetrievalIdentity, type RetrievalJudgments, type RetrievalSelector, type RankingMetrics } from "./metrics.js";
@@ -132,10 +134,6 @@ function stableEvaluationResults<T extends SearchResult>(graph: CodeGraph, resul
     || canonicalIdentity(identityForResult(graph, left)).localeCompare(canonicalIdentity(identityForResult(graph, right))));
 }
 
-function retrievalResultKey(result: SearchResult): string {
-  return [result.repoId ?? "", result.file ?? "", result.symbolType ?? "", result.symbolName ?? "", result.startLine ?? ""].join(":");
-}
-
 function effectiveLexicalRankData(results: readonly LexicalSearchResult[]): { ranks: Map<string, number>; contributions: Map<string, number[]> } {
   const firstRankByGroup = new Map<string, number>();
   const ranks = new Map<string, number>();
@@ -145,7 +143,7 @@ function effectiveLexicalRankData(results: readonly LexicalSearchResult[]): { ra
     const group = result.lexicalRankGroup;
     const rank = group ? firstRankByGroup.get(group) ?? position : position;
     if (group && !firstRankByGroup.has(group)) firstRankByGroup.set(group, rank);
-    const key = retrievalResultKey(result);
+    const key = retrievalCandidateKey(result, "lexical");
     ranks.set(key, rank);
     const rows = contributions.get(key) ?? [];
     rows.push(rank);
@@ -161,7 +159,7 @@ export function buildEffectiveLexicalRanks(results: readonly LexicalSearchResult
 export function normalizeFusionTies<T extends SearchResult & { fusionScore?: number; vectorRank?: number; lexicalRank?: number }>(results: readonly T[], vectorRanks: ReadonlyMap<string, number>, lexicalRanks: ReadonlyMap<string, number>, lexicalResults?: readonly LexicalSearchResult[]): T[] {
   const lexicalContributions = lexicalResults ? effectiveLexicalRankData(lexicalResults).contributions : undefined;
   return results.map((result) => {
-    const key = retrievalResultKey(result);
+    const key = retrievalCandidateKey(result, result.vectorRank === undefined && result.lexicalRank !== undefined ? "lexical" : "raw");
     const vectorRank = result.vectorRank === undefined ? undefined : vectorRanks.get(key) ?? result.vectorRank;
     const lexicalRank = result.lexicalRank === undefined ? undefined : lexicalRanks.get(key) ?? result.lexicalRank;
     const lexicalContributionRanks = result.lexicalRank === undefined
@@ -189,7 +187,7 @@ function rankedLexicalResults(graph: CodeGraph, results: readonly LexicalSearchR
     candidatePosition: index + 1,
     lexicalScore: result.lexicalScore,
     ...(result.lexicalRankGroup ? { lexicalRankGroup: result.lexicalRankGroup } : {}),
-    effectiveLexicalRank: ranks.get(retrievalResultKey(result)) ?? index + 1,
+    effectiveLexicalRank: ranks.get(retrievalCandidateKey(result, "lexical")) ?? index + 1,
   }));
 }
 
@@ -349,7 +347,7 @@ async function evaluateProfile(item: RetrievalEvalCase, root: string, graph: Cod
   const lexicalResults = productionLexicalEvidence
     ? inspection.lexicalResults
     : stableEvaluationResults(graph, inspection.lexicalResults, (result) => result.lexicalScore);
-  const vectorRanks = new Map(vectorResults.map((result, index) => [retrievalResultKey(result), index + 1]));
+  const vectorRanks = new Map(vectorResults.map((result, index) => [retrievalCandidateKey(result), index + 1]));
   const lexicalRanks = buildEffectiveLexicalRanks(lexicalResults);
   const fusedResults = stableEvaluationResults(graph, normalizeFusionTies(inspection.fusedResults, vectorRanks, lexicalRanks, lexicalResults), (result) => result.fusionScore);
   const normalizedExpanded = normalizeFusionTies(inspection.withGraph.chunks, vectorRanks, lexicalRanks, lexicalResults);
@@ -723,6 +721,7 @@ export async function runRetrievalEval(options: RetrievalEvalOptions): Promise<{
       const fixtureRoot = path.join(tempRoot, fixture);
       fixtureHashes[fixture] = await hashDirectory(fixtureSource);
       await cp(fixtureSource, fixtureRoot, { recursive: true });
+      await initializeRetrievalFixtureGit(fixtureRoot);
       const noScip: ScipIndexer = { discover: async () => ({ status: "unavailable" }), index: async () => [] };
       const indexed = await indexRepository(fixtureRoot, { skipGit: true, includeSemantic: false, scipIndexer: noScip });
       if (!indexed.published) throw new Error(`Could not build parser-only retrieval fixture ${fixture}: ${indexed.failure.message}`);
@@ -734,6 +733,7 @@ export async function runRetrievalEval(options: RetrievalEvalOptions): Promise<{
       if (pairedCases.length) {
         scipRoot = path.join(tempRoot, `${fixture}-scip-enriched`);
         await cp(fixtureSource, scipRoot, { recursive: true });
+        await initializeRetrievalFixtureGit(scipRoot);
         const scipIndexed = await indexRepository(scipRoot, {
           skipGit: true,
           includeSemantic: false,

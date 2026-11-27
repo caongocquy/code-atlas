@@ -13,7 +13,10 @@ import { createDeepWorkload } from "./qualification-fixtures.js";
 const baselineRoot = process.argv[2];
 assert.ok(baselineRoot, "Usage: node --import tsx/esm eval/mcp/legacy-parity.ts <clean-baseline-root>");
 const baselineHead = execFileSync("git", ["-C", path.resolve(baselineRoot), "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-assert.equal(baselineHead, "d2570bd789095d82442ff332beb36a5ddd998194", "Legacy parity baseline must be the approved immutable target");
+const integrationTarget = process.argv[3] === "--integration-target";
+assert.ok(process.argv.length === (integrationTarget ? 4 : 3), "Unknown legacy parity arguments");
+const approvedTarget = integrationTarget ? "eeb5a33584f19af71871c7e09c21a6e21cf7c111" : "d2570bd789095d82442ff332beb36a5ddd998194";
+assert.equal(baselineHead, approvedTarget, "Legacy parity baseline must be the approved immutable target");
 const baseline = await import(pathToFileURL(path.resolve(baselineRoot, "src/adapters/mcp/mcp-server.ts")).href);
 async function connected(factory: typeof createMcpServer) {
   const server = factory(), client = new Client({ name: "ca01-legacy-parity", version: "1" });
@@ -47,11 +50,15 @@ try {
       if (name === "inspect_retrieval") delete value.metrics;
       return { isError: result.isError ?? false, value };
     };
+    if (integrationTarget) {
+      // Capture complete MCP payloads before asserting, including any failure.
+      await writeFile(`.evidence/legacy-parity-case-${evidence.length + 1}-${name}.json`, JSON.stringify({ name, arguments: args, baseline: old, candidate: current }, null, 2) + "\n");
+    }
     assert.deepEqual(normalize(current), normalize(old), name);
     const hash = createHash("sha256").update(JSON.stringify(normalize(current))).digest("hex");
     evidence.push({ name, arguments: args, status: "PASS", sha256: hash, normalization: name === "inspect_retrieval" ? "exclude volatile root metrics only" : "none" });
   }
-  await writeFile("artifacts/closure-legacy-parity.json", JSON.stringify({ baseline: baselineHead, schemas: "PASS: all legacy schemas/annotations unchanged after removing optional response", cases: evidence }, null, 2) + "\n");
+  await writeFile(integrationTarget ? ".evidence/integration-legacy-parity.json" : "artifacts/closure-legacy-parity.json", JSON.stringify({ baseline: baselineHead, schemas: "PASS: all legacy schemas/annotations unchanged after removing optional response", cases: evidence }, null, 2) + "\n");
   console.log(`Legacy contract parity PASS: ${cases.length} cases, complete payload comparison except recorded inspection timings.`);
 } finally {
   await a.client.close(); await a.server.close(); await b.client.close(); await b.server.close();

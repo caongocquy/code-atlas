@@ -69,7 +69,18 @@ jobs:
         run: |
           corepack enable
           corepack prepare pnpm@11.22.0 --activate
-          pnpm install --frozen-lockfile
+          # Retry transient network failures in native dependency postinstall.
+          # Keep the lockfile and lifecycle policies unchanged.
+          for attempt in 1 2 3; do
+            if pnpm install --frozen-lockfile; then
+              break
+            fi
+            if [[ "$attempt" -eq 3 ]]; then
+              echo "Native parser dependency installation failed after 3 attempts." >&2
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
           pnpm build
       - name: Build Kotlin and Dart native parsers
         shell: bash
@@ -384,17 +395,20 @@ jobs:
     permissions:
       contents: read
     env:
-      CA01_BASE: d2570bd789095d82442ff332beb36a5ddd998194
+      CA01_BASE: eeb5a33584f19af71871c7e09c21a6e21cf7c111
       CA01_PR_BASE: ${{ github.event.pull_request.base.sha }}
       CODE_ATLAS_EVAL_OFFLINE: '1'
     steps:
+      - name: Preserve committed fixture bytes before checkout
+        shell: bash
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          ref: ${{ inputs.ref || github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
       - uses: actions/checkout@v4
         with:
-          ref: d2570bd789095d82442ff332beb36a5ddd998194
+          ref: eeb5a33584f19af71871c7e09c21a6e21cf7c111
           path: .release-base
       - uses: actions/setup-node@v4
         with:
@@ -432,18 +446,33 @@ jobs:
       - name: Install and build both revisions
         shell: bash
         run: |
-          pnpm install --frozen-lockfile
+          set -euo pipefail
+          # Native dependency postinstalls may encounter transient CDN failures.
+          install_locked() {
+            local attempt
+            for attempt in 1 2 3; do
+              if pnpm "$@" install --frozen-lockfile; then
+                return 0
+              fi
+              if [[ "$attempt" -eq 3 ]]; then
+                echo 'Locked dependency install failed after 3 attempts.' >&2
+                return 1
+              fi
+              sleep "$((attempt * 10))"
+            done
+          }
+          install_locked
           pnpm build
           pnpm exec tsc --noEmit
           pnpm lint
-          pnpm --dir .release-base install --frozen-lockfile
+          install_locked --dir .release-base
           (cd .release-base && pnpm build)
       - name: Require CA-01 focused contracts and comparator checks
         shell: bash
         run: |
-          node --import tsx/esm --test test/ca01-mcp-response.test.ts test/ca01-response-budget.test.ts test/ca01-mcp-stdio.test.ts test/ca01-qualification.test.ts test/ca01-ci-regression.test.ts test/phase14g-mcp-response-efficiency.test.ts test/phase15e-mcp-metadata.test.ts > .evidence/focused.tap 2>&1
-          node --import tsx/esm eval/mcp/legacy-parity.ts .release-base > .evidence/legacy-parity.log 2>&1
-      - name: Capture complete suites and compare full assertion trees
+          node --import tsx/esm --test test/ca01-mcp-response.test.ts test/ca01-response-budget.test.ts test/ca01-mcp-stdio.test.ts test/ca01-qualification.test.ts test/ca01-ci-regression.test.ts test/ca01-reviewed-identity-migration.test.ts test/ca01-reviewed-location-pairs.test.ts test/ca01-reviewed-source-pairs.test.ts test/phase14g-mcp-response-efficiency.test.ts test/phase15e-mcp-metadata.test.ts > .evidence/focused.tap 2>&1
+      - name: Capture complete suites
+        id: suites
         shell: bash
         run: |
           baseline_root="$(node -p 'require("node:path").resolve(".release-base")')"
@@ -465,9 +494,31 @@ jobs:
           }
           (cd .release-base && run_suite "$output_root/baseline")
           run_suite "$output_root/candidate"
+      - name: Compare full assertion trees against approved integration target
+        if: ${{ always() && !cancelled() && steps.suites.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          baseline_root="$(node -p 'require("node:path").resolve(".release-base")')"
+          output_root="$(node -p 'require("node:path").resolve(".evidence")')"
+          candidate_root="$(node -p 'process.cwd()')"
           temp_root="$(node -p 'require("node:os").tmpdir()')"
-          node scripts/compare-ca01-tests.mjs "$output_root/baseline" "$output_root/candidate" "$output_root/comparison.json" "$baseline_root" "$(node -p 'process.cwd()')" "$temp_root"
+          # Every supported runtime must reproduce the exact source-bound reviewed locations.
+          # The original comparator still rejects new failures, changed errors, skips and missing tests.
+          node scripts/ca01-reviewed-identity-migration.mjs "$output_root/baseline" "$output_root/candidate" "$output_root/reviewed-migration.json" "$baseline_root" "$candidate_root" "$temp_root" test/fixtures/ca01-reviewed-identity-migration-v3.json
+          node --input-type=module -e 'import fs from "node:fs";const r=JSON.parse(fs.readFileSync(".evidence/reviewed-migration.json","utf8"));fs.writeFileSync(".evidence/comparison.json",JSON.stringify(r.raw,null,2)+"\n");if(!r.translated.strictGreen.candidate||!r.translated.differentialPass)throw new Error("Reviewed integration comparison did not qualify");'
+      - name: Record independent test identity evidence
+        if: ${{ always() && !cancelled() && steps.suites.outcome == 'success' }}
+        shell: bash
+        run: |
+          node scripts/ca01-test-identity-audit.mjs .evidence/baseline.jsonl .evidence/candidate.jsonl .evidence/identity-audit.json || true
+      - name: Compare complete legacy MCP payloads against approved integration target
+        if: ${{ always() && !cancelled() && steps.suites.outcome == 'success' }}
+        shell: bash
+        run: |
+          node --import tsx/esm eval/mcp/legacy-parity.ts .release-base --integration-target > .evidence/legacy-parity.log 2>&1
       - name: Pack and verify clean consumer MCP contract
+        if: ${{ always() && !cancelled() && steps.suites.outcome == 'success' }}
         shell: bash
         run: |
           mkdir -p .ca01-consumer
@@ -480,8 +531,8 @@ jobs:
         if: always()
         shell: bash
         run: |
-          if [[ -f .evidence/comparison.json ]]; then
-            node --input-type=module -e 'import fs from "node:fs"; const r=JSON.parse(fs.readFileSync(".evidence/comparison.json")); fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `CA-01 strict candidate: ${r.strictGreen.candidate?"PASS":"FAIL"}; differential: ${r.differentialPass?"PASS":"FAIL"}. Baseline failures: ${r.baseline.fail}; candidate failures: ${r.candidate.fail}. Policy B remains unapproved; no merge/release authorization.\n`);'
+          if [[ -f .evidence/comparison.json || -f .evidence/reviewed-migration.json ]]; then
+            node --input-type=module -e 'import fs from "node:fs";const reviewed=fs.existsSync(".evidence/reviewed-migration.json")?JSON.parse(fs.readFileSync(".evidence/reviewed-migration.json")):null;const raw=reviewed?.raw??JSON.parse(fs.readFileSync(".evidence/comparison.json"));const r=reviewed?.translated??raw;fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `CA-01 integration target ${process.env.CA01_BASE}; strict candidate: ${r.strictGreen.candidate?"PASS":"FAIL"}; raw differential: ${raw.differentialPass?"PASS":"FAIL"}; integration differential: ${r.differentialPass?"PASS":"FAIL"}. Baseline failures: ${r.baseline.fail}; candidate failures: ${r.candidate.fail}; reviewed location pairs: ${reviewed?.reviewedPairs.length??0}. No merge/release authorization; independent frozen attestation unchanged.\n`);'
           else
             echo 'CA-01 comparison NOT RUN or incomplete; no qualification claim.' >> "$GITHUB_STEP_SUMMARY"
           fi
@@ -491,6 +542,5 @@ jobs:
           name: ca01-${{ matrix.target.platform }}-node${{ matrix.node }}
           path: |
             .evidence/
-            artifacts/closure-legacy-parity.json
           include-hidden-files: true
           if-no-files-found: error

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
 import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -14,7 +15,7 @@ import type { PickerStdin, PickerStdout } from "../src/adapters/cli/integration-
 
 const execFile = promisify(execFileCallback);
 const cliPath = path.resolve("src/cli.ts");
-const tsxLoader = createRequire(import.meta.url).resolve("tsx/esm");
+const tsxLoader = pathToFileURL(createRequire(import.meta.url).resolve("tsx/esm")).href;
 let testCliDirectory: string | undefined;
 let testCliExecutable: Promise<string> | undefined;
 
@@ -89,8 +90,10 @@ test("connect --all configures only detected integrations in registry order", as
       await writeFile(path.join(bin, id), "#!/bin/sh\n");
       await chmod(path.join(bin, id), 0o755);
     }
-    const code = path.join(bin, "code");
-    await writeFile(code, "#!/bin/sh\nprintf 'zoocodeorganization.zoo-code\\n'\n");
+    const code = path.join(bin, process.platform === "win32" ? "code.cmd" : "code");
+    await writeFile(code, process.platform === "win32"
+      ? "@echo off\r\necho zoocodeorganization.zoo-code\r\n"
+      : "#!/bin/sh\nprintf 'zoocodeorganization.zoo-code\\n'\n");
     await chmod(code, 0o755);
     const result = await runCli(root, ["connect", "--all", "--json", "--no-guidance"], bin);
     const output = JSON.parse(result.stdout) as { results: Array<{ id: string }>; skipped: Array<{ id: string }> };
@@ -345,14 +348,16 @@ test("disconnect keeps guidance while another managed integration remains", asyn
 });
 
 async function runCli(root: string, args: string[], bin: string): Promise<{ stdout: string; stderr: string }> {
-  testCliExecutable ??= createTestCliExecutable();
+  const executable = process.env.CODE_ATLAS_CLI ?? await (testCliExecutable ??= createTestCliExecutable());
   return execFile(process.execPath, ["--import", tsxLoader, cliPath, ...args], {
     cwd: root,
     env: {
       ...process.env,
-      PATH: `${bin}:/usr/bin:/bin`,
-      CODE_ATLAS_CLI: await testCliExecutable,
+      PATH: [bin, ...(process.platform === "win32" ? [] : ["/usr/bin", "/bin"])].filter(Boolean).join(path.delimiter),
+      CODE_ATLAS_CLI: executable,
       HOME: root,
+      USERPROFILE: root,
+      APPDATA: path.join(root, ".xdg"),
       NODE_PATH: undefined,
       CODEX_HOME: path.join(root, ".codex-home"),
       XDG_CONFIG_HOME: path.join(root, ".xdg"),
@@ -363,6 +368,11 @@ async function runCli(root: string, args: string[], bin: string): Promise<{ stdo
 
 async function createTestCliExecutable(): Promise<string> {
   testCliDirectory = await mkdtemp(path.join(process.cwd(), "test", ".integration-cli-"));
+  if (process.platform === "win32") {
+    const executable = path.join(testCliDirectory, "code-atlas.cmd");
+    await writeFile(executable, '@echo off\r\nnode "%~dp0..\\..\\dist\\cli.js" %*\r\n');
+    return executable;
+  }
   const executable = path.join(testCliDirectory, "code-atlas.cjs");
   await writeFile(executable, `#!/usr/bin/env node
 const { spawnSync } = require("node:child_process");

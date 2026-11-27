@@ -26,6 +26,9 @@ jobs:
       run:
         shell: bash
     steps:
+      - name: Preserve committed fixture bytes before checkout
+        shell: bash
+        run: git config --global core.autocrlf false
       - name: Checkout candidate
         uses: actions/checkout@v4
         with:
@@ -69,6 +72,17 @@ jobs:
             (
               cd "$directory"
               pnpm build > "../evidence/${directory}-build.log" 2>&1
+              # Both revisions must test against their own built, durable CLI.
+              mkdir -p node_modules/.bin
+              chmod +x dist/cli.js
+              if [[ "$RUNNER_OS" == "Windows" ]]; then
+                printf '%s\r\n' '@echo off' 'node "%~dp0..\..\dist\cli.js" %*' > node_modules/.bin/code-atlas.cmd
+                export CODE_ATLAS_CLI="$(node -p 'require("node:path").resolve("node_modules/.bin/code-atlas.cmd")')"
+              else
+                ln -sf "$PWD/dist/cli.js" node_modules/.bin/code-atlas
+                export CODE_ATLAS_CLI="$(node -p 'require("node:path").resolve("node_modules/.bin/code-atlas")')"
+              fi
+              export PATH="$PWD/node_modules/.bin:$PATH"
               # Preserve every failed test in TAP; do not mask failures in the comparator.
               if node --import tsx/esm --test --test-concurrency=2 --test-reporter=tap test/*.test.ts > "../evidence/${directory}-tests.tap" 2>&1; then
                 echo 0 > "../evidence/${directory}-tests.exit"

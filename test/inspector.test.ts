@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import path from "node:path";
 
 import {
   getGraphOverview,
@@ -69,6 +70,6 @@ test("graph overview and indexed files are deterministic and bounded", () => {
 });
 
 test("source path resolution stays inside the repository", () => {
-  assert.equal(resolveRepoSourcePath("/repo", "src/index.ts"), "/repo/src/index.ts");
+  assert.equal(resolveRepoSourcePath("/repo", "src/index.ts"), path.resolve("/repo", "src/index.ts"));
   assert.throws(() => resolveRepoSourcePath("/repo", "../package.json"), /outside the repository/);
 });

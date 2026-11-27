@@ -39,7 +39,7 @@ test("repository excludes combine safe defaults, detected stacks, project config
     assert.equal(excludes.matches(".codeatlas", true), true);
     assert.match(excludes.summary, /project config/);
     assert.match(excludes.summary, /\.gitignore/);
-    assert.deepEqual(files.map((file) => path.relative(root, file)), ["src/app.ts"]);
+    assert.deepEqual(files.map((file) => path.relative(root, file).split(path.sep).join("/")), ["src/app.ts"]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -55,7 +55,7 @@ test("common build names and CodeAtlas project exclusions are not global default
     }
     const excludes = await resolveRepositoryExcludes(root);
     assert.equal(excludes.matches("build", true), false);
-    assert.deepEqual((await scanRepo(root)).map((file) => path.relative(root, file)), [
+    assert.deepEqual((await scanRepo(root)).map((file) => path.relative(root, file).split(path.sep).join("/")), [
       ".superpowers/keep.ts",
       "build/keep.ts",
       "docs/superpowers/keep.md",

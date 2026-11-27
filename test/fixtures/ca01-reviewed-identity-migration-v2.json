@@ -1,0 +1,163 @@
+{
+  "schemaVersion": 2,
+  "baselineRevision": "eeb5a33584f19af71871c7e09c21a6e21cf7c111",
+  "reviewedCandidateRevision": "759dec352d65fdcfa86749a58c688835117d16ea",
+  "reviewedArtifact": 15095955429,
+  "reviewedRun": 45773035407,
+  "observedRuntime": {
+    "node": "v22.23.3",
+    "platform": "linux",
+    "arch": "x64"
+  },
+  "allowedRuntimes": [
+    {
+      "node": "v22.23.3",
+      "platform": "linux",
+      "arch": "x64"
+    },
+    {
+      "node": "v22.23.3",
+      "platform": "win32",
+      "arch": "x64"
+    },
+    {
+      "node": "v22.23.3",
+      "platform": "darwin",
+      "arch": "arm64"
+    },
+    {
+      "node": "v22.23.3",
+      "platform": "darwin",
+      "arch": "x64"
+    },
+    {
+      "node": "v24.21.0",
+      "platform": "linux",
+      "arch": "x64"
+    },
+    {
+      "node": "v24.21.0",
+      "platform": "win32",
+      "arch": "x64"
+    },
+    {
+      "node": "v24.21.0",
+      "platform": "darwin",
+      "arch": "arm64"
+    },
+    {
+      "node": "v24.21.0",
+      "platform": "darwin",
+      "arch": "x64"
+    }
+  ],
+  "requiredPairCount": 86,
+  "sources": [
+    {
+      "file": "test/affected-tests.test.ts",
+      "baselineBlob": "8f6bf10bf963efa54507bd3bfc90e7ee46135b1d",
+      "candidateBlob": "f09c34ae0e3d74182512f0c46af8a02ce8a0a060",
+      "pairCount": 6,
+      "pairSha256": "b9b0c2460a2d30efdee8839eb264972a9007347e6b0e731a0a361b41c06c16ec"
+    },
+    {
+      "file": "test/coverage-diagnostics.test.ts",
+      "baselineBlob": "08fde6484f9c5bfa348b164893535ae974b030eb",
+      "candidateBlob": "15b8fa9a8fd77ed24d63f5433494c5daffcf128d",
+      "pairCount": 12,
+      "pairSha256": "4cc7d88701ada84e5b00d4c0804600fbfb7858723f4a27a826343c5810d6862d"
+    },
+    {
+      "file": "test/graph-delta.test.ts",
+      "baselineBlob": "807bc12248ecadaaeed0947d578845aa12c04f81",
+      "candidateBlob": "7fe8d888fc072a8cbb14e8be5ca8d7df0f8115a1",
+      "pairCount": 10,
+      "pairSha256": "82e6bcc0d710540b2eedbc99af21df3eb409eec7b82d318a7f92a53232aa61b7"
+    },
+    {
+      "file": "test/inspect-change.test.ts",
+      "baselineBlob": "deadfcedf5b00d4d327a16b8cf13f7553a621cce",
+      "candidateBlob": "e7d8a351c5bf7a7a9cd2e37432d7aa764d1c87e7",
+      "pairCount": 8,
+      "pairSha256": "c0bbe08294e686b9bc9aa0b507fe7b8e99ba4b8c1ec9192dcb7ffb59420709f2"
+    },
+    {
+      "file": "test/inspector.test.ts",
+      "baselineBlob": "3a1e768eda548bd5c24ec81857474b7540c1d53f",
+      "candidateBlob": "5c08b73b7578beab80c117b5a1a27872ee1c3ecb",
+      "pairCount": 3,
+      "pairSha256": "d96f1e7f16a5eb5bc7167d8d180b8ae2ede0da1d0b7d67f78068aef427061f5d"
+    },
+    {
+      "file": "test/integration-batch5.test.ts",
+      "baselineBlob": "b4cb82336125f759ae3bf3f00134cbcf60653a20",
+      "candidateBlob": "e6bd4bb1c36f6efb429270e9215f36b872dbee12",
+      "pairCount": 10,
+      "pairSha256": "5242ba04ec57f0540724907cc40e5bfbd5befe8ed523ec7413efc26d498ef860"
+    },
+    {
+      "file": "test/integration-config-export.test.ts",
+      "baselineBlob": "d23dc5b8be6963f416405e160970b7702bbedd49",
+      "candidateBlob": "e46a65247fd33d0227b49265daec2e996243bb57",
+      "pairCount": 4,
+      "pairSha256": "bbbb03da6731b2cefeb6e6dba087bfdc51b83731e1d202ab211a49ebfcb4dc22"
+    },
+    {
+      "file": "test/mcp-launcher.test.ts",
+      "baselineBlob": "09aa67bd0097680c1412154f96c05d5c2cb2e2df",
+      "candidateBlob": "5c222caf0bdc02c2f823ffca5b339e261768c159",
+      "pairCount": 1,
+      "pairSha256": "992c8f59c3455679a192b020617d775ff9df69dc0b363ecdc700dc87b52501f9"
+    },
+    {
+      "file": "test/phase11-integration.test.ts",
+      "baselineBlob": "ce36f4771466a6176f8a0787296372882f6890d9",
+      "candidateBlob": "d365a49903cc7a473564ffa3709a007de89d1121",
+      "pairCount": 1,
+      "pairSha256": "195ca38191c46c06386724bacf497693eda1e261091b84e2f5a4d07a6e805780"
+    },
+    {
+      "file": "test/phase11k-closure.test.ts",
+      "baselineBlob": "4d71add7ba2b502f34d3f7b9e56d97e4c80c3723",
+      "candidateBlob": "4b2922657ccb74b11b309b776794fda13771fa34",
+      "pairCount": 4,
+      "pairSha256": "832509dc25310315275559f656ef1daa3e166252e05bc8974e187015641689b9"
+    },
+    {
+      "file": "test/phase14a-facts.test.ts",
+      "baselineBlob": "616d2438d1281145c3a05ed83a6a7faf7a2ff026",
+      "candidateBlob": "4407f1eb89d19b733b819c7c171afcc91665e5b3",
+      "pairCount": 10,
+      "pairSha256": "42f1575280a9e3c89e3bd410927169d88a0fa5e8dccd2d12b5227fc31756acf1"
+    },
+    {
+      "file": "test/phase14b-provenance-storage.test.ts",
+      "baselineBlob": "7482ac1a5aed0544c4bc4c8341eeb20d0df6780d",
+      "candidateBlob": "1909e4496bfa2374f89493f0a03c90a72bfceb92",
+      "pairCount": 3,
+      "pairSha256": "762b560d13c60adfe2a6f7486c6a2a570cfd8390dd42dacb52e93a880fcca90b"
+    },
+    {
+      "file": "test/phase15d-integration.test.ts",
+      "baselineBlob": "c360edafeff39e39182a00b392c0c698051cbfe4",
+      "candidateBlob": "92bea1ab6740c2096b16c6c0654fa3ebbc85647c",
+      "pairCount": 6,
+      "pairSha256": "4c11d0dde73e0cb51a72cb6aaf9fb61ff90790b227bd977e16087beea352a3a7"
+    },
+    {
+      "file": "test/phase17d-a-workspace-mcp-cli.test.ts",
+      "baselineBlob": "07bc67c7ab1486aa84c5a548222f9aa16f482149",
+      "candidateBlob": "3cf7d94ace37b4b9886ff807a03eb6329b198651",
+      "pairCount": 2,
+      "pairSha256": "ec0dd86f4261489fd83de1fb24a6cb7e17d996ddcab91601660f319e9d2defa1"
+    },
+    {
+      "file": "test/pre17e-bootstrap.test.ts",
+      "baselineBlob": "3e51139f9525f46add0a0a190012fd40f83ac598",
+      "candidateBlob": "e6f5130781a20b546822df63a31fdfa2959b6864",
+      "pairCount": 6,
+      "pairSha256": "1a687076fa414491e5410d37313ef1fb3d6837bb6769005245007f59f3a6ef11"
+    }
+  ],
+  "note": "Source-blob-bound exact pair digests from the reviewed Linux Node 22 artifact. Other supported runtimes must independently match every exact pair; differing or additional identities cannot be waived. Historical v1 manifest retained."
+}

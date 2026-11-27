@@ -38,8 +38,8 @@ test("old node plus dist launcher remains valid and new launcher rejects missing
 test("persisted launch validation distinguishes stale and ephemeral paths", async () => {
   assert.equal(await validateConfiguredLaunch({ command: "/missing/node", args: ["/missing/cli.js", "mcp"] }), "stale");
   assert.equal(await validateConfiguredLaunch({ command: process.execPath, args: ["/missing/cli.js", "mcp"] }), "stale");
-  assert.equal(await validateConfiguredLaunch({ command: "/tmp/node", args: ["/tmp/cli.js", "mcp"] }), "ephemeral");
-  assert.equal(await validateConfiguredLaunch({ command: "/private/tmp/node", args: ["/private/tmp/cli.js", "mcp"] }), "ephemeral");
+  assert.equal(await validateConfiguredLaunch({ command: path.join(tmpdir(), "node"), args: [path.join(tmpdir(), "cli.js"), "mcp"] }), "ephemeral");
+  assert.equal(await validateConfiguredLaunch({ command: "/private/tmp/node", args: ["/private/tmp/cli.js", "mcp"] }), process.platform === "win32" ? "stale" : "ephemeral");
   assert.equal(await validateConfiguredLaunch({ command: "/usr/bin/node", args: ["/home/.npx/cli.js", "mcp"] }), "ephemeral");
   assert.equal(await validateConfiguredLaunch({ command: "/usr/bin/node", args: ["/home/npx/cli.js", "mcp"] }), "ephemeral");
   assert.equal(await validateConfiguredLaunch({ command: "/usr/bin/node", args: ["/home/pnpm/dlx/cli.js", "mcp"] }), "ephemeral");

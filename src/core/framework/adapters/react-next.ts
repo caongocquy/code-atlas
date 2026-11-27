@@ -315,6 +315,12 @@ function analyze(ctx: FrameworkAnalysisContext): { evidence: readonly FrameworkE
     const localNodes = ctx.graph.nodes.filter((node) => node.file === materialized.relativePath);
     const inputKey = `facts:${materialized.relativePath}`;
     const jsxNodes = syntax.nodes.filter((node) => node.kind === "jsx" && typeof node.name === "string" && node.name.length > 0);
+    // Plain .ts files cannot contain JSX. A partial TypeScript parse without
+    // React evidence is still reusable by the facts index; do not manufacture
+    // an incomplete React dependency for an unrelated malformed source.
+    // Keep Next route entrypoints covered, including route.ts handlers.
+    const nextEntrypoint = /^(?:app|pages)\/(?:.*\/)?(?:page|layout|route)\.ts$/.test(materialized.relativePath);
+    if (!syntax.complete && materialized.relativePath.endsWith(".ts") && jsxNodes.length === 0 && !nextEntrypoint) continue;
     const lookupKeys = [...new Set(jsxNodes.map((node) => `jsx:${node.name}`))].sort();
     const dependency = { framework: "react" as const, scope: "root", ownerPath: materialized.relativePath, inputKeys: [inputKey], complete: syntax.complete };
     const configKeysByLookup = new Map(lookupKeys.map((key) => [key, new Set<string>()]));

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { execFile as execFileCallback, spawn } from "node:child_process";
+import { execFile as execFileCallback } from "node:child_process";
+import { assertFreshMcpInitialize } from "./helpers/mcp-initialize.js";
 import { access, chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -75,8 +76,7 @@ test("Codex integration preserves unrelated TOML and is idempotent", async () =>
     assert.equal(parsed.model, "test-model");
     assert.deepEqual(parsed.mcp_servers.other, { command: "other", args: ["serve"] });
     assert.deepEqual(parsed.mcp_servers["code-atlas"], {
-      command: (await resolveDurableMcpLaunch()).command,
-      args: ["mcp"],
+      ...await resolveDurableMcpLaunch(),
       enabled: true,
     });
 
@@ -151,7 +151,7 @@ test("reconnect migrates managed node plus dist launchers to the installed CLI e
     await mkdir(path.join(home, ".codex"), { recursive: true });
     await mkdir(path.join(home, ".config", "opencode"), { recursive: true });
     const old = { command: process.execPath, args: [path.resolve("dist/cli.js"), "mcp"] };
-    await writeFile(path.join(home, ".codex", "config.toml"), `[mcp_servers.code-atlas]\ncommand = "${old.command}"\nargs = ["${old.args[0]}", "mcp"]\n`);
+    await writeFile(path.join(home, ".codex", "config.toml"), `[mcp_servers.code-atlas]\ncommand = ${JSON.stringify(old.command)}\nargs = [${JSON.stringify(old.args[0])}, "mcp"]\n`);
     await writeFile(path.join(home, ".config", "opencode", "opencode.json"), JSON.stringify({ mcp: { "code-atlas": { type: "local", command: [old.command, ...old.args] } } }));
     const integrations = service(root, home, bin);
     const launch = await resolveDurableMcpLaunch();
@@ -162,8 +162,8 @@ test("reconnect migrates managed node plus dist launchers to the installed CLI e
     await integrations.install("opencode", { repoPath: root, scope: "user" });
     const codex = parseToml(await readFile(path.join(home, ".codex", "config.toml"), "utf8")) as Record<string, any>;
     const openCode = parseJsonc(await readFile(path.join(home, ".config", "opencode", "opencode.json"), "utf8")) as Record<string, any>;
-    assert.deepEqual(codex.mcp_servers["code-atlas"], { command: launch.command, args: ["mcp"], enabled: true });
-    assert.deepEqual(openCode.mcp["code-atlas"].command, [launch.command, "mcp"]);
+    assert.deepEqual(codex.mcp_servers["code-atlas"], { ...launch, enabled: true });
+    assert.deepEqual(openCode.mcp["code-atlas"].command, [launch.command, ...launch.args]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -252,7 +252,7 @@ test("all adapters report missing persisted durable launchers as stale", async (
   try {
     const missing = { command: path.join(root, "missing-node"), args: [path.join(root, "missing-cli.js"), "mcp"] };
     await mkdir(path.join(home, ".codex"), { recursive: true });
-    await writeFile(path.join(home, ".codex", "config.toml"), `[mcp_servers.code-atlas]\ncommand = "${missing.command}"\nargs = ["${missing.args[0]}", "mcp"]\n`);
+    await writeFile(path.join(home, ".codex", "config.toml"), `[mcp_servers.code-atlas]\ncommand = ${JSON.stringify(missing.command)}\nargs = [${JSON.stringify(missing.args[0])}, "mcp"]\n`);
     const openCodeRoot = path.join(home, ".config", "opencode");
     await mkdir(openCodeRoot, { recursive: true });
     await writeFile(path.join(openCodeRoot, "opencode.json"), JSON.stringify({ mcp: { "code-atlas": { type: "local", command: [missing.command, ...missing.args] } } }));
@@ -326,57 +326,6 @@ test("ephemeral launcher resolution fails before any adapter writes config", asy
     await rm(root, { recursive: true, force: true });
   }
 });
-
-async function assertFreshMcpInitialize(command: string, args: string[], cwd: string): Promise<void> {
-  const child = spawn(command, args, {
-    cwd,
-    env: { PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, HOME: cwd },
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-  let stdout = "";
-  let stderr = "";
-  child.stdout.setEncoding("utf8");
-  child.stderr.setEncoding("utf8");
-  child.stdout.on("data", (chunk) => { stdout += chunk; });
-  child.stderr.on("data", (chunk) => { stderr += chunk; });
-  const response = await new Promise<Record<string, any>>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      child.kill();
-      reject(new Error(`MCP initialize timed out. stderr: ${stderr}`));
-    }, 10_000);
-    child.on("error", (error) => {
-      clearTimeout(timeout);
-      reject(error);
-    });
-    child.stdout.on("data", () => {
-      const line = stdout.trim().split("\n").find(Boolean);
-      if (!line) return;
-      try {
-        const parsed = JSON.parse(line) as Record<string, any>;
-        clearTimeout(timeout);
-        child.kill();
-        resolve(parsed);
-      } catch {
-        // Wait for a complete JSON-RPC message.
-      }
-    });
-    child.stdin.write(`${JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "initialize",
-      params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "batch-2", version: "1" } },
-    })}\n`);
-  });
-  assert.equal(response.result.serverInfo.name, "code-atlas");
-  assert.ok(stdout.trim().split("\n").every((line) => {
-    try {
-      JSON.parse(line);
-      return true;
-    } catch {
-      return false;
-    }
-  }));
-}
 
 test("malformed config is reported without overwrite and strict guidance preserves other blocks", async () => {
   const { root, home, bin } = await fixture("safety");
@@ -456,7 +405,7 @@ test("Git hooks compose safely, execute refresh, and uninstall only CodeAtlas co
     await chmod(hookPath, 0o755);
     const installed = await hooks.install({ hooks: ["post-commit"] });
     assert.equal(installed.hooks["post-commit"].installed, true);
-    await execFile(hookPath, [], { cwd: root, env: process.env });
+    await execFile("sh", [hookPath], { cwd: root, env: process.env });
     assert.equal(await readFile(marker, "utf8"), "sync");
     assert.equal(await readFile(path.join(root, "hook-original"), "utf8"), "original");
     await hooks.uninstall({ hooks: ["post-commit"] });

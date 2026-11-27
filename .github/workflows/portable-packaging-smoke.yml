@@ -21,6 +21,8 @@ on:
       - test/upgrade-platforms.test.ts
       - scripts/verify-release-archive.mjs
       - scripts/build-onnx-darwin-x64.mjs
+      - scripts/checkout-onnx-source.sh
+      - scripts/test-checkout-onnx-source.sh
       - scripts/onnx-darwin-x64.mjs
       - scripts/compare-release-tests.mjs
       - scripts/parser-distribution.mjs
@@ -67,10 +69,30 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 300
     steps:
+      - name: Preserve immutable baseline bytes in both checkouts
+        shell: bash
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Restore validated ONNX macOS x64 payload
+        if: matrix.platform == 'darwin' && matrix.arch == 'x64'
+        id: onnx-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/code-atlas-onnx-native
+          key: onnx-1.30.0-f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7-macos15-x64-coreml-webgpu-cmake3.31.8-minos13.5-v2
+      - name: Verify ONNX source recovery contract offline
+        if: matrix.platform == 'darwin' && matrix.arch == 'x64'
+        shell: bash
+        run: bash scripts/test-checkout-onnx-source.sh
+      - name: Check out exact ONNX Runtime source and submodules
+        if: matrix.platform == 'darwin' && matrix.arch == 'x64' && steps.onnx-cache.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          CODE_ATLAS_ONNX_SOURCE_MIRROR: ${{ vars.CODE_ATLAS_ONNX_SOURCE_MIRROR }}
+        run: bash scripts/checkout-onnx-source.sh .onnx-source f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7 1.30.0
       - uses: actions/download-artifact@v4
         with:
           name: code-atlas-parser-consumer-package
@@ -178,21 +200,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Restore validated ONNX macOS x64 payload
-        if: matrix.platform == 'darwin' && matrix.arch == 'x64'
-        id: onnx-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: ${{ runner.temp }}/code-atlas-onnx-native
-          key: onnx-1.30.0-f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7-macos15-x64-coreml-webgpu-cmake3.31.8-minos13.5-v2
-      - name: Check out exact ONNX Runtime source and submodules
-        if: matrix.platform == 'darwin' && matrix.arch == 'x64' && steps.onnx-cache.outputs.cache-hit != 'true'
-        uses: actions/checkout@v4
-        with:
-          repository: microsoft/onnxruntime
-          ref: f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7
-          submodules: recursive
-          path: .onnx-source
       - name: Build full ONNX Runtime 1.30.0 macOS x64 payload
         if: matrix.platform == 'darwin' && matrix.arch == 'x64' && steps.onnx-cache.outputs.cache-hit != 'true'
         shell: bash
@@ -291,4 +298,27 @@ jobs:
         if: always() && steps.review-artifacts.outcome == 'success'
         shell: bash
         run: |
-          node --input-type=module -e 'import fs from "node:fs"; const report=JSON.parse(fs.readFileSync(".evidence/regression-comparison.json")); if(report.passed!==true) { console.error(`Full-suite regression gate failed: ${report.added.length} added, ${report.changed.length} changed, ${report.addedSkips.length} new skips.`); process.exit(1); }'
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+
+          const report = JSON.parse(fs.readFileSync(".evidence/regression-comparison.json", "utf8"));
+          if (report.passed !== true) {
+            const summary = `Full-suite regression gate failed: ${report.added.length} added, ${report.changed.length} changed, ${report.addedSkips.length} new skips.`;
+            console.error(summary);
+            const failures = [
+              ...report.added.map((item) => ["added", item]),
+              ...report.changed.map((item) => ["changed", item]),
+              ...report.addedSkips.map((item) => ["new skip", item]),
+            ];
+            for (const [kind, item] of failures) {
+              console.error(`  ${kind}: ${item.identity ?? "(unidentified)"}`);
+            }
+            if (process.env.GITHUB_STEP_SUMMARY) {
+              const lines = ["### Portable full-suite regression gate", "", summary, "", ...failures.map(
+                ([kind, item]) => `- **${kind}**: \`${String(item.identity ?? "(unidentified)").replaceAll("`", "'")}\``,
+              )];
+              fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
+            }
+            process.exitCode = 1;
+          }
+          NODE

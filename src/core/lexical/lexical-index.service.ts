@@ -20,6 +20,7 @@ import {
 import { splitLargeSymbol } from "../semantic/split-symbol.js";
 import { silentProgressRunner } from "../progress/silent-progress-runner.js";
 import { codeChunksFromFacts, type IndexedSourceUnit } from "../indexing/indexing.types.js";
+import { searchableIdentifier } from "./searchable-identifier.js";
 
 export type LexicalIndexOptions = {
   progress?: ProgressRunner;
@@ -46,15 +47,6 @@ export type LexicalIndexResult = {
   documents: number;
   totalMs: number;
 };
-
-function searchableIdentifier(value: string): string {
-  const parts = value
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .split(/[^a-zA-Z0-9]+/)
-    .filter(Boolean);
-
-  return [value, ...parts].join(" ");
-}
 
 function documentId(repoId: string, file: string, chunk: CodeChunk, index: number): string {
   return createHash("sha256")

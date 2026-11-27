@@ -1,10 +1,8 @@
-import path from "node:path";
-
 import type { IntegrationScope } from "../../core/integration/integration.types.js";
-import type { ResolvedIntegrationEnvironment } from "./integration-environment.js";
+import { integrationPathApi, type ResolvedIntegrationEnvironment } from "./integration-environment.js";
 
 export function codexConfigPath(environment: ResolvedIntegrationEnvironment): string {
-  const pathApi = environment.platform === "win32" ? path.win32 : path;
+  const pathApi = integrationPathApi(environment);
   return pathApi.join(
     environment.env.CODEX_HOME
       ? pathApi.resolve(environment.env.CODEX_HOME)
@@ -17,7 +15,7 @@ export function openCodeConfigPath(
   environment: ResolvedIntegrationEnvironment,
   scope: IntegrationScope = "user",
 ): string {
-  const pathApi = environment.platform === "win32" ? path.win32 : path;
+  const pathApi = integrationPathApi(environment);
   if (scope === "project") {
     const jsonc = pathApi.join(environment.cwd, "opencode.jsonc");
     return jsonc;
@@ -30,7 +28,7 @@ export function openCodeConfigPath(
 }
 
 export function claudeConfigPath(environment: ResolvedIntegrationEnvironment): string {
-  const pathApi = environment.platform === "win32" ? path.win32 : path;
+  const pathApi = integrationPathApi(environment);
   return pathApi.join(environment.cwd, ".mcp.json");
 }
 
@@ -38,7 +36,7 @@ export function geminiConfigPath(
   environment: ResolvedIntegrationEnvironment,
   scope: IntegrationScope = "project",
 ): string {
-  const pathApi = environment.platform === "win32" ? path.win32 : path;
+  const pathApi = integrationPathApi(environment);
   const base = scope === "project" ? environment.cwd : environment.home;
   return pathApi.join(base, ".gemini", "settings.json");
 }
@@ -47,13 +45,13 @@ export function cursorConfigPath(
   environment: ResolvedIntegrationEnvironment,
   scope: IntegrationScope = "project",
 ): string {
-  const pathApi = environment.platform === "win32" ? path.win32 : path;
+  const pathApi = integrationPathApi(environment);
   const base = scope === "project" ? environment.cwd : environment.home;
   return pathApi.join(base, ".cursor", "mcp.json");
 }
 
 export function clineConfigPath(environment: ResolvedIntegrationEnvironment): string {
-  const pathApi = environment.platform === "win32" ? path.win32 : path;
+  const pathApi = integrationPathApi(environment);
   return pathApi.join(environment.home, ".cline", "mcp.json");
 }
 
@@ -62,7 +60,7 @@ export function windsurfConfigPath(
   scope: IntegrationScope = "user",
 ): string {
   if (scope !== "user") throw new Error("Windsurf integration supports user scope only.");
-  const pathApi = environment.platform === "win32" ? path.win32 : path;
+  const pathApi = integrationPathApi(environment);
   return pathApi.join(environment.home, ".codeium", "windsurf", "mcp_config.json");
 }
 
@@ -71,6 +69,6 @@ export function zooConfigPath(
   scope: IntegrationScope = "project",
 ): string {
   if (scope !== "project") throw new Error("Zoo Code integration supports project scope only.");
-  const pathApi = environment.platform === "win32" ? path.win32 : path;
+  const pathApi = integrationPathApi(environment);
   return pathApi.join(environment.cwd, ".roo", "mcp.json");
 }

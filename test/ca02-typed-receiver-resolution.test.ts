@@ -80,3 +80,14 @@ test("CA-02 typed receiver incremental graph matches clean indexing", async () =
     await rm(clean, { recursive: true, force: true });
   }
 });
+
+test("CA-01 historical same-name method case resolves typed B receiver instead of dropping the edge", async () => {
+  // The former negative fixture was intentionally removed when CA-02 qualified class owners.
+  const source = "class A { list() {} } class B { list() {} } const service: B = new B(); class R { users() { return service.list(); } }";
+  const root = await fixture(source);
+  try {
+    assert.equal((await indexRepository(root, { skipGit: true })).kind, "published");
+    assert.deepEqual(calls(root).map(edge => [edge.from, edge.to, edge.strategy]),
+      [["R.users", "B.list", "receiver-member"]]);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

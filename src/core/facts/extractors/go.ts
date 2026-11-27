@@ -26,7 +26,9 @@ function extractGoTreeFacts(parsed: ParsedSource | undefined, input: LanguageFac
     const bindings: BindingSeedFact[] = [], types: DeclaredTypeAnnotationFact[] = [], expressions: ExpressionFact[] = [], members: MemberFact[] = [], assignments: AssignmentFact[] = [];
     const parameters: ParameterFact[] = [], returns: ReturnFact[] = [], constructors: ConstructorFact[] = [], implementations: ImplementationFact[] = [], modules: ModuleFact[] = [];
     const scopeStack: FactLocalId[] = [], callableStack: ParsedSymbolFact[] = [], typeStack: ParsedSymbolFact[] = [];
-    const receiverParameters = new WeakSet<Parser.SyntaxNode>();
+    // Tree-sitter can return distinct JS wrappers for the same syntax node; use stable byte ranges.
+    const receiverParameters = new Set<string>();
+    const nodeKey = (node: Parser.SyntaxNode) => `${node.startIndex}:${node.endIndex}`;
     const receiverTypes = new Map<FactLocalId, string>();
     const selectorMembers = new WeakMap<Parser.SyntaxNode, MemberFact>();
     let packageName = "";
@@ -66,14 +68,14 @@ function extractGoTreeFacts(parsed: ParsedSource | undefined, input: LanguageFac
         if (name) { declared = symbol(node, receiver ? "method" : "function", name, scopeStack.at(-1), receiverType && packageName ? `${packageName}.${receiverType}.${name}` : undefined); callableStack.push(declared); if (receiverType) receiverTypes.set(declared.localId, receiverType); }
         if (receiver) for (const parameter of receiver.namedChildren.filter((item) => item.type === "parameter_declaration")) {
           const receiverName = field(parameter, "name")?.text ?? `__receiver_${typeName(field(parameter, "type")) ?? "unknown"}`;
-          receiverParameters.add(parameter);
+          receiverParameters.add(nodeKey(parameter));
           if (receiverName) { const binding = bind(parameter, receiverName, "receiver"); parameters.push({ localId: next("parameter"), ownerSymbolId: declared!.localId, name: receiverName, bindingId: binding.localId, typeText: typeName(field(parameter, "type")), index: 0, receiverKind: "go_receiver", range: range(parameter) }); if (field(parameter, "type")) types.push({ localId: next("type"), ownerId: binding.localId, text: typeName(field(parameter, "type"))!, range: range(field(parameter, "type")!) }); }
         }
       } else if (node.type === "method_elem") {
         const name = field(node, "name")?.text; if (name && typeStack.at(-1)) { declared = symbol(node, "method", name, scopeStack.at(-1), packageName ? `${packageName}.${typeStack.at(-1)!.name}.${name}` : name); members.push({ localId: next("member"), ownerSymbolId: typeStack.at(-1)!.localId, memberName: name, memberKind: "method", access: "instance", range: range(node) }); }
       } else if (node.type === "field_declaration" && typeStack.at(-1)) {
         const name = field(node, "name")?.text; if (name) { const member = symbol(node, "variable", name, scopeStack.at(-1)); members.push({ localId: next("member"), ownerSymbolId: typeStack.at(-1)!.localId, memberName: name, memberKind: "field", access: "instance", range: range(node) }); if (field(node, "type")) types.push({ localId: next("type"), ownerId: member.localId, text: typeName(field(node, "type"))!, range: range(field(node, "type")!) }); }
-      } else if (node.type === "parameter_declaration" && callableStack.at(-1) && !receiverParameters.has(node)) {
+      } else if (node.type === "parameter_declaration" && callableStack.at(-1) && !receiverParameters.has(nodeKey(node))) {
         const name = field(node, "name")?.text; if (name) { const binding = bind(node, name, "parameter"); parameters.push({ localId: next("parameter"), ownerSymbolId: callableStack.at(-1)!.localId, name, bindingId: binding.localId, typeText: typeName(field(node, "type")), index: parameters.filter((item) => item.ownerSymbolId === callableStack.at(-1)!.localId).length, range: range(node) }); if (field(node, "type")) types.push({ localId: next("type"), ownerId: binding.localId, text: typeName(field(node, "type"))!, range: range(field(node, "type")!) }); }
       } else if (node.type === "selector_expression") {
         const operand = field(node, "operand"), memberName = field(node, "field"); if (operand && memberName) { const member = { localId: next("member"), receiverId: expression(operand, operand.type === "selector_expression" ? "member" : "identifier").localId, memberName: memberName.text, memberKind: "method" as const, access: "instance" as const, range: range(node) }; members.push(member); selectorMembers.set(node, member); }

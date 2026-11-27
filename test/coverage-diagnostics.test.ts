@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
 import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -278,7 +279,7 @@ test("explain-incomplete CLI emits JSON only", async () => {
   const repoPath = await mkdtemp(path.join(tmpdir(), "code-atlas-diagnostics-cli-"));
   try {
     const cliPath = path.resolve("src/cli.ts");
-    const tsxLoader = createRequire(import.meta.url).resolve("tsx/esm");
+    const tsxLoader = pathToFileURL(createRequire(import.meta.url).resolve("tsx/esm")).href;
     const result = await execFile(process.execPath, ["--import", tsxLoader, cliPath, "explain-incomplete", repoPath, "--json"], {
       cwd: repoPath,
       env: { ...process.env, NO_COLOR: "1", NODE_NO_WARNINGS: "1" },

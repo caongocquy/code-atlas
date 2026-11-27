@@ -21,12 +21,13 @@ test("portable Swift override removes the download-only CLI before install while
     dependencies: { "node-gyp-build": "^4.8.0", "tree-sitter-cli": "^0.23", "node-addon-api": "^8.0.0", which: "2.0.2" },
   };
   try {
-    for (const name of ["cli", "swift", "consumer", "bundle"]) fs.mkdirSync(path.join(root, name));
+    for (const name of ["cli", "swift", "consumer", "bundle-before", "bundle-after", "patched-archives"]) fs.mkdirSync(path.join(root, name));
     const write = (relative: string, value: unknown) => fs.writeFileSync(path.join(root, relative), typeof value === "string" ? value : JSON.stringify(value));
-    const pack = (name: string) => {
-      const result = npm(["pack", "--json", "--pack-destination", root], path.join(root, name));
+    const pack = (name: string, destination = root) => {
+      const result = npm(["pack", "--json", "--pack-destination", destination], path.join(root, name));
+      assert.ifError(result.error);
       assert.equal(result.status, 0, result.stderr);
-      return path.join(root, JSON.parse(result.stdout)[0].filename);
+      return path.join(destination, JSON.parse(result.stdout)[0].filename);
     };
     write("cli/package.json", { name: "tree-sitter-cli", version: "0.23.2", scripts: { install: "node install.js" } });
     write("cli/install.js", "throw new Error('HTTP 500 downloading tree-sitter-macos-x64.gz')");
@@ -39,11 +40,13 @@ test("portable Swift override removes the download-only CLI before install while
     const beforeArchive = pack("swift");
     write("consumer/package.json", { name: "test-consumer", version: "1.0.0", dependencies: { "tree-sitter-swift": "0.7.1" } });
     const consumer = pack("consumer");
-    const install = (swift: string) => {
-      write("bundle/package.json", { private: true, overrides: { "tree-sitter-swift@0.7.1": `file:${swift}` } });
-      return npm(["install", "--omit=dev", "--no-save", "--no-package-lock", "--no-audit", "--no-fund", consumer], path.join(root, "bundle"));
+    const install = (bundle: "bundle-before" | "bundle-after", swift: string) => {
+      write(`${bundle}/package.json`, { private: true, overrides: { "tree-sitter-swift@0.7.1": `file:${swift}` } });
+      const result = npm(["install", "--omit=dev", "--no-save", "--no-package-lock", "--no-audit", "--no-fund", consumer], path.join(root, bundle));
+      assert.ifError(result.error);
+      return result;
     };
-    const before = install(beforeArchive);
+    const before = install("bundle-before", beforeArchive);
     assert.notEqual(before.status, 0);
     assert.match(before.stderr, /HTTP 500 downloading/);
     // Validate the audited upstream contract separately from the offline lifecycle fixture.
@@ -53,18 +56,21 @@ test("portable Swift override removes the download-only CLI before install while
     assert.deepEqual(patched, { ...manifest, dependencies: { "node-gyp-build": "^4.8.0", "node-addon-api": "^8.0.0", which: "2.0.2" } });
     assert.equal(fs.readFileSync(path.join(root, "swift/parser.node"), "utf8"), "unchanged native parser bytes");
     write("swift/package.json", { ...patched, scripts: fixtureManifest.scripts, dependencies: {} });
-    fs.rmSync(path.join(root, "bundle"), { recursive: true, force: true });
-    fs.mkdirSync(path.join(root, "bundle"));
-    const after = install(pack("swift"));
+    // Failed npm installs can leave transient Windows file handles. Never reuse
+    // their tree or overwrite their archive when testing the patched install.
+    const after = install("bundle-after", pack("swift", path.join(root, "patched-archives")));
     assert.equal(after.status, 0, after.stderr);
-    const installed = path.join(root, "bundle/node_modules/tree-sitter-swift");
+    const installed = path.join(root, "bundle-after/node_modules/tree-sitter-swift");
     assert.equal(fs.readFileSync(path.join(installed, "native-install-ran"), "utf8"), "installed");
     assert.equal(fs.readFileSync(path.join(installed, "parser.node"), "utf8"), "unchanged native parser bytes");
     assert.equal(fs.readFileSync(path.join(installed, "node-types.json"), "utf8"), "[]");
-    assert.equal(fs.existsSync(path.join(root, "bundle/node_modules/tree-sitter-cli")), false);
+    assert.equal(fs.existsSync(path.join(root, "bundle-after/node_modules/tree-sitter-cli")), false);
     for (const changed of [{ ...manifest, version: "0.8.0" }, { ...manifest, scripts: { install: "tree-sitter generate" } }]) {
       write("swift/package.json", changed);
       assert.throws(() => pruning.removeSwiftBuildDependency(path.join(root, "swift")), /Unaudited/);
     }
-  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  } finally {
+    // Retry only transient cleanup errors; npm installs and assertions run once.
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  }
 });

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
 import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -15,7 +16,7 @@ import { createMcpServer } from "../src/adapters/mcp/mcp-server.js";
 
 const execFile = promisify(execFileCallback);
 const cliPath = path.resolve("src/cli.ts");
-const tsxLoader = createRequire(import.meta.url).resolve("tsx/esm");
+const tsxLoader = pathToFileURL(createRequire(import.meta.url).resolve("tsx/esm")).href;
 
 async function git(repoPath: string, args: string[]): Promise<string> {
   const result = await execFile("git", args, { cwd: repoPath, encoding: "utf8" });
