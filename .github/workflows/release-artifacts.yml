@@ -163,6 +163,8 @@ jobs:
       - name: Check out exact ONNX Runtime source and submodules
         if: matrix.platform == 'darwin' && matrix.arch == 'x64' && steps.onnx-cache.outputs.cache-hit != 'true'
         shell: bash
+        env:
+          CODE_ATLAS_ONNX_SOURCE_MIRROR: ${{ vars.CODE_ATLAS_ONNX_SOURCE_MIRROR }}
         run: bash scripts/checkout-onnx-source.sh .onnx-source f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7 1.30.0
       - name: Build full ONNX Runtime 1.30.0 macOS x64 payload
         if: matrix.platform == 'darwin' && matrix.arch == 'x64' && steps.onnx-cache.outputs.cache-hit != 'true'

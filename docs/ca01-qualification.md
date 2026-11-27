@@ -156,3 +156,26 @@ Preserve that selection only for MCP inspection requests without `response`;
 explicit compact/focused/full modes and all ordinary core budget callers use the
 corrected whole-context policy. No parity assertions or captured baseline payloads
 are altered. A separate regression checks both policies and their MCP routing.
+
+### Portable Intel source availability (2026-11-27)
+
+Candidate `bbcfd11996306749b122c31159e7ac8beffa5a30`: 9/10 workflows passed. The Phase14B integration
+qualification passed all eight native OS/Node cells, current-master differential
+passed all four cells, and Linux/Windows/macOS ARM64 portable builds passed.
+Portable run 45793054204, job 139832471643, failed before the Intel ONNX build:
+repository and pinned-commit API requests returned 404, Git upload-pack 401.
+The upstream outage is independently reported in ONNX issue #8842 (opened
+2026-11-17). Its cause is not verified.
+
+Source recovery keeps official upstream first. If a maintainer has independently
+reviewed a trusted, publicly readable GitHub copy of the exact ONNX source,
+set repository Actions variable `CODE_ATLAS_ONNX_SOURCE_MIRROR` to its
+credential-free HTTPS Git URL. Both portable and release packaging can use that
+explicitly configured fallback; all commit/version/submodule checks, native
+build flags, binary validation, cache keys, and release gates remain unchanged.
+Do not set it to a randomly discovered mirror. No mirror is configured or
+verified by this change. The original Git origin and pinned submodule sources
+remain authoritative, and an unavailable submodule is still a hard failure.
+Offline recovery tests cover upstream success, exact fallback, wrong commit,
+unconfigured fallback, invalid URL and missing submodule. Native Intel build
+remains blocked until trusted exact source is accessible. **NO-GO.**
